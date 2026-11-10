@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "catalog": "skills/catalog",
+  "managed": {
+    "studio-handoff": "561a845e144248af71ea29b8bc8817576a0996f0fe46a92bb82d88bcc9fb8762",
+    "studio-media-library": "c48a753a9a53b2673eac17fd9d4d15c8aab93e8e264a94dc13f7d6d4a895c053"
+  }
+}

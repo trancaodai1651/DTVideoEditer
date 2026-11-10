@@ -1,0 +1,22 @@
+{
+  "name": "ai-video-studio",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.18.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "pnpm --filter @studio/desktop dev",
+    "build": "pnpm --filter @studio/desktop build",
+    "lint": "pnpm --filter @studio/desktop lint",
+    "typecheck": "pnpm --filter @studio/desktop typecheck",
+    "test": "node --test scripts/*.test.mjs",
+    "test:native": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+    "test:media": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked real_ffmpeg -- --ignored",
+    "demo:media": "node scripts/make-demo.mjs",
+    "tauri": "pnpm --filter @studio/desktop exec tauri",
+    "context:check": "node scripts/context.mjs check",
+    "context:summary": "node scripts/context.mjs summary",
+    "skills:sync": "node scripts/sync-skills.mjs sync",
+    "skills:check": "node scripts/sync-skills.mjs check"
+  }
+}

@@ -1,0 +1,25 @@
+# Quyết định kiến trúc
+
+## ADR-001 · 2026-11-09 · Tauri + SQLite local
+
+Chọn Tauri v2, Rust, React, TypeScript, Vite và Tailwind trong một pnpm workspace. Repo ban đầu chưa có source. Dùng SQLite bundled với foreign keys, WAL và migration chạy trong giao dịch. Native giữ quyền filesystem. Lockfiles tái lập dependency trên Windows/macOS.
+
+## ADR-002 · 2026-11-09 · Preview theo ID, tài nguyên giữ nguyên
+
+Native picker là đường cấp quyền duy nhất. Index chỉ lưu path tương đối, metadata và thumbnail. Custom protocol tra ID trong grant, kiểm tra từng path component và trả byte range. Quét đầy đủ đánh dấu tệp thiếu để clip đã lưu có thể hiển thị offline. Thu hồi grant xóa bản ghi phụ thuộc sau thao tác xác nhận.
+
+## ADR-003 · 2026-11-09 · Timeline tuần tự và công cụ media ngoài app
+
+M1-A lưu vị trí clip theo track, với ảnh trên track video. M1-B bổ sung các edit points và contract render. FFprobe và FFmpeg được tìm trên PATH khi chạy, ảnh thu nhỏ hoạt động khi FFmpeg có sẵn. Việc đóng gói FFmpeg cần quyết định license ở M5.
+
+## ADR-004 · 2026-11-09 · Catalog dùng chung, provenance riêng
+
+Mỗi developer skill có một nguồn canonical. Lock SHA-256 quản lý hai bản sao vật lý, phù hợp với Windows. Sync báo xung đột trước khi ghi khi gặp file do người dùng quản lý hoặc file đã sửa trực tiếp. Runtime workflows có registry và execution policy riêng ở M3.
+
+## ADR-005 · 2026-11-10 · Snapshot timeline và render một lượt
+
+Frontend giữ trạng thái sửa và lịch sử undo/redo, gửi nguyên snapshot version 2 mỗi lần thao tác xong. Native kiểm tra và thay toàn bộ clip trong một giao dịch, nên không có lệnh sửa từng phần cần đồng bộ. Renderer dựng một filter graph FFmpeg cho cả timeline thay vì ghép các đoạn trung gian, đổi lại là giới hạn độ dài dòng lệnh. Đích xuất chỉ đến từ hộp thoại native và được ghi qua tệp tạm.
+
+## ADR-006 · 2026-11-10 · Publishing bằng token trong keychain và duyệt native
+
+Kết nối bằng access token do người dùng tự lấy từ app của họ, vì OAuth cần app secret và redirect đã đăng ký mà dự án chưa có. Token nằm trong keychain qua crate `keyring`, HTTP dùng `reqwest` blocking với TLS của hệ điều hành để không phải build thư viện mã hóa. Mỗi lần đăng, sửa, xóa phải qua hộp thoại native. M4-B và M4-C được làm trước M4-A theo yêu cầu của chủ dự án.

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Video Studio",
+  "version": "0.1.0",
+  "identifier": "studio.dtedit.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AI Video Studio",
+        "theme": "Dark",
+        "dragDropEnabled": false,
+        "width": 1320,
+        "height": 850,
+        "minWidth": 840,
+        "minHeight": 620,
+        "backgroundColor": "#111319"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost; img-src 'self' studio-media: http://studio-media.localhost; media-src studio-media: http://studio-media.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:1420; img-src 'self' studio-media: http://studio-media.localhost; media-src studio-media: http://studio-media.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'"
+    }
+  },
+  "bundle": { "active": false, "icon": ["icons/icon.png", "icons/icon.ico"] }
+}

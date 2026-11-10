@@ -1,0 +1,10 @@
+node_modules/
+dist/
+target/
+apps/desktop/src-tauri/gen/
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.sqlite3-*
+*.log
