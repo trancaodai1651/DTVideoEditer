@@ -1,21 +1,22 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-10/M1B-M4
+Snapshot: 2026-11-10/EDITOR-020
 
-Next task: M4-B
+Next task: M1-F
 
 ## Đã triển khai
 
 - M0 và M1-A: monorepo pnpm, desktop shell Tauri/React, thư viện media SQLite, FFprobe, thumbnail, preview theo asset ID.
-- M1-B: timeline có edit points theo mili giây, snapshot JSON version 2, kéo thả, trim, split, snap, undo/redo và tự lưu. Xuất MP4 H.264/AAC từ timeline với tiến độ, hủy và thử lại. [Editor và render](modules/editor.md)
+- M1-B/M1-C: timeline nhiều tầng video, audio và chữ, snapshot version 3. Có kéo thả, trim, split, snap, undo/redo, thuộc tính màu, transform, fade và animation trượt. FFmpeg ghép tầng và trộn audio. [Editor và render](modules/editor.md)
+- M1-E: kho mẫu cục bộ có ba preset và mẫu tạo từ điểm cắt/tỷ lệ video tham chiếu. Người dùng gán nguồn theo cảnh, chữ, preset, nhạc, SFX và voice rồi tạo dự án.
+- M5-B một phần: bản 0.2.0 có bộ cài NSIS Windows x64 và workflow build DMG Universal.
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token lưu trong keychain. Bản nháp, duyệt bằng hộp thoại native, đăng, danh sách bài, sửa bài Facebook và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng
 
-- Đã chạy trên Windows 11: lint, TypeScript, test Node, test Rust, hai test FFmpeg thật, test keychain thật và build release. [Chi tiết](HANDOFF.md)
-- Giao diện mới được thao tác trong trình duyệt với IPC giả lập. Chưa chạy trong cửa sổ Tauri thật.
+- Kiểm chứng bản 0.2.0 và trạng thái artifact ở [HANDOFF](HANDOFF.md).
 - Chưa có lần gọi API mạng xã hội thật nào. Các adapter được kiểm tra bằng máy chủ giả lập theo tài liệu chính thức ngày 10/11/2026.
 
 ## Tiếp theo
 
-M4-B cần token thật để chạy live test từng nền tảng, sau đó là OAuth. M1-C tiếp tục phía editor. [Backlog](TASK_BACKLOG.md)
+M1-F mở rộng phân tích tham chiếu. M5-B theo dõi DMG Universal trên runner macOS. M4-B còn live test và OAuth. [Backlog](TASK_BACKLOG.md)

@@ -247,13 +247,17 @@ pub fn has_audio(ffprobe: &Path, path: &Path, format: &MediaFormat) -> bool {
 }
 
 pub fn find_tool(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
     let binary = if cfg!(windows) {
         format!("{name}.exe")
     } else {
         name.to_owned()
     };
-    std::env::split_paths(&path)
+    let paths = std::env::split_paths(&path);
+    #[cfg(target_os = "macos")]
+    let paths =
+        paths.chain(["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"].map(PathBuf::from));
+    paths
         .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(&binary))
         .find(|path| path.is_file())
@@ -280,7 +284,11 @@ pub fn command(binary: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
-fn capture(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
+fn capture(cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
+    capture_allow_empty(cmd, deadline).filter(|bytes| !bytes.is_empty())
+}
+
+pub(crate) fn capture_allow_empty(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
     let mut child = cmd.spawn().ok()?;
     let output = child.stdout.take().expect("stdout is piped");
     let reader = std::thread::spawn(move || {
@@ -299,7 +307,7 @@ fn capture(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
         }
     };
     let bytes = reader.join().ok()?.ok()?;
-    (success && !bytes.is_empty() && bytes.len() <= MAX_OUTPUT).then_some(bytes)
+    (success && bytes.len() <= MAX_OUTPUT).then_some(bytes)
 }
 
 #[cfg(test)]

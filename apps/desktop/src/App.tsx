@@ -1,23 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, desktop, fileName } from "./desktop";
-import type { AssetPage, Folder, MediaTools, Project, RenderJob } from "./desktop";
+import type { Aspect, AssetPage, Folder, MediaTools, Project, RenderJob, TimelineSnapshot } from "./desktop";
 import { Icon } from "./Icon";
 import { Gallery, Preview } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
 import type { Selection } from "./MediaPanels";
-import { addClip, clipsAt, commit, fromTimeline, newHistory, redo, toSnapshot, undo } from "./timeline";
+import { addClip, addTitle, changeLayer, commit, fromTimeline, layerOf, newHistory, redo, toSnapshot, trackOf, undo } from "./timeline";
 import type { Clip, History, MediaRef } from "./timeline";
 import { TimelineEditor } from "./TimelineEditor";
-import { vi } from "./vi";
+import type { Lane } from "./TimelineEditor";
+import { ClipInspector, CompositionFrame } from "./ClipInspector";
+import { ExportQueue } from "./ExportQueue";
+import { TemplateLibrary } from "./TemplateLibrary";
+import { timecode, vi } from "./vi";
 
-type View = "library" | "publish" | "settings";
+type View = "library" | "templates" | "queue" | "publish" | "settings";
+const viewName: Record<View, string> = {
+  library: "Biên tập", templates: "Kho mẫu", queue: "Hàng đợi xuất", publish: vi.publish, settings: vi.settings,
+};
 type Notice = { text: string; error: boolean };
 const EMPTY_PAGE: AssetPage = { items: [], total: 0, pageSize: 48 };
 const isActive = (job: RenderJob) => job.status === "queued" || job.status === "running";
 
 /** The preview target for a clip, seeked to the source frame under the playhead. */
-function clipSelection(clip: Clip, playheadMs: number): Selection {
+function clipSelection(clip: Clip, playheadMs: number): Selection | null {
+  if (clip.kind === "text") return null;
   const inside = playheadMs >= clip.positionMs && playheadMs < clip.positionMs + clip.endMs - clip.startMs;
   return {
     assetId: clip.assetId, relativePath: clip.relativePath, kind: clip.kind, durationMs: clip.sourceMs,
@@ -36,11 +44,14 @@ export function App() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectName, setProjectName] = useState("");
   const [history, setHistory] = useState<History>(newHistory);
+  const [aspect, setAspect] = useState<Aspect>("source");
+  const [lane, setLane] = useState<Lane>({ track: "video", layer: 0 });
+  const [frameMode, setFrameMode] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [jobs, setJobs] = useState<RenderJob[]>([]);
-  const saves = useRef({ chain: Promise.resolve(), pending: 0 });
+  const saves = useRef({ chain: Promise.resolve(), pending: 0, failed: false });
   const [tools, setTools] = useState<MediaTools | null>(null);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -49,17 +60,19 @@ export function App() {
   const project = projects.find((item) => item.id === projectId);
   const disabled = !!busy || !desktop;
   const clips = history.present;
+  const selectedClip = clips.find((clip) => clip.key === selectedKey);
   const rendering = jobs.some(isActive);
 
   useEffect(() => {
     if (!desktop) return;
     let current = true;
-    void Promise.all([api.folders(), api.projects(), api.tools()]).then(([grants, saved, capabilities]) => {
+    void Promise.all([api.folders(), api.projects(), api.tools(), api.renderQueue()]).then(([grants, saved, capabilities, queue]) => {
       if (!current) return;
       setFolders(grants);
       setProjects(saved);
       setProjectId((existing) => existing ?? saved[0]?.id ?? null);
       setTools(capabilities);
+      setJobs(queue);
     }).catch((error: unknown) => {
       if (current) setNotice({ text: String(error), error: true });
     });
@@ -84,12 +97,16 @@ export function App() {
     if (projectId === null) return;
     let current = true;
     // Wait for queued saves so a reload never reads a stale timeline.
-    void saves.current.chain.then(() => Promise.all([api.timeline(projectId), api.renderJobs(projectId)])).then(([saved, renders]) => {
+    void saves.current.chain.then(() => api.timeline(projectId)).then((saved) => {
       if (!current) return;
       setHistory(newHistory(fromTimeline(saved)));
       setSelectedKey(null);
       setPlayheadMs(0);
-      setJobs(renders);
+      setAspect(saved.aspect ?? "source");
+      setLane({ track: "video", layer: 0 });
+      setFrameMode(false);
+      setSaveState("saved");
+      saves.current.failed = false;
     }).catch((error: unknown) => {
       if (current) setNotice({ text: String(error), error: true });
     });
@@ -97,12 +114,13 @@ export function App() {
   }, [projectId, libraryRevision]);
 
   useEffect(() => {
-    if (projectId === null || !rendering) return;
+    if (!desktop || (!rendering && view !== "queue")) return;
+    let current = true;
     const timer = setInterval(() => {
-      void api.renderJobs(projectId).then(setJobs).catch(() => undefined);
+      void api.renderQueue().then((queue) => { if (current) setJobs(queue); }).catch(() => undefined);
     }, 500);
-    return () => clearInterval(timer);
-  }, [projectId, rendering]);
+    return () => { current = false; clearInterval(timer); };
+  }, [rendering, view]);
 
   useEffect(() => {
     function shortcuts(event: KeyboardEvent) {
@@ -182,7 +200,7 @@ export function App() {
       setProjects((saved) => [created, ...saved]);
       setProjectId(created.id);
       setHistory(newHistory());
-      setJobs([]);
+      setAspect("source");
       setProjectName("");
       setView("library");
       success(vi.projectCreated);
@@ -190,67 +208,101 @@ export function App() {
   }
 
   /** Applies an edit and queues its save. Saves run in order, one at a time. */
-  function edit(next: History) {
-    if (!project || next === history) return;
+  function edit(next: History, nextAspect = aspect) {
+    if (!project || (next === history && nextAspect === aspect)) return;
     const id = project.id;
-    const snapshot = toSnapshot(next.present);
+    const snapshot = toSnapshot(next.present, nextAspect);
     setHistory(next);
+    setAspect(nextAspect);
     setSaveState("saving");
     const queue = saves.current;
     queue.pending += 1;
     queue.chain = queue.chain.then(() => api.saveTimeline(id, snapshot)).then(() => {
+      queue.failed = false;
       queue.pending -= 1;
       if (queue.pending === 0) setSaveState("saved");
     }, (error: unknown) => {
+      queue.failed = true;
       queue.pending -= 1;
       setSaveState("error");
       setNotice({ text: String(error), error: true });
     });
   }
 
-  function addMedia(media: MediaRef, positionMs?: number) {
+  function addMedia(media: MediaRef, positionMs?: number, target = lane) {
     if (!project || disabled) return;
-    const next = addClip(clips, media, positionMs);
+    const track = trackOf(media.kind);
+    const next = addClip(clips, media, positionMs, target.track === track ? target.layer : 0);
     if (!next) return setNotice({ text: vi.clipNoLength, error: true });
     edit(commit(history, next));
     setSelectedKey(next.at(-1)?.key ?? null);
+    setFrameMode(track === "video");
     success(vi.clipAdded);
   }
 
   function selectClip(key: string | null) {
     setSelectedKey(key);
     const clip = clips.find((item) => item.key === key);
-    if (clip?.available) setSelection(clipSelection(clip, playheadMs));
+    if (!clip) return;
+    setLane({ track: clip.track, layer: layerOf(clip) });
+    if (clip.track !== "audio") {
+      setFrameMode(true);
+      if (playheadMs < clip.positionMs || playheadMs >= clip.positionMs + clip.endMs - clip.startMs) setPlayheadMs(clip.positionMs);
+    } else if (clip.available) {
+      setFrameMode(false);
+      setSelection(clipSelection(clip, playheadMs));
+    }
   }
 
   function movePlayhead(ms: number) {
     setPlayheadMs(ms);
-    const under = clipsAt(clips, ms).filter((clip) => clip.available);
-    const clip = under.find((item) => item.key === selectedKey) ?? under.find((item) => item.track === "video") ?? under[0];
-    if (clip) setSelection(clipSelection(clip, ms));
+    setFrameMode(true);
   }
 
-  function startRender() {
+  function insertTitle() {
+    if (!project || disabled) return;
+    const next = addTitle(clips, playheadMs, lane.track === "text" ? lane.layer : 0);
+    const title = next.at(-1);
+    if (next === clips || !title) return;
+    edit(commit(history, next));
+    setSelectedKey(title.key);
+    setPlayheadMs(title.positionMs);
+    setFrameMode(true);
+  }
+
+  function startRender(queueOnly: boolean) {
     if (!project) return;
     void run(vi.working, async () => {
       await saves.current.chain;
-      const job = await api.startRender(project.id);
+      if (saves.current.failed) throw new Error("Timeline chưa lưu thành công. Hãy sửa lỗi lưu trước khi xuất.");
+      const job = await api.startRender(project.id, queueOnly);
       if (!job) return;
-      setJobs(await api.renderJobs(project.id));
-      success(vi.exportStarted);
+      setJobs(await api.renderQueue());
+      setView("queue");
+      success(queueOnly ? "Đã thêm bản dựng vào hàng đợi." : vi.exportStarted);
     });
   }
 
   function retryRender(jobId: number) {
-    if (!project) return;
     void run(vi.working, async () => {
       await api.retryRender(jobId);
-      setJobs(await api.renderJobs(project.id));
+      setJobs(await api.renderQueue());
     });
   }
 
   function cancelRender(jobId: number) {
-    void api.cancelRender(jobId).catch((error: unknown) => setNotice({ text: String(error), error: true }));
+    void api.cancelRender(jobId).then(api.renderQueue).then(setJobs)
+      .catch((error: unknown) => setNotice({ text: String(error), error: true }));
+  }
+
+  async function openTemplateProject(name: string, snapshot: TimelineSnapshot) {
+    await saves.current.chain;
+    const created = await api.createEditedProject(name, snapshot);
+    setProjects((saved) => [created, ...saved]);
+    setProjectId(created.id);
+    setHistory(newHistory());
+    setView("library");
+    success("Đã tạo dự án từ mẫu.");
   }
 
   return (
@@ -262,7 +314,13 @@ export function App() {
         </div>
         <nav aria-label={vi.workspace}>
           <button type="button" aria-current={view === "library" ? "page" : undefined} onClick={() => setView("library")}>
-            <Icon name="library" />{vi.library}
+            <Icon name="library" />{viewName.library}
+          </button>
+          <button type="button" aria-current={view === "templates" ? "page" : undefined} onClick={() => setView("templates")}>
+            <Icon name="timeline" />{viewName.templates}
+          </button>
+          <button type="button" aria-current={view === "queue" ? "page" : undefined} onClick={() => setView("queue")}>
+            <Icon name="export" />{viewName.queue}
           </button>
           <button type="button" aria-current={view === "publish" ? "page" : undefined} onClick={() => setView("publish")}>
             <Icon name="send" />{vi.publish}
@@ -274,7 +332,7 @@ export function App() {
         <div className="project-picker">
           <label className="eyebrow" htmlFor="active-project">{vi.project}</label>
           <select id="active-project" value={projectId ?? ""} disabled={disabled || projects.length === 0}
-            onChange={(event) => { setHistory(newHistory()); setJobs([]); setProjectId(Number(event.target.value)); }}>
+            onChange={(event) => { setHistory(newHistory()); setProjectId(Number(event.target.value)); }}>
             {!projects.length && <option value="">{vi.projectNone}</option>}
             {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
@@ -292,7 +350,7 @@ export function App() {
         <header className="topbar">
           <div>
             <span className="eyebrow">{vi.workspace}</span>
-            <h1>{view === "library" ? vi.library : view === "publish" ? vi.publish : vi.settings}</h1>
+            <h1>{viewName[view]}</h1>
           </div>
           <button type="button" className="button primary" onClick={pickFolder} disabled={disabled}><Icon name="folder" />{vi.pick}</button>
         </header>
@@ -305,23 +363,49 @@ export function App() {
         </div>
 
         {view === "library" ? <>
-          <div className="editor-grid">
+          <div className="editor-grid editor-three">
             <Gallery data={assets} folders={folders} folderId={folderId} page={page} revision={libraryRevision}
-              selected={selection?.assetId} onSelect={setSelection}
+              selected={selection?.assetId} onSelect={(asset) => { setSelection(asset); setFrameMode(false); }}
               onPage={(index) => { setAssets(null); setPage(index); }}
               onFolder={(id) => {
                 if (id === folderId) return;
                 setAssets(null); setFolderId(id); setPage(0);
               }} />
-            <Preview selection={selection} project={project} revision={libraryRevision} busy={disabled} onAppend={addMedia} />
+            <div className="preview-stack">
+              <div className="preview-tabs">
+                <button type="button" className="button secondary compact" aria-pressed={!frameMode} onClick={() => setFrameMode(false)}>Nguồn</button>
+                <button type="button" className="button secondary compact" aria-pressed={frameMode} onClick={() => setFrameMode(true)}>Bản dựng</button>
+              </div>
+              {frameMode ? <section className="panel preview">
+                <div className="panel-head"><h2>Khung hình bản dựng</h2><span>{timecode(playheadMs)}</span></div>
+                <div className="monitor composition-monitor">
+                  <CompositionFrame clips={clips} aspect={aspect} at={playheadMs} revision={libraryRevision} />
+                </div>
+              </section> : <Preview selection={selection} project={project} revision={libraryRevision} busy={disabled}
+                onAppend={addMedia} onReference={() => setView("templates")} />}
+            </div>
+            <ClipInspector clip={selectedClip} aspect={aspect} disabled={disabled || !project}
+              onAspect={(value) => edit(history, value)}
+              onLayer={(layer) => {
+                if (!selectedClip) return;
+                edit(commit(history, changeLayer(clips, selectedClip.key, layer)));
+                setLane({ track: selectedClip.track, layer });
+              }}
+              onClip={(next) => edit(commit(history, clips.map((clip) => clip.key === next.key ? next : clip)))} />
           </div>
-          <TimelineEditor project={project} clips={clips} selectedKey={selectedKey} playheadMs={playheadMs}
+          <TimelineEditor key={projectId} project={project} clips={clips} selectedKey={selectedKey} playheadMs={playheadMs}
             busy={disabled} canUndo={history.past.length > 0} canRedo={history.future.length > 0}
-            saveState={saveState} jobs={jobs}
+            saveState={saveState} lane={lane} onLane={setLane} onTitle={insertTitle}
             onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead}
             onDropMedia={addMedia} onUndo={() => edit(undo(history))} onRedo={() => edit(redo(history))}
-            onExport={startRender} onCancelRender={cancelRender} onRetryRender={retryRender} />
-        </> : view === "publish" ? <PublishPanel selection={selection} exports={jobs} notify={notify} /> : <>
+            onExport={startRender} />
+        </> : view === "templates" ? <TemplateLibrary
+          initialReference={assets?.items.find((asset) => asset.id === selection?.assetId && asset.kind === "video")}
+          disabled={disabled} onProject={openTemplateProject} notify={notify}
+        /> : view === "queue" ? <ExportQueue jobs={jobs} projects={projects} busy={disabled}
+          onRun={() => void run(vi.working, async () => { await api.runRenderQueue(); setJobs(await api.renderQueue()); })}
+          onRetry={retryRender} onCancel={cancelRender}
+        /> : view === "publish" ? <PublishPanel selection={selection} exports={jobs.filter((job) => job.projectId === projectId)} notify={notify} /> : <>
           <section className="panel settings-panel" aria-labelledby="folders-heading">
             <div className="panel-head"><div>
               <div className="panel-title"><Icon name="shield" /><h2 id="folders-heading">{vi.grantedFolders}</h2></div>

@@ -1,10 +1,10 @@
 import { useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent, PointerEvent } from "react";
 import { fileName } from "./desktop";
-import type { Project, RenderJob, Track } from "./desktop";
+import type { EditorTrack, Project } from "./desktop";
 import { Icon } from "./Icon";
 import {
-  clipFinish, clipLength, clipsAt, moveClip, removeClip, snap, splitClip, totalMs, trackOf, trimEnd, trimStart,
+  MAX_LAYERS, clipFinish, clipLength, clipsAt, layerOf, moveClip, removeClip, snap, splitClip, totalMs, trackOf, trimEnd, trimStart,
 } from "./timeline";
 import type { Clip, MediaRef } from "./timeline";
 import { duration, timecode, vi } from "./vi";
@@ -25,23 +25,29 @@ interface Props {
   canUndo: boolean;
   canRedo: boolean;
   saveState: SaveState;
-  jobs: RenderJob[];
+  lane: Lane;
   onChange: (clips: Clip[]) => void;
   onSelect: (key: string | null) => void;
   onPlayhead: (ms: number) => void;
-  onDropMedia: (media: MediaRef, positionMs: number) => void;
+  onDropMedia: (media: MediaRef, positionMs: number, lane: Lane) => void;
+  onLane: (lane: Lane) => void;
+  onTitle: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  onExport: () => void;
-  onCancelRender: (jobId: number) => void;
-  onRetryRender: (jobId: number) => void;
+  onExport: (queueOnly: boolean) => void;
 }
 
+export type Lane = { track: EditorTrack; layer: number };
+const kinds = ["text", "video", "audio"] as const;
+const label = { text: "Chữ", video: "Video", audio: "Âm thanh" };
+const laneKey = ({ track, layer }: Lane) => `${track}-${layer}`;
+
 export function TimelineEditor(props: Props) {
-  const { project, clips, selectedKey, playheadMs, busy, jobs, onChange, onSelect, onPlayhead } = props;
+  const { project, clips, selectedKey, playheadMs, busy, lane, onChange, onSelect, onPlayhead } = props;
   const [zoom, setZoom] = useState(2);
   const [drag, setDrag] = useState<{ key: string; mode: Mode; x: number; next: Clip[] } | null>(null);
   const [scrub, setScrub] = useState(false);
+  const [extra, setExtra] = useState({ text: 1, video: 1, audio: 1 });
   const canvas = useRef<HTMLDivElement>(null);
   const scale = ZOOM[zoom] / 1000;
   const shown = drag?.next ?? clips;
@@ -50,8 +56,19 @@ export function TimelineEditor(props: Props) {
   const tick = TICKS.find((seconds) => seconds * 1000 * scale >= 64) ?? 600;
   const selected = clips.find((clip) => clip.key === selectedKey);
   const cuts = selected && clipsAt([selected], playheadMs).length ? [selected] : clipsAt(clips, playheadMs);
-  const rendering = jobs.some((job) => job.status === "queued" || job.status === "running");
   const locked = busy || !project;
+  const layerCount = (track: EditorTrack) => clips.filter((clip) => clip.track === track)
+    .reduce((count, clip) => Math.max(count, layerOf(clip) + 1), extra[track]);
+  const lanes = kinds.flatMap((track) => {
+    const count = layerCount(track);
+    return Array.from({ length: count }, (_, i) => ({ track, layer: track === "audio" ? i : count - i - 1 }));
+  });
+  function addLane(track: EditorTrack) {
+    const layer = layerCount(track);
+    if (layer >= MAX_LAYERS) return;
+    setExtra((current) => ({ ...current, [track]: layer + 1 }));
+    props.onLane({ track, layer });
+  }
 
   const timeAt = (clientX: number) =>
     Math.max(0, Math.round((clientX - (canvas.current?.getBoundingClientRect().left ?? 0)) / scale));
@@ -107,7 +124,8 @@ export function TimelineEditor(props: Props) {
   }
 
   function keys(event: KeyboardEvent<HTMLElement>) {
-    if (locked || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (locked || event.ctrlKey || event.metaKey || event.altKey
+      || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
     const step = event.shiftKey ? 1000 : 100;
     if (event.key === "Delete" || event.key === "Backspace") remove();
     else if (event.key.toLowerCase() === "s") split();
@@ -117,11 +135,14 @@ export function TimelineEditor(props: Props) {
     event.preventDefault();
   }
 
-  function drop(event: DragEvent<HTMLElement>) {
+  function drop(event: DragEvent<HTMLElement>, target: Lane) {
     const data = event.dataTransfer.getData(MEDIA_DRAG_TYPE);
     if (!data || locked) return;
     event.preventDefault();
-    props.onDropMedia(JSON.parse(data) as MediaRef, timeAt(event.clientX));
+    try {
+      const media = JSON.parse(data) as MediaRef;
+      if (trackOf(media.kind) === target.track) props.onDropMedia(media, timeAt(event.clientX), target);
+    } catch { /* Ignore malformed drag data. */ }
   }
 
   function allowDrop(event: DragEvent<HTMLElement>) {
@@ -158,15 +179,26 @@ export function TimelineEditor(props: Props) {
           disabled={zoom === 0} onClick={() => setZoom(zoom - 1)}><Icon name="zoomOut" size={16} /></button>
         <button type="button" className="icon-button" title={vi.zoomIn} aria-label={vi.zoomIn}
           disabled={zoom === ZOOM.length - 1} onClick={() => setZoom(zoom + 1)}><Icon name="zoomIn" size={16} /></button>
-        <button type="button" className="button primary compact" disabled={locked || rendering || total === 0}
-          onClick={props.onExport}><Icon name="export" size={16} />{vi.exportMp4}</button>
+        <button type="button" className="button secondary compact" disabled={locked || total === 0}
+          onClick={() => props.onExport(true)}>Thêm vào hàng đợi</button>
+        <button type="button" className="button primary compact" disabled={locked || total === 0}
+          onClick={() => props.onExport(false)}><Icon name="export" size={16} />Xuất và chạy hàng đợi</button>
+      </div>
+      <div className="tl-toolbar layer-toolbar">
+        {kinds.map((track) => <button key={track} type="button" className="button secondary compact"
+          disabled={locked || layerCount(track) >= MAX_LAYERS} onClick={() => addLane(track)}>+ Tầng {label[track].toLowerCase()}</button>)}
+        <button type="button" className="button secondary compact" disabled={locked} onClick={props.onTitle}>+ Chữ tại playhead</button>
+        <span className="tl-save">{label[lane.track]} {lane.layer + 1} đang chọn</span>
       </div>
 
       <div className="tl">
         <div className="tl-labels">
           <div className="tl-corner" />
-          {(["video", "audio"] as const).map((track) =>
-            <div className="track-name" key={track}><Icon name={track} />{vi.media[track]}</div>)}
+          {lanes.map((target) =>
+            <button type="button" className="track-name" key={laneKey(target)} disabled={locked}
+              aria-pressed={laneKey(lane) === laneKey(target)} onClick={() => props.onLane(target)}>
+              <Icon name={target.track === "text" ? "library" : target.track} />{label[target.track]} {target.layer + 1}
+            </button>)}
         </div>
         <div className="tl-scroll">
           <div className="tl-canvas" ref={canvas} style={{ width }}>
@@ -181,16 +213,20 @@ export function TimelineEditor(props: Props) {
               {Array.from({ length: Math.floor(width / (tick * 1000 * scale)) + 1 }, (_, index) =>
                 <span key={index} style={{ left: index * tick * 1000 * scale }}>{duration(index * tick * 1000)}</span>)}
             </div>
-            {(["video", "audio"] as const).map((track: Track) => {
-              const items = shown.filter((clip) => clip.track === track);
-              return <div className={`tl-lane ${track}`} key={track} onDragOver={allowDrop} onDrop={drop}
-                onPointerDown={(event) => { if (event.target === event.currentTarget) onSelect(null); }}>
+            {lanes.map((target) => {
+              const { track, layer } = target;
+              const items = shown.filter((clip) => clip.track === track && layerOf(clip) === layer);
+              return <div className={`tl-lane ${track}`} key={laneKey(target)} onDragOver={track === "text" ? undefined : allowDrop}
+                onDrop={(event) => drop(event, target)}
+                onPointerDown={(event) => {
+                  if (event.target === event.currentTarget) { props.onLane(target); onSelect(null); }
+                }}>
                 {!items.length && <span className="track-empty">{project ? vi.dropHint : vi.noClips}</span>}
                 {items.map((clip) => {
-                  const name = fileName(clip.relativePath);
+                  const name = clip.title?.text ?? fileName(clip.relativePath);
                   return <div key={clip.key} role="button" tabIndex={0} aria-pressed={clip.key === selectedKey}
                     aria-label={vi.clipLabel(name, timecode(clip.positionMs), timecode(clipLength(clip)))}
-                    className={`tl-clip ${trackOf(clip.kind)} ${clip.key === selectedKey ? "selected" : ""} ${clip.available ? "" : "offline"}`}
+                    className={`tl-clip ${track} ${clip.key === selectedKey ? "selected" : ""} ${clip.available ? "" : "offline"}`}
                     style={{ left: clip.positionMs * scale, width: Math.max(clipLength(clip) * scale, 6) }}
                     title={clip.available ? clip.relativePath : vi.unavailable}
                     onFocus={() => onSelect(clip.key)}
@@ -213,24 +249,6 @@ export function TimelineEditor(props: Props) {
         </div>
       </div>
 
-      {jobs.length > 0 && <ul className="render-jobs" aria-label={vi.exports}>
-        {jobs.map((job) => {
-          const active = job.status === "queued" || job.status === "running";
-          return <li key={job.id} className={`render-job ${job.status}`}>
-            <div className="render-copy">
-              <strong>{vi.renderStatus[job.status]}{job.status === "running" && ` · ${Math.floor(job.progress / 10)}%`}</strong>
-              <span title={job.outputPath}>{fileName(job.outputPath)} · {duration(job.durationMs)}</span>
-              {job.error && <span className="render-error">{job.error}</span>}
-            </div>
-            {active && <progress max={1000} value={job.status === "running" ? job.progress : undefined}
-              aria-label={vi.renderProgress} />}
-            {active && <button type="button" className="button secondary compact"
-              onClick={() => props.onCancelRender(job.id)}>{vi.cancel}</button>}
-            {(job.status === "failed" || job.status === "canceled") && <button type="button" className="button secondary compact"
-              disabled={locked || rendering} onClick={() => props.onRetryRender(job.id)}>{vi.retry}</button>}
-          </li>;
-        })}
-      </ul>}
     </section>
   );
 }

@@ -62,8 +62,28 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
         return empty(StatusCode::NOT_FOUND);
     };
     let thumbnail = route == "thumbnail";
-    if asset_id < 1 || (!thumbnail && route != "source") {
+    if asset_id < 1 || (!thumbnail && !matches!(route, "source" | "render")) {
         return empty(StatusCode::NOT_FOUND);
+    }
+    if route == "render" {
+        let Ok(job) = store.render_job(asset_id) else {
+            return empty(StatusCode::NOT_FOUND);
+        };
+        let output = Path::new(&job.output_path);
+        let (Some(parent), Some(name)) = (output.parent(), output.file_name()) else {
+            return empty(StatusCode::NOT_FOUND);
+        };
+        if job.status != "done"
+            || !output
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mp4"))
+        {
+            return empty(StatusCode::NOT_FOUND);
+        }
+        let Ok((path, _)) = authorized_file(parent, Path::new(name)) else {
+            return empty(StatusCode::NOT_FOUND);
+        };
+        return file_response(&path, "video/mp4", head, request);
     }
     let Ok(Some(source)) = store.source(asset_id, thumbnail) else {
         return empty(StatusCode::NOT_FOUND);
@@ -84,14 +104,22 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
     let Some(format) = MediaFormat::for_path(&path) else {
         return empty(StatusCode::NOT_FOUND);
     };
-    let Ok(mut file) = File::open(&path) else {
+    file_response(&path, format.mime(&source.kind), head, request)
+}
+
+fn file_response(
+    path: &Path,
+    mime: &'static str,
+    head: bool,
+    request: &Request<Vec<u8>>,
+) -> Response<Vec<u8>> {
+    let Ok(mut file) = File::open(path) else {
         return empty(StatusCode::NOT_FOUND);
     };
     let Ok(metadata) = file.metadata() else {
         return empty(StatusCode::NOT_FOUND);
     };
     let size = metadata.len();
-    let mime = format.mime(&source.kind);
     let response = headers(mime, size).header(header::ACCEPT_RANGES, "bytes");
     if head {
         return response.body(Vec::new()).expect("static media headers");

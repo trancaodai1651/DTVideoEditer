@@ -45,11 +45,47 @@ export interface TimelineClip {
   positionMs: number;
   sourceDurationMs: number | null;
   available: boolean;
+  layer: number;
+  look: ClipLook;
+}
+
+export type Aspect = "source" | "landscape" | "portrait" | "square";
+export type TitleColor = "white" | "yellow" | "cyan" | "black";
+export type EditorTrack = Track | "text";
+export interface ClipLook {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  opacity: number;
+  scale: number;
+  x: number;
+  y: number;
+  volume: number;
+  fadeMs: number;
+  motion: "none" | "slide";
+}
+export interface TitleStyle {
+  text: string;
+  size: number;
+  x: number;
+  y: number;
+  color: TitleColor;
+}
+export interface TitleEdit extends TitleStyle {
+  positionMs: number;
+  durationMs: number;
+  layer: number;
+}
+export interface TemplateEntry {
+  id: number;
+  template: { name: string; aspect: Aspect; sceneMs: number[] };
 }
 
 export interface Timeline {
   version: number;
   clips: TimelineClip[];
+  titles: TitleEdit[];
+  aspect: Aspect;
 }
 
 export interface ClipEdit {
@@ -57,12 +93,16 @@ export interface ClipEdit {
   startMs: number;
   endMs: number;
   positionMs: number;
+  layer?: number;
+  look?: Partial<ClipLook>;
 }
 
 /** Versioned contract shared with the native store and renderer. */
 export interface TimelineSnapshot {
   version: number;
   tracks: { kind: Track; clips: ClipEdit[] }[];
+  titles?: TitleEdit[];
+  aspect?: Aspect;
 }
 
 export type RenderStatus = "queued" | "running" | "done" | "failed" | "canceled";
@@ -182,12 +222,18 @@ export const api = {
   assets: (folderId: number | null, page: number) => invoke<AssetPage>("list_assets", { folderId, page }),
   projects: () => invoke<Project[]>("list_projects"),
   createProject: (name: string) => invoke<Project>("create_project", { name }),
+  createEditedProject: (name: string, snapshot: TimelineSnapshot) =>
+    invoke<Project>("create_edited_project", { name, snapshot }),
   timeline: (projectId: number) => invoke<Timeline>("load_timeline", { projectId }),
   saveTimeline: (projectId: number, snapshot: TimelineSnapshot) => invoke<void>("save_timeline", { projectId, snapshot }),
-  startRender: (projectId: number) => invoke<RenderJob | null>("start_render", { projectId }),
+  startRender: (projectId: number, queueOnly: boolean) => invoke<RenderJob | null>("start_render", { projectId, queueOnly }),
   retryRender: (jobId: number) => invoke<RenderJob>("retry_render", { jobId }),
   cancelRender: (jobId: number) => invoke<void>("cancel_render", { jobId }),
   renderJobs: (projectId: number) => invoke<RenderJob[]>("list_render_jobs", { projectId }),
+  renderQueue: () => invoke<RenderJob[]>("list_render_queue"),
+  runRenderQueue: () => invoke<void>("run_render_queue"),
+  templates: () => invoke<TemplateEntry[]>("list_editor_templates"),
+  analyzeReference: (assetId: number, name: string) => invoke<TemplateEntry>("analyze_reference", { assetId, name }),
   tools: () => invoke<MediaTools>("media_tools"),
   accounts: () => invoke<SocialAccount[]>("list_social_accounts"),
   connectAccount: (input: ConnectInput) => invoke<SocialAccount>("connect_social_account", { input }),
@@ -205,7 +251,7 @@ export const api = {
     invoke<boolean>("edit_remote_post", { accountId, remoteId, message }),
 };
 
-export function mediaUrl(route: "source" | "thumbnail", id: number, revision: number) {
+export function mediaUrl(route: "source" | "thumbnail" | "render", id: number, revision: number) {
   return `${convertFileSrc(`${route}-${id}`, "studio-media")}?v=${revision}`;
 }
 

@@ -7,6 +7,7 @@ mod probe;
 mod publish;
 mod render;
 mod store;
+mod templates;
 mod timeline;
 
 #[cfg(test)]
@@ -164,15 +165,31 @@ fn save_timeline(
     command(state.store.save_timeline(project_id, &snapshot))
 }
 
+#[tauri::command]
+fn create_edited_project(
+    state: State<AppState>,
+    name: String,
+    snapshot: TimelineSnapshot,
+) -> CommandResult<Project> {
+    command(
+        state
+            .store
+            .create_project_with_timeline(&name, Some(&snapshot)),
+    )
+}
+
 const RENDER_BUSY: StudioError = StudioError::Input("Đang xuất một video khác.");
 
-/// Starts the single render worker for a queued job.
-fn launch_render(app: &AppHandle, job_id: i64) -> Result<()> {
+/// Drains queued snapshots one at a time, oldest first.
+fn launch_render(app: &AppHandle) -> Result<()> {
     let state = app.state::<AppState>();
     let mut active = state.render.lock().map_err(|_| RENDER_BUSY)?;
     if active.is_some() {
-        return Err(RENDER_BUSY);
+        return Ok(());
     }
+    let Some(job_id) = state.store.next_queued_render()? else {
+        return Ok(());
+    };
     let cancel = Arc::new(AtomicBool::new(false));
     *active = Some(ActiveRender {
         job_id,
@@ -182,17 +199,31 @@ fn launch_render(app: &AppHandle, job_id: i64) -> Result<()> {
     let app = app.clone();
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
-        let (status, error) = match render::execute(&state.store, job_id, &cancel) {
-            Ok(render::Outcome::Done) => ("done", None),
-            Ok(render::Outcome::Canceled) => ("canceled", None),
-            Err(error) => ("failed", Some(error.to_string())),
-        };
-        let _ =
-            state
-                .store
-                .set_render_status(job_id, &["queued", "running"], status, error.as_deref());
-        if let Ok(mut active) = state.render.lock() {
-            *active = None;
+        let mut id = job_id;
+        let mut cancel = cancel;
+        loop {
+            let (status, error) = match render::execute(&state.store, id, &cancel) {
+                Ok(render::Outcome::Done) => ("done", None),
+                Ok(render::Outcome::Canceled) => ("canceled", None),
+                Err(error) => ("failed", Some(error.to_string())),
+            };
+            let _ =
+                state
+                    .store
+                    .set_render_status(id, &["queued", "running"], status, error.as_deref());
+            let Ok(mut active) = state.render.lock() else {
+                break;
+            };
+            let Ok(Some(next)) = state.store.next_queued_render() else {
+                *active = None;
+                break;
+            };
+            id = next;
+            cancel = Arc::new(AtomicBool::new(false));
+            *active = Some(ActiveRender {
+                job_id: id,
+                cancel: Arc::clone(&cancel),
+            });
         }
     });
     Ok(())
@@ -213,7 +244,11 @@ fn output_name(project: &str) -> String {
 }
 
 #[tauri::command]
-async fn start_render(app: AppHandle, project_id: i64) -> CommandResult<Option<RenderJob>> {
+async fn start_render(
+    app: AppHandle,
+    project_id: i64,
+    queue_only: Option<bool>,
+) -> CommandResult<Option<RenderJob>> {
     blocking(move || {
         let state = app.state::<AppState>();
         let project = state
@@ -225,9 +260,6 @@ async fn start_render(app: AppHandle, project_id: i64) -> CommandResult<Option<R
         let snapshot = state.store.snapshot(project_id)?;
         if snapshot.duration_ms() == 0 {
             return Err(StudioError::Input("Thêm clip vào timeline trước khi xuất."));
-        }
-        if state.render.lock().map_err(|_| RENDER_BUSY)?.is_some() {
-            return Err(RENDER_BUSY);
         }
         // Only the native dialog chooses where the video is written.
         let window = app
@@ -253,16 +285,13 @@ async fn start_render(app: AppHandle, project_id: i64) -> CommandResult<Option<R
         {
             path.as_mut_os_string().push(".mp4");
         }
+        let path = render::checked_output(&path, &std::collections::HashMap::new())?;
         let path = path
             .to_str()
             .ok_or(StudioError::Input("Tên tệp không phải UTF-8 hợp lệ."))?;
         let job = state.store.create_render_job(project_id, &snapshot, path)?;
-        if let Err(error) = launch_render(&app, job.id) {
-            let message = error.to_string();
-            state
-                .store
-                .set_render_status(job.id, &["queued"], "failed", Some(&message))?;
-            return Err(error);
+        if !queue_only.unwrap_or(false) {
+            launch_render(&app)?;
         }
         Ok(Some(job))
     })
@@ -273,9 +302,6 @@ async fn start_render(app: AppHandle, project_id: i64) -> CommandResult<Option<R
 fn retry_render(app: AppHandle, job_id: i64) -> CommandResult<RenderJob> {
     let state = app.state::<AppState>();
     command((|| {
-        if state.render.lock().map_err(|_| RENDER_BUSY)?.is_some() {
-            return Err(RENDER_BUSY);
-        }
         if !state
             .store
             .set_render_status(job_id, &["failed", "canceled"], "queued", None)?
@@ -283,13 +309,6 @@ fn retry_render(app: AppHandle, job_id: i64) -> CommandResult<RenderJob> {
             return Err(StudioError::Input(
                 "Chỉ thử lại được lượt xuất đã lỗi hoặc đã hủy.",
             ));
-        }
-        if let Err(error) = launch_render(&app, job_id) {
-            let message = error.to_string();
-            state
-                .store
-                .set_render_status(job_id, &["queued"], "failed", Some(&message))?;
-            return Err(error);
         }
         state.store.render_job(job_id)
     })())
@@ -300,6 +319,12 @@ fn cancel_render(state: State<AppState>, job_id: i64) -> CommandResult<()> {
     let active = state.render.lock().map_err(|_| RENDER_BUSY.to_string())?;
     if let Some(active) = active.as_ref().filter(|active| active.job_id == job_id) {
         active.cancel.store(true, Ordering::Relaxed);
+    } else {
+        command(
+            state
+                .store
+                .set_render_status(job_id, &["queued"], "canceled", None),
+        )?;
     }
     Ok(())
 }
@@ -307,6 +332,38 @@ fn cancel_render(state: State<AppState>, job_id: i64) -> CommandResult<()> {
 #[tauri::command]
 fn list_render_jobs(state: State<AppState>, project_id: i64) -> CommandResult<Vec<RenderJob>> {
     command(state.store.render_jobs(project_id))
+}
+
+#[tauri::command]
+fn list_render_queue(state: State<AppState>) -> CommandResult<Vec<RenderJob>> {
+    command(state.store.render_queue())
+}
+
+#[tauri::command]
+fn run_render_queue(app: AppHandle) -> CommandResult<()> {
+    command(launch_render(&app))
+}
+
+#[tauri::command]
+fn list_editor_templates(state: State<AppState>) -> CommandResult<Vec<templates::TemplateEntry>> {
+    command(state.store.templates())
+}
+
+#[tauri::command]
+async fn analyze_reference(
+    app: AppHandle,
+    asset_id: i64,
+    name: String,
+) -> CommandResult<templates::TemplateEntry> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let _read = state
+            .scan
+            .try_lock()
+            .map_err(|_| StudioError::Input("Chờ tác vụ thư viện đang chạy."))?;
+        templates::analyze(&state.store, asset_id, &name)
+    })
+    .await
 }
 
 /// Publishing, deleting and editing change something outside this machine, so the
@@ -547,10 +604,15 @@ fn main() {
             create_project,
             load_timeline,
             save_timeline,
+            create_edited_project,
             start_render,
             retry_render,
             cancel_render,
             list_render_jobs,
+            list_render_queue,
+            run_render_queue,
+            list_editor_templates,
+            analyze_reference,
             list_social_accounts,
             connect_social_account,
             disconnect_social_account,

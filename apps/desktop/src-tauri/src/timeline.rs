@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Result, StudioError};
 
-pub const TIMELINE_VERSION: u32 = 2;
+pub const TIMELINE_VERSION: u32 = 3;
+pub const MAX_LAYERS: u8 = 12;
 pub const MIN_CLIP_MS: i64 = 100;
 pub const MAX_IMAGE_MS: i64 = 10 * 60 * 1000;
 pub const MAX_TIMELINE_MS: i64 = 6 * 60 * 60 * 1000;
@@ -17,6 +18,131 @@ pub struct ClipEdit {
     pub start_ms: i64,
     pub end_ms: i64,
     pub position_ms: i64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub layer: u8,
+    #[serde(default, skip_serializing_if = "Look::is_default")]
+    pub look: Look,
+}
+
+fn is_zero(value: &u8) -> bool {
+    *value == 0
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Motion {
+    #[default]
+    None,
+    Slide,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct Look {
+    pub brightness: i16,
+    pub contrast: u16,
+    pub saturation: u16,
+    pub opacity: u8,
+    pub scale: u16,
+    pub x: i16,
+    pub y: i16,
+    pub volume: u16,
+    pub fade_ms: u16,
+    pub motion: Motion,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self {
+            brightness: 0,
+            contrast: 100,
+            saturation: 100,
+            opacity: 100,
+            scale: 100,
+            x: 0,
+            y: 0,
+            volume: 100,
+            fade_ms: 0,
+            motion: Motion::None,
+        }
+    }
+}
+
+impl Look {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn valid(&self) -> bool {
+        (-100..=100).contains(&self.brightness)
+            && self.contrast <= 200
+            && self.saturation <= 300
+            && self.opacity <= 100
+            && (10..=200).contains(&self.scale)
+            && (-100..=100).contains(&self.x)
+            && (-100..=100).contains(&self.y)
+            && self.volume <= 200
+            && self.fade_ms <= 3000
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Aspect {
+    #[default]
+    Source,
+    Landscape,
+    Portrait,
+    Square,
+}
+
+impl Aspect {
+    fn is_source(&self) -> bool {
+        *self == Self::Source
+    }
+
+    pub fn from_dimensions(width: u32, height: u32) -> Self {
+        if width == height {
+            Self::Square
+        } else if width > height {
+            Self::Landscape
+        } else {
+            Self::Portrait
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TitleEdit {
+    pub text: String,
+    pub position_ms: i64,
+    pub duration_ms: i64,
+    pub layer: u8,
+    pub size: u8,
+    pub x: i16,
+    pub y: i16,
+    pub color: TitleColor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleColor {
+    White,
+    Yellow,
+    Cyan,
+    Black,
+}
+
+impl TitleColor {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::White => "white",
+            Self::Yellow => "yellow",
+            Self::Cyan => "cyan",
+            Self::Black => "black",
+        }
+    }
 }
 
 impl ClipEdit {
@@ -42,6 +168,10 @@ pub struct TrackEdit {
 pub struct TimelineSnapshot {
     pub version: u32,
     pub tracks: Vec<TrackEdit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub titles: Vec<TitleEdit>,
+    #[serde(default, skip_serializing_if = "Aspect::is_source")]
+    pub aspect: Aspect,
 }
 
 impl TimelineSnapshot {
@@ -61,6 +191,11 @@ impl TimelineSnapshot {
             .iter()
             .flat_map(|track| &track.clips)
             .map(ClipEdit::finish_ms)
+            .chain(
+                self.titles
+                    .iter()
+                    .map(|title| title.position_ms.saturating_add(title.duration_ms)),
+            )
             .max()
             .unwrap_or(0)
     }
@@ -73,7 +208,7 @@ pub struct AssetFacts<'a> {
 }
 
 pub fn check_version(snapshot: &TimelineSnapshot) -> Result<()> {
-    if snapshot.version != TIMELINE_VERSION {
+    if !matches!(snapshot.version, 2 | TIMELINE_VERSION) {
         return Err(StudioError::Input("Phiên bản timeline không được hỗ trợ."));
     }
     let mut kinds: Vec<_> = snapshot
@@ -85,8 +220,24 @@ pub fn check_version(snapshot: &TimelineSnapshot) -> Result<()> {
     if kinds.iter().any(|kind| !matches!(*kind, "video" | "audio"))
         || kinds.windows(2).any(|pair| pair[0] == pair[1])
     {
+        return Err(StudioError::Input("Timeline có nhóm media không hợp lệ."));
+    }
+    if snapshot.titles.len() > 100
+        || snapshot.titles.iter().any(|title| {
+            title.text.trim().is_empty()
+                || title.text.chars().count() > 600
+                || title.text.chars().any(|c| c.is_control() && c != '\n')
+                || title.position_ms < 0
+                || title.duration_ms < MIN_CLIP_MS
+                || title.position_ms.saturating_add(title.duration_ms) > MAX_TIMELINE_MS
+                || title.layer >= MAX_LAYERS
+                || !(2..=24).contains(&title.size)
+                || !(-100..=100).contains(&title.x)
+                || !(-100..=100).contains(&title.y)
+        })
+    {
         return Err(StudioError::Input(
-            "Timeline chỉ có một track video và một track âm thanh.",
+            "Nội dung hoặc thời lượng chữ nằm ngoài giới hạn.",
         ));
     }
     Ok(())
@@ -101,8 +252,14 @@ pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()
     if !fits_track {
         return Err(StudioError::Input("Loại media không khớp với track."));
     }
+    if clip.layer >= MAX_LAYERS || !clip.look.valid() {
+        return Err(StudioError::Input(
+            "Tầng hoặc thuộc tính clip nằm ngoài giới hạn.",
+        ));
+    }
     if clip.start_ms < 0
         || clip.position_ms < 0
+        || clip.end_ms <= clip.start_ms
         || clip.end_ms > MAX_TIMELINE_MS
         || clip.position_ms > MAX_TIMELINE_MS
         || clip.length_ms() < MIN_CLIP_MS
@@ -127,14 +284,24 @@ pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()
 }
 
 pub fn check_track(clips: &[ClipEdit]) -> Result<()> {
-    if clips.len() > MAX_TRACK_CLIPS {
+    if clips.len() > MAX_TRACK_CLIPS * usize::from(MAX_LAYERS) {
         return Err(StudioError::Input("Track có quá nhiều clip."));
     }
     let mut order: Vec<_> = clips.iter().collect();
-    order.sort_by_key(|clip| clip.position_ms);
+    order.sort_by_key(|clip| (clip.layer, clip.position_ms));
+    let mut count = [0usize; MAX_LAYERS as usize];
+    for clip in &order {
+        let Some(layer) = count.get_mut(usize::from(clip.layer)) else {
+            return Err(StudioError::Input("Tầng clip nằm ngoài giới hạn."));
+        };
+        *layer += 1;
+        if *layer > MAX_TRACK_CLIPS {
+            return Err(StudioError::Input("Tầng có quá nhiều clip."));
+        }
+    }
     if order
         .windows(2)
-        .any(|pair| pair[1].position_ms < pair[0].finish_ms())
+        .any(|pair| pair[0].layer == pair[1].layer && pair[1].position_ms < pair[0].finish_ms())
     {
         return Err(StudioError::Input(
             "Các clip trên cùng một track không được chồng lên nhau.",
@@ -153,6 +320,8 @@ mod tests {
             start_ms,
             end_ms,
             position_ms,
+            layer: 0,
+            look: Look::default(),
         }
     }
 
@@ -195,6 +364,8 @@ mod tests {
                     clips: Vec::new(),
                 })
                 .collect(),
+            titles: vec![],
+            aspect: Aspect::Source,
         };
         assert!(check_version(&snapshot(2, &["video", "audio"])).is_ok());
         assert!(check_version(&snapshot(2, &["video"])).is_ok());

@@ -1,7 +1,8 @@
-import type { MediaKind, Timeline, TimelineSnapshot, Track } from "./desktop";
+import type { Aspect, ClipLook, EditorTrack, MediaKind, Timeline, TimelineSnapshot, TitleStyle, Track } from "./desktop";
 
 // Limits mirror src-tauri/src/timeline.rs, which is the authority on save.
-export const TIMELINE_VERSION = 2;
+export const TIMELINE_VERSION = 3;
+export const MAX_LAYERS = 12;
 export const MIN_CLIP_MS = 100;
 export const MAX_IMAGE_MS = 600_000;
 export const DEFAULT_IMAGE_MS = 3000;
@@ -12,13 +13,16 @@ export interface Clip {
   key: string;
   assetId: number;
   relativePath: string;
-  kind: MediaKind;
-  track: Track;
+  kind: MediaKind | "text";
+  track: EditorTrack;
   startMs: number;
   endMs: number;
   positionMs: number;
   sourceMs: number | null;
   available: boolean;
+  layer?: number;
+  look?: Partial<ClipLook>;
+  title?: TitleStyle;
 }
 
 export interface MediaRef {
@@ -34,31 +38,49 @@ const newKey = () => `clip-${++serial}`;
 export const clipLength = (clip: Clip) => clip.endMs - clip.startMs;
 export const clipFinish = (clip: Clip) => clip.positionMs + clipLength(clip);
 export const trackOf = (kind: MediaKind): Track => (kind === "audio" ? "audio" : "video");
+export const layerOf = (clip: Clip) => clip.layer ?? 0;
+export const sameLane = (left: Clip, right: Clip) => left.track === right.track && layerOf(left) === layerOf(right);
+export const defaultLook: ClipLook = {
+  brightness: 0, contrast: 100, saturation: 100, opacity: 100, scale: 100, x: 0, y: 0, volume: 100, fadeMs: 0, motion: "none",
+};
+export const defaultTitle: TitleStyle = { text: "Tiêu đề", size: 7, x: 0, y: 66, color: "white" };
 export const totalMs = (clips: Clip[]) => clips.reduce((end, clip) => Math.max(end, clipFinish(clip)), 0);
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 
 export function fromTimeline(timeline: Timeline): Clip[] {
-  return timeline.clips.map((clip) => ({
+  const media: Clip[] = timeline.clips.map((clip) => ({
     key: newKey(), assetId: clip.assetId, relativePath: clip.relativePath, kind: clip.kind, track: clip.track,
     startMs: clip.startMs, endMs: clip.endMs, positionMs: clip.positionMs,
-    sourceMs: clip.sourceDurationMs, available: clip.available,
+    sourceMs: clip.sourceDurationMs, available: clip.available, layer: clip.layer, look: clip.look,
   }));
+  const titles: Clip[] = (timeline.titles ?? []).map(({ positionMs, durationMs, layer, ...title }) => ({
+    key: newKey(), assetId: 0, relativePath: title.text, kind: "text", track: "text",
+    startMs: 0, endMs: durationMs, positionMs, sourceMs: null, available: true, layer, title,
+  }));
+  return [...media, ...titles];
 }
 
-export function toSnapshot(clips: Clip[]): TimelineSnapshot {
+export function toSnapshot(clips: Clip[], aspect: Aspect = "source"): TimelineSnapshot {
+  const titles = clips.filter((clip) => clip.title).map((clip) => ({
+    ...clip.title!, positionMs: clip.positionMs, durationMs: clipLength(clip), layer: layerOf(clip),
+  }));
   return {
     version: TIMELINE_VERSION,
+    ...(aspect !== "source" ? { aspect } : {}),
+    ...(titles.length ? { titles } : {}),
     tracks: (["video", "audio"] as const).map((kind) => ({
       kind,
       clips: clips.filter((clip) => clip.track === kind).sort((a, b) => a.positionMs - b.positionMs)
-        .map(({ assetId, startMs, endMs, positionMs }) => ({ assetId, startMs, endMs, positionMs })),
+        .map(({ assetId, startMs, endMs, positionMs, layer, look }) => ({
+          assetId, startMs, endMs, positionMs, ...(layer ? { layer } : {}), ...(look ? { look } : {}),
+        })),
     })),
   };
 }
 
 /** Nearest position on a track where a clip of this length overlaps nothing. */
-export function place(clips: Clip[], track: Track, lengthMs: number, wantedMs: number, ignoreKey?: string) {
-  const others = clips.filter((clip) => clip.track === track && clip.key !== ignoreKey);
+export function place(clips: Clip[], track: EditorTrack, lengthMs: number, wantedMs: number, ignoreKey?: string, layer = 0) {
+  const others = clips.filter((clip) => clip.track === track && layerOf(clip) === layer && clip.key !== ignoreKey);
   const free = (at: number) =>
     at >= 0 && others.every((other) => at >= clipFinish(other) || at + lengthMs <= other.positionMs);
   const wanted = Math.max(0, Math.round(wantedMs));
@@ -69,16 +91,33 @@ export function place(clips: Clip[], track: Track, lengthMs: number, wantedMs: n
 }
 
 /** Adds media at a position, or at the end of its track. Null when it has no usable length. */
-export function addClip(clips: Clip[], media: MediaRef, positionMs?: number): Clip[] | null {
+export function addClip(clips: Clip[], media: MediaRef, positionMs?: number, layer = 0): Clip[] | null {
   const lengthMs = media.kind === "image" ? DEFAULT_IMAGE_MS : media.durationMs;
   if (!lengthMs || lengthMs < MIN_CLIP_MS) return null;
   const track = trackOf(media.kind);
-  const wanted = positionMs ?? totalMs(clips.filter((clip) => clip.track === track));
+  const wanted = positionMs ?? totalMs(clips.filter((clip) => clip.track === track && layerOf(clip) === layer));
   return [...clips, {
     key: newKey(), assetId: media.assetId, relativePath: media.relativePath, kind: media.kind, track,
-    startMs: 0, endMs: lengthMs, positionMs: place(clips, track, lengthMs, wanted),
-    sourceMs: media.durationMs, available: true,
+    startMs: 0, endMs: lengthMs, positionMs: place(clips, track, lengthMs, wanted, undefined, layer),
+    sourceMs: media.durationMs, available: true, ...(layer ? { layer } : {}),
   }];
+}
+
+export function addTitle(clips: Clip[], wantedMs: number, layer: number): Clip[] {
+  if (clips.filter((clip) => clip.kind === "text").length >= 100) return clips;
+  const length = 3000;
+  return [...clips, {
+    key: newKey(), assetId: 0, relativePath: defaultTitle.text, kind: "text", track: "text", layer,
+    startMs: 0, endMs: length, positionMs: place(clips, "text", length, wantedMs, undefined, layer),
+    sourceMs: null, available: true, title: defaultTitle,
+  }];
+}
+
+export function changeLayer(clips: Clip[], key: string, layer: number): Clip[] {
+  const clip = clips.find((item) => item.key === key);
+  if (!clip || layerOf(clip) === layer || layer < 0 || layer >= MAX_LAYERS) return clips;
+  const positionMs = place(clips, clip.track, clipLength(clip), clip.positionMs, key, layer);
+  return clips.map((item) => item.key === key ? { ...clip, layer, positionMs } : item);
 }
 
 function update(clips: Clip[], key: string, change: (clip: Clip) => Clip) {
@@ -94,19 +133,20 @@ function update(clips: Clip[], key: string, change: (clip: Clip) => Clip) {
 
 export function moveClip(clips: Clip[], key: string, wantedMs: number) {
   return update(clips, key, (clip) => ({
-    ...clip, positionMs: place(clips, clip.track, clipLength(clip), wantedMs, key),
+    ...clip, positionMs: place(clips, clip.track, clipLength(clip), wantedMs, key, layerOf(clip)),
   }));
 }
 
 /** Drags the in point. The out point stays where it is on the timeline. */
 export function trimStart(clips: Clip[], key: string, deltaMs: number) {
   return update(clips, key, (clip) => {
-    const before = clips.filter((other) => other.track === clip.track && other.key !== key
+    const before = clips.filter((other) => sameLane(other, clip) && other.key !== key
       && clipFinish(other) <= clip.positionMs).reduce((end, other) => Math.max(end, clipFinish(other)), 0);
     const room = clip.positionMs - before;
-    const extend = clip.kind === "image" ? Math.min(room, MAX_IMAGE_MS - clipLength(clip)) : Math.min(room, clip.startMs);
+    const still = clip.kind === "image" || clip.kind === "text";
+    const extend = still ? Math.min(room, MAX_IMAGE_MS - clipLength(clip)) : Math.min(room, clip.startMs);
     const delta = clamp(Math.round(deltaMs), -extend, clipLength(clip) - MIN_CLIP_MS);
-    return clip.kind === "image"
+    return still
       ? { ...clip, endMs: clip.endMs - delta, positionMs: clip.positionMs + delta }
       : { ...clip, startMs: clip.startMs + delta, positionMs: clip.positionMs + delta };
   });
@@ -115,9 +155,9 @@ export function trimStart(clips: Clip[], key: string, deltaMs: number) {
 /** Drags the out point up to the source end or the next clip. */
 export function trimEnd(clips: Clip[], key: string, deltaMs: number) {
   return update(clips, key, (clip) => {
-    const next = clips.filter((other) => other.track === clip.track && other.key !== key
+    const next = clips.filter((other) => sameLane(other, clip) && other.key !== key
       && other.positionMs >= clipFinish(clip)).reduce((start, other) => Math.min(start, other.positionMs), Infinity);
-    const source = clip.kind === "image" ? MAX_IMAGE_MS : (clip.sourceMs ?? clip.endMs) - clip.startMs;
+    const source = clip.kind === "image" || clip.kind === "text" ? MAX_IMAGE_MS : (clip.sourceMs ?? clip.endMs) - clip.startMs;
     const longest = Math.max(MIN_CLIP_MS, Math.min(next - clip.positionMs, source));
     return { ...clip, endMs: clip.startMs + clamp(clipLength(clip) + Math.round(deltaMs), MIN_CLIP_MS, longest) };
   });
@@ -130,7 +170,7 @@ export function splitClip(clips: Clip[], key: string, atMs: number): Clip[] | nu
   const offset = Math.round(atMs) - clip.positionMs;
   if (offset < MIN_CLIP_MS || clipLength(clip) - offset < MIN_CLIP_MS) return null;
   const left = { ...clip, endMs: clip.startMs + offset };
-  const right = clip.kind === "image"
+  const right = clip.kind === "image" || clip.kind === "text"
     ? { ...clip, key: newKey(), endMs: clip.endMs - offset, positionMs: clip.positionMs + offset }
     : { ...clip, key: newKey(), startMs: clip.startMs + offset, positionMs: clip.positionMs + offset };
   return clips.flatMap((item) => (item.key === key ? [left, right] : [item]));

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  addClip, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, place, redo, removeClip, snap, splitClip,
+  addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, place, redo, removeClip, snap, splitClip,
   toSnapshot, totalMs, trimEnd, trimStart, undo,
 } from "../apps/desktop/src/timeline.ts";
 
@@ -97,7 +97,7 @@ test("undo and redo walk committed edits", () => {
 test("snapshot matches the versioned native contract", () => {
   const clips = moveClip(addClip(addClip(addClip([], video), audio), image), addClip([], video)[0].key, 0);
   assert.deepEqual(toSnapshot(clips), {
-    version: 2,
+    version: 3,
     tracks: [
       { kind: "video", clips: [
         { assetId: 1, startMs: 0, endMs: 6000, positionMs: 0 },
@@ -106,4 +106,18 @@ test("snapshot matches the versioned native contract", () => {
       { kind: "audio", clips: [{ assetId: 3, startMs: 0, endMs: 3000, positionMs: 0 }] },
     ],
   });
+});
+
+test("overlaps independent video/audio layers and round-trips editable titles", () => {
+  let clips = addClip(addClip([], video, 0), image, 0, 1);
+  clips = addClip(addClip(clips, audio, 0), audio, 0, 2);
+  clips = addTitle(clips, 100, 1);
+  assert.equal(clipsAt(clips, 200).length, 5);
+  const saved = toSnapshot(clips, "portrait");
+  assert.equal(saved.tracks[0].clips[1].layer, 1);
+  assert.equal(saved.tracks[1].clips[1].layer, 2);
+  assert.equal(saved.aspect, "portrait");
+  assert.equal(saved.titles[0].positionMs, 100);
+  clips = changeLayer(clips, clips[1].key, 0);
+  assert.equal(clips[1].positionMs, 6000);
 });

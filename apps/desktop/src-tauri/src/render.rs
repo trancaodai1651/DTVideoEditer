@@ -20,7 +20,7 @@ use crate::{
     model::{Result, StudioError},
     probe::{self, MediaFormat},
     store::Store,
-    timeline::{ClipEdit, TimelineSnapshot},
+    timeline::{Aspect, ClipEdit, Motion, TimelineSnapshot, check_version},
 };
 
 pub const FPS: u32 = 30;
@@ -41,8 +41,8 @@ pub struct Source {
 pub struct Plan {
     pub args: Vec<OsString>,
     pub duration_ms: i64,
-    pub partial: PathBuf,
     pub output: PathBuf,
+    titles: Vec<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -56,6 +56,12 @@ fn seconds(ms: i64) -> String {
 }
 
 fn frame_size(snapshot: &TimelineSnapshot, sources: &HashMap<i64, Source>) -> (u32, u32) {
+    match snapshot.aspect {
+        Aspect::Landscape => return (1920, 1080),
+        Aspect::Portrait => return (1080, 1920),
+        Aspect::Square => return (1080, 1080),
+        Aspect::Source => {}
+    }
     let even = |value: f64| ((value.round() as u32).max(16)) & !1;
     snapshot
         .clips("video")
@@ -94,10 +100,23 @@ fn push_input(args: &mut Vec<OsString>, source: &Source, clip: &ClipEdit) {
 }
 
 fn audio_chain(index: usize, clip: &ClipEdit) -> String {
+    let length = clip.length_ms();
+    let fade = i64::from(clip.look.fade_ms).min(length / 2);
+    let fades = if fade == 0 {
+        String::new()
+    } else {
+        format!(
+            ",afade=t=in:d={},afade=t=out:st={}:d={}",
+            seconds(fade),
+            seconds(length - fade),
+            seconds(fade)
+        )
+    };
     format!(
         "[{index}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,\
-         atrim=duration={},asetpts=PTS-STARTPTS,adelay={}:all=1[a{index}]",
-        seconds(clip.length_ms()),
+         atrim=duration={},asetpts=PTS-STARTPTS,volume={:.2}{fades},adelay={}:all=1[a{index}]",
+        seconds(length),
+        f64::from(clip.look.volume) / 100.0,
         clip.position_ms
     )
 }
@@ -109,59 +128,75 @@ pub fn plan(
     sources: &HashMap<i64, Source>,
     output: &Path,
 ) -> Result<Plan> {
+    check_version(snapshot)?;
     let total = snapshot.duration_ms();
     if total <= 0 {
         return Err(StudioError::Input("Thêm clip vào timeline trước khi xuất."));
     }
     let missing = || StudioError::Input("Media của một clip không còn khả dụng. Hãy quét lại.");
     let (width, height) = frame_size(snapshot, sources);
-    let fit = format!(
-        "scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
-         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
-    );
-    let black = |length: i64, label: &str| {
-        format!(
-            "color=c=black:s={width}x{height}:r={FPS}:d={},format=yuv420p,setsar=1{label}",
-            seconds(length)
-        )
-    };
-
     let mut inputs = Vec::new();
-    let mut graph = Vec::new();
-    let mut video = Vec::new();
+    let mut graph = vec![format!(
+        "color=c=black:s={width}x{height}:r={FPS}:d={},setsar=1[base]",
+        seconds(total)
+    )];
     let mut audio = vec!["[abase]".to_owned()];
     let mut index = 0;
-    let mut cursor = 0;
+    let mut video = "[base]".to_owned();
+    let mut visuals = snapshot.clips("video");
+    visuals.sort_by_key(|clip| (clip.layer, clip.position_ms));
 
-    for clip in snapshot.clips("video") {
+    for clip in visuals {
         let source = sources.get(&clip.asset_id).ok_or_else(missing)?;
         if source.kind == "audio" {
             return Err(StudioError::Input("Loại media không khớp với track."));
         }
-        if clip.position_ms > cursor {
-            let label = format!("[g{}]", video.len());
-            graph.push(black(clip.position_ms - cursor, &label));
-            video.push(label);
-        }
         push_input(&mut inputs, source, clip);
         let length = seconds(clip.length_ms());
-        // tpad holds a still for its whole length and covers a source that ends early.
+        let at = seconds(clip.position_ms);
+        let end = seconds(clip.finish_ms());
+        let look = clip.look;
+        let fit_width = (width * u32::from(look.scale) / 100).max(2);
+        let fit_height = (height * u32::from(look.scale) / 100).max(2);
+        let fade = i64::from(look.fade_ms).min(clip.length_ms() / 2);
+        let fades = if fade == 0 {
+            String::new()
+        } else {
+            format!(
+                ",fade=t=in:d={}:alpha=1,fade=t=out:st={}:d={}:alpha=1",
+                seconds(fade),
+                seconds(clip.length_ms() - fade),
+                seconds(fade)
+            )
+        };
         graph.push(format!(
-            "[{index}:V:0]{fit},fps={FPS},tpad=stop_mode=clone:stop_duration={length},\
-             format=yuv420p,trim=duration={length},setpts=PTS-STARTPTS[v{index}]"
+            "[{index}:V:0]scale={fit_width}:{fit_height}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
+             setsar=1,fps={FPS},tpad=stop_mode=clone:stop_duration={length},trim=duration={length},setpts=PTS-STARTPTS,\
+             eq=brightness={:.2}:contrast={:.2}:saturation={:.2},format=rgba,colorchannelmixer=aa={:.2},\
+             format=yuva420p{fades},setpts=PTS+{at}/TB[v{index}]",
+            f64::from(look.brightness) / 100.0, f64::from(look.contrast) / 100.0,
+            f64::from(look.saturation) / 100.0, f64::from(look.opacity) / 100.0,
         ));
-        video.push(format!("[v{index}]"));
+        let slide = if look.motion == Motion::Slide {
+            format!(
+                "-(W+w)/2*max(0,1-(t-{at})/{})",
+                seconds(clip.length_ms().min(450))
+            )
+        } else {
+            String::new()
+        };
+        let composed = format!("[layer{index}]");
+        graph.push(format!(
+            "{video}[v{index}]overlay=x='(W-w)/2+W*{}/100{slide}':y='(H-h)/2+H*{}/100':\
+             eof_action=pass:repeatlast=0:enable='gte(t,{at})*lt(t,{end})'{composed}",
+            look.x, look.y,
+        ));
+        video = composed;
         if source.kind == "video" && source.has_audio {
             graph.push(audio_chain(index, clip));
             audio.push(format!("[a{index}]"));
         }
-        cursor = clip.finish_ms();
         index += 1;
-    }
-    if total > cursor {
-        let label = format!("[g{}]", video.len());
-        graph.push(black(total - cursor, &label));
-        video.push(label);
     }
     for clip in snapshot.clips("audio") {
         let source = sources.get(&clip.asset_id).ok_or_else(missing)?;
@@ -176,25 +211,46 @@ pub fn plan(
         index += 1;
     }
 
-    graph.push(format!(
-        "{}concat=n={}:v=1:a=0[vout]",
-        video.concat(),
-        video.len()
-    ));
+    let mut titles: Vec<_> = snapshot.titles.iter().collect();
+    titles.sort_by_key(|title| title.layer);
+    for (index, title) in titles.iter().enumerate() {
+        let label = format!("[title{index}]");
+        let color = title.color.name();
+        let border = if color == "black" { "white" } else { "black" };
+        graph.push(format!(
+            "{video}drawtext=fontfile=font.ttf:textfile=title-{index}.txt:expansion=none:\
+             fontsize=h*{}/100:fontcolor={color}:borderw=2:bordercolor={border}:\
+             x=(w-tw)*{}/200:y=(h-th)*{}/200:enable='gte(t,{})*lt(t,{})'{label}",
+            title.size,
+            title.x + 100,
+            title.y + 100,
+            seconds(title.position_ms),
+            seconds(title.position_ms + title.duration_ms),
+        ));
+        video = label;
+    }
+    graph.push(format!("{video}format=yuv420p[vout]"));
     graph.push(format!(
         "anullsrc=r=48000:cl=stereo,atrim=duration={}[abase]",
         seconds(total)
     ));
     graph.push(format!(
-        "{}amix=inputs={}:duration=first:normalize=0[aout]",
+        "{}amix=inputs={}:duration=first:normalize=0,alimiter=limit=0.95:level=0:latency=1[aout]",
         audio.concat(),
         audio.len()
     ));
 
-    let partial = output.with_extension("mp4.part");
-    let mut args: Vec<OsString> = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
-        .map(OsString::from)
-        .into();
+    let mut args: Vec<OsString> = [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-filter_complex_threads",
+        "1",
+    ]
+    .map(OsString::from)
+    .into();
     args.extend(inputs);
     args.push("-filter_complex".into());
     args.push(graph.join(";").into());
@@ -218,8 +274,9 @@ pub fn plan(
         ]
         .map(OsString::from),
     );
-    args.push(partial.clone().into());
-    if args.iter().map(|arg| arg.len() + 3).sum::<usize>() > MAX_COMMAND_CHARS {
+    if args.iter().map(|arg| arg.len() + 3).sum::<usize>() + output.as_os_str().len() + 64
+        > MAX_COMMAND_CHARS
+    {
         return Err(StudioError::Input(
             "Timeline có quá nhiều clip để xuất trong một lượt.",
         ));
@@ -227,8 +284,8 @@ pub fn plan(
     Ok(Plan {
         args,
         duration_ms: total,
-        partial,
         output: output.to_path_buf(),
+        titles: titles.into_iter().map(|title| title.text.clone()).collect(),
     })
 }
 
@@ -240,8 +297,48 @@ pub fn run(
     cancel: &AtomicBool,
     mut on_progress: impl FnMut(u16),
 ) -> Result<Outcome> {
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(Outcome::Canceled);
+    }
+    let folder = plan
+        .output
+        .parent()
+        .ok_or(StudioError::Input("Vị trí xuất không hợp lệ."))?;
+    let partial = tempfile::Builder::new()
+        .prefix(".dtedit-")
+        .suffix(".mp4.part")
+        .tempfile_in(folder)?
+        .into_temp_path();
     let mut cmd = probe::command(ffmpeg);
-    cmd.args(&plan.args).stderr(Stdio::piped());
+    let work = if plan.titles.is_empty() {
+        None
+    } else {
+        let work = tempfile::tempdir()?;
+        let font = [
+            std::env::var_os("WINDIR")
+                .map(PathBuf::from)
+                .map(|dir| dir.join("Fonts/arial.ttf")),
+            Some(PathBuf::from(
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+            )),
+            Some(PathBuf::from(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            )),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|path| path.is_absolute() && path.is_file())
+        .ok_or(StudioError::Input(
+            "Thiếu phông chữ Arial hoặc DejaVu Sans để xuất lớp chữ.",
+        ))?;
+        fs::copy(font, work.path().join("font.ttf"))?;
+        for (index, text) in plan.titles.iter().enumerate() {
+            fs::write(work.path().join(format!("title-{index}.txt")), text)?;
+        }
+        cmd.current_dir(work.path());
+        Some(work)
+    };
+    cmd.args(&plan.args).arg(&partial).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take().expect("stdout is piped");
     let mut stderr = child.stderr.take().expect("stderr is piped");
@@ -296,15 +393,19 @@ pub fn run(
     };
     let _ = progress.join();
     let tail = errors.join().unwrap_or_default();
+    drop(work);
 
     match status {
-        Some(status) if status.success() => {
-            fs::rename(&plan.partial, &plan.output)?;
+        Some(status) if status.success() && !cancel.load(Ordering::Relaxed) => {
+            partial
+                .persist_noclobber(&plan.output)
+                .map_err(|error| error.error)?;
             Ok(Outcome::Done)
         }
         finished => {
-            let _ = fs::remove_file(&plan.partial);
-            if finished.is_some() {
+            if cancel.load(Ordering::Relaxed) {
+                Ok(Outcome::Canceled)
+            } else if finished.is_some() {
                 let detail: String = tail
                     .trim()
                     .chars()
@@ -317,8 +418,6 @@ pub fn run(
                 Err(StudioError::Message(format!(
                     "FFmpeg không xuất được video. {detail}"
                 )))
-            } else if cancel.load(Ordering::Relaxed) {
-                Ok(Outcome::Canceled)
             } else {
                 Err(StudioError::Input(
                     "Xuất video vượt quá thời gian cho phép.",
@@ -396,6 +495,11 @@ pub fn checked_output(output: &Path, sources: &HashMap<i64, Source>) -> Result<P
             "Không thể ghi đè lên tệp nguồn đang dùng trong timeline.",
         ));
     }
+    if fs::symlink_metadata(&output).is_ok() {
+        return Err(StudioError::Input(
+            "Tệp xuất đã tồn tại. Hãy chọn tên khác.",
+        ));
+    }
     Ok(output)
 }
 
@@ -444,6 +548,8 @@ mod tests {
             start_ms,
             end_ms,
             position_ms,
+            layer: 0,
+            look: Default::default(),
         }
     }
 
@@ -466,11 +572,13 @@ mod tests {
                     clips: vec![clip(3, 250, 1250, 6000)],
                 },
             ],
+            titles: vec![],
+            aspect: Aspect::Source,
         };
         let output = sources[&1].path.with_file_name("out.mp4");
         let plan = plan(&snapshot, &sources, &output).unwrap();
         assert_eq!(plan.duration_ms, 7000);
-        assert_eq!(plan.partial, output.with_extension("mp4.part"));
+        assert_eq!(plan.output, output);
         let args: Vec<_> = plan
             .args
             .iter()
@@ -487,19 +595,17 @@ mod tests {
             .unwrap()
             + 1];
         // Odd source width is rounded down to an even frame.
-        assert!(graph.contains("color=c=black:s=640x360:r=30:d=0.500,"));
-        assert!(graph.contains("trim=duration=2.500,setpts=PTS-STARTPTS[v0]"));
+        assert!(graph.contains("color=c=black:s=640x360:r=30:d=7.000,"));
+        assert!(graph.contains("trim=duration=2.500,setpts=PTS-STARTPTS"));
         assert!(graph.contains("tpad=stop_mode=clone:stop_duration=2.000"));
-        assert!(graph.contains("color=c=black:s=640x360:r=30:d=1.500,"));
-        assert!(graph.contains("[g0][v0][g2][v1][g4]concat=n=5:v=1:a=0[vout]"));
-        assert!(graph.contains("atrim=duration=2.500,asetpts=PTS-STARTPTS,adelay=500:all=1[a0]"));
+        assert!(graph.contains("[layer0][v1]overlay="));
+        assert!(graph.contains(
+            "atrim=duration=2.500,asetpts=PTS-STARTPTS,volume=1.00,adelay=500:all=1[a0]"
+        ));
         assert!(graph.contains("adelay=6000:all=1[a2]"));
         assert!(graph.contains("atrim=duration=7.000[abase]"));
-        assert!(graph.contains("[abase][a0][a2]amix=inputs=3:duration=first:normalize=0[aout]"));
-        assert!(joined.ends_with(&format!(
-            "-t 7.000 -movflags +faststart -progress pipe:1 -nostats -f mp4 {}",
-            plan.partial.display()
-        )));
+        assert!(graph.contains("[abase][a0][a2]amix=inputs=3:duration=first:normalize=0"));
+        assert!(joined.ends_with("-t 7.000 -movflags +faststart -progress pipe:1 -nostats -f mp4"));
     }
 
     #[test]
@@ -509,6 +615,8 @@ mod tests {
         let empty = TimelineSnapshot {
             version: 2,
             tracks: Vec::new(),
+            titles: vec![],
+            aspect: Aspect::Source,
         };
         assert!(plan(&empty, &sources, &output).is_err());
         let missing = TimelineSnapshot {
@@ -517,6 +625,8 @@ mod tests {
                 kind: "video".into(),
                 clips: vec![clip(9, 0, 1000, 0)],
             }],
+            titles: vec![],
+            aspect: Aspect::Source,
         };
         assert!(plan(&missing, &sources, &output).is_err());
 

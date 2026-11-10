@@ -65,12 +65,16 @@ pub struct TimelineClip {
     pub position_ms: i64,
     pub source_duration_ms: Option<i64>,
     pub available: bool,
+    pub layer: u8,
+    pub look: crate::timeline::Look,
 }
 
 #[derive(Serialize)]
 pub struct Timeline {
     pub version: u32,
     pub clips: Vec<TimelineClip>,
+    pub titles: Vec<crate::timeline::TitleEdit>,
+    pub aspect: crate::timeline::Aspect,
 }
 
 #[derive(Clone, Debug, Serialize)]

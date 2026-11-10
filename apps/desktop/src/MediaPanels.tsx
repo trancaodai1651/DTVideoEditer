@@ -93,12 +93,13 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
   );
 }
 
-export function Preview({ selection, project, revision, busy, onAppend }: {
+export function Preview({ selection, project, revision, busy, onAppend, onReference }: {
   selection: Selection | null;
   project: Project | undefined;
   revision: number;
   busy: boolean;
   onAppend: (selection: Selection) => void;
+  onReference: () => void;
 }) {
   return (
     <section className="panel preview" aria-labelledby="preview-heading">
@@ -119,10 +120,14 @@ export function Preview({ selection, project, revision, busy, onAppend }: {
           <strong title={selection.relativePath}>{fileName(selection.relativePath)}</strong>
           <span>{[duration(selection.durationMs), selection.detail].filter(Boolean).join(" · ")}</span>
         </div>
-        <button className="button secondary" type="button" disabled={busy || !project}
-          title={!project ? vi.needProject : undefined} onClick={() => onAppend(selection)}>
-          <Icon name="plus" />{vi.addClip}
-        </button>
+        <div className="preview-actions">
+          {selection.kind === "video" && <button className="button secondary compact" type="button" disabled={busy}
+            onClick={onReference}>Dùng làm video mẫu</button>}
+          <button className="button secondary compact" type="button" disabled={busy || !project}
+            title={!project ? vi.needProject : undefined} onClick={() => onAppend(selection)}>
+            <Icon name="plus" />{vi.addClip}
+          </button>
+        </div>
       </div>}
     </section>
   );

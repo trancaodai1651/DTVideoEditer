@@ -17,12 +17,14 @@ fn clip(asset_id: i64, start_ms: i64, end_ms: i64, position_ms: i64) -> ClipEdit
         start_ms,
         end_ms,
         position_ms,
+        layer: 0,
+        look: Default::default(),
     }
 }
 
 fn snapshot(video: Vec<ClipEdit>, audio: Vec<ClipEdit>) -> TimelineSnapshot {
     TimelineSnapshot {
-        version: 2,
+        version: 3,
         tracks: vec![
             TrackEdit {
                 kind: "video".into(),
@@ -33,6 +35,8 @@ fn snapshot(video: Vec<ClipEdit>, audio: Vec<ClipEdit>) -> TimelineSnapshot {
                 clips: audio,
             },
         ],
+        titles: vec![],
+        aspect: Default::default(),
     }
 }
 
@@ -123,7 +127,7 @@ fn grant_scan_preview_project_reopen_and_revoke() {
     // Rejected saves roll back and the edit points survive a reopen.
     assert_eq!(store.snapshot(project.id).unwrap(), edits);
     let saved = store.timeline(project.id).unwrap();
-    assert_eq!(saved.version, 2);
+    assert_eq!(saved.version, 3);
     assert_eq!(saved.clips[1].source_duration_ms, Some(1000));
     fs::remove_file(&clip_path).unwrap();
     scan(&store, folder, &probe).unwrap();
@@ -344,7 +348,24 @@ fn migrates_schema_one_projects_to_edit_points() {
     drop(store);
 
     let store = Store::open(&db_path).unwrap();
-    // A job left queued by a previous run is closed on startup and can be retried.
+    // Waiting work survives restart. A render interrupted while running can be retried.
+    assert_eq!(store.next_queued_render().unwrap(), Some(job.id));
+    assert_eq!(store.render_job(job.id).unwrap().status, "queued");
+    assert!(
+        store
+            .create_render_job(1, &store.snapshot(1).unwrap(), "/out.mp4")
+            .is_err()
+    );
+    assert!(
+        store
+            .set_render_status(job.id, &["queued"], "running", None)
+            .unwrap()
+    );
+    let next = store
+        .create_render_job(1, &store.snapshot(1).unwrap(), "/next.mp4")
+        .unwrap();
+    drop(store);
+    let store = Store::open(&db_path).unwrap();
     assert_eq!(store.render_job(job.id).unwrap().status, "failed");
     assert!(
         store
@@ -356,9 +377,16 @@ fn migrates_schema_one_projects_to_edit_points() {
             .set_render_status(job.id, &["failed", "canceled"], "queued", None)
             .unwrap()
     );
+    assert_eq!(store.next_queued_render().unwrap(), Some(job.id));
+    assert!(
+        store
+            .set_render_status(job.id, &["queued"], "canceled", None)
+            .unwrap()
+    );
+    assert_eq!(store.next_queued_render().unwrap(), Some(next.id));
     store.revoke(1).unwrap();
     assert!(store.timeline(1).unwrap().clips.is_empty());
-    assert_eq!(store.render_jobs(1).unwrap().len(), 1);
+    assert_eq!(store.render_jobs(1).unwrap().len(), 2);
 }
 
 #[test]
@@ -498,4 +526,193 @@ fn real_ffmpeg_renders_trimmed_timeline_to_mp4() {
         .unwrap();
     assert!(execute(&store, overwrite.id, &idle).is_err());
     assert_eq!(fs::metadata(&source).unwrap().len(), bytes);
+}
+
+#[test]
+#[ignore = "requires FFmpeg with drawtext and FFprobe installed on PATH"]
+fn real_ffmpeg_analyzes_cuts_and_exports_layers_with_text_and_color() {
+    use crate::timeline::{Look, Motion, TitleColor, TitleEdit};
+    let dir = tempfile::tempdir().unwrap();
+    let media = dir.path().join("media");
+    fs::create_dir(&media).unwrap();
+    let ffmpeg = find_tool("ffmpeg").expect("ffmpeg on PATH");
+    let ffprobe = find_tool("ffprobe").expect("ffprobe on PATH");
+    let generate = |args: &[&str], name: &str| {
+        let status = Command::new(&ffmpeg)
+            .args(["-hide_banner", "-loglevel", "error"])
+            .args(args)
+            .arg(media.join(name))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    generate(
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:s=320x180:r=30:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=white:s=320x180:r=30:d=1",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0",
+            "-c:v",
+            "libx264",
+            "-threads",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+        ],
+        "reference.mp4",
+    );
+    generate(
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:s=320x180:r=30:d=2",
+            "-c:v",
+            "libx264",
+            "-threads",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+        ],
+        "overlay.mp4",
+    );
+    generate(
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=330:duration=2",
+            "-c:a",
+            "pcm_s16le",
+        ],
+        "sound.wav",
+    );
+
+    let root = selected_root(&media).unwrap();
+    let db = dir.path().join("test.sqlite3");
+    let store = Store::open(&db).unwrap();
+    let folder = store.grant(root.to_str().unwrap()).unwrap();
+    let probe = Ffprobe {
+        binary: ffprobe,
+        ffmpeg: None,
+    };
+    assert_eq!(scan(&store, folder, &probe).unwrap().indexed, 3);
+    let assets = store.assets(Some(folder), 0).unwrap().items;
+    let id = |name: &str| {
+        assets
+            .iter()
+            .find(|asset| asset.relative_path == name)
+            .unwrap()
+            .id
+    };
+    let template = crate::templates::analyze(&store, id("reference.mp4"), "Mẫu thử").unwrap();
+    assert_eq!(template.template.scene_ms, [1000, 1000]);
+
+    let top = ClipEdit {
+        layer: 1,
+        look: Look {
+            saturation: 0,
+            scale: 50,
+            fade_ms: 150,
+            motion: Motion::Slide,
+            ..Look::default()
+        },
+        ..clip(id("overlay.mp4"), 0, 1500, 0)
+    };
+    let sound = id("sound.wav");
+    let mut edits = snapshot(
+        vec![clip(id("reference.mp4"), 0, 2000, 0), top],
+        vec![
+            clip(sound, 0, 2000, 0),
+            ClipEdit {
+                layer: 1,
+                ..clip(sound, 0, 1000, 0)
+            },
+        ],
+    );
+    edits.titles.push(TitleEdit {
+        text: "Tiếng Việt: 100% ${x}".into(),
+        position_ms: 400,
+        duration_ms: 500,
+        layer: 0,
+        size: 10,
+        x: 0,
+        y: 82,
+        color: TitleColor::White,
+    });
+    let project = store
+        .create_project_with_timeline("Bản dựng", Some(&edits))
+        .unwrap();
+    drop(store);
+    let store = Store::open(&db).unwrap();
+    assert_eq!(store.snapshot(project.id).unwrap(), edits);
+    assert_eq!(
+        store.templates().unwrap()[0].template.scene_ms,
+        [1000, 1000]
+    );
+    let output = dunce::canonicalize(dir.path())
+        .unwrap()
+        .join("Video đã dựng.mp4");
+    let job = store
+        .create_render_job(project.id, &edits, output.to_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        execute(&store, job.id, &AtomicBool::new(false)).unwrap(),
+        Outcome::Done
+    );
+    let frame = Command::new(&ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-ss", "0.65", "-i"])
+        .arg(&output)
+        .args([
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        frame.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frame.stderr)
+    );
+    assert_eq!(frame.stdout.len(), 320 * 180 * 3);
+    let center = &frame.stdout[(90 * 320 + 160) * 3..][..3];
+    assert!(
+        center.iter().all(|value| (50..105).contains(value)),
+        "{center:?}"
+    );
+    assert!(frame.stdout[(4 * 320 + 4) * 3] < 8);
+    assert!(
+        frame.stdout[140 * 320 * 3..]
+            .iter()
+            .filter(|value| **value > 220)
+            .count()
+            > 100
+    );
+
+    assert!(
+        store
+            .set_render_status(job.id, &["running"], "done", None)
+            .unwrap()
+    );
+    let response = serve(
+        &store,
+        Request::builder()
+            .uri(format!("http://studio-media.localhost/render-{}", job.id))
+            .header(header::RANGE, "bytes=0-15")
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert!(response.body().windows(4).any(|bytes| bytes == b"ftyp"));
 }

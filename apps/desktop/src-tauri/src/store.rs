@@ -19,10 +19,11 @@ use crate::{
 };
 
 const PAGE_SIZE: u32 = 48;
-const MIGRATIONS: [&str; 3] = [
+const MIGRATIONS: [&str; 4] = [
     include_str!("../migrations/001_library.sql"),
     include_str!("../migrations/002_timeline_edit_points.sql"),
     include_str!("../migrations/003_publishing.sql"),
+    include_str!("../migrations/004_editor_layers.sql"),
 ];
 const RENDER_JOB: &str = "SELECT id, project_id, status, progress, output_path, duration_ms, error, created_at, finished_at FROM render_jobs";
 const NOT_GRANTED: StudioError = StudioError::Input("Thư mục đã bị thu hồi hoặc không tồn tại.");
@@ -42,12 +43,27 @@ pub struct AssetSource {
     pub kind: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub duration_ms: Option<i64>,
     pub thumbnail: Option<Vec<u8>>,
 }
 
 pub struct RenderTask {
     pub snapshot: TimelineSnapshot,
     pub output_path: String,
+}
+
+fn decode<T: serde::de::DeserializeOwned>(row: &Row, column: usize) -> rusqlite::Result<T> {
+    serde_json::from_str(&row.get::<_, String>(column)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
+}
+
+fn encode(value: &impl serde::Serialize) -> Result<String> {
+    serde_json::to_string(value).map_err(|_| StudioError::Input("Không thể lưu dữ liệu chỉnh sửa."))
 }
 
 fn render_job(row: &Row) -> rusqlite::Result<RenderJob> {
@@ -91,7 +107,7 @@ impl Store {
         // A render cannot outlive the process that started FFmpeg.
         tx.execute(
             "UPDATE render_jobs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-             error = 'Ứng dụng đã đóng trong lúc xuất video.' WHERE status IN ('queued', 'running')",
+             error = 'Ứng dụng đã đóng trong lúc xuất video.' WHERE status = 'running'",
             [],
         )?;
         // A publish worker dies with the process too. The upload reference is kept so
@@ -281,7 +297,7 @@ impl Store {
         Ok(self
             .db()?
             .query_row(
-                "SELECT g.root, a.relative_path, a.kind, m.width, m.height, CASE WHEN ?2 THEN m.thumbnail END
+                "SELECT g.root, a.relative_path, a.kind, m.width, m.height, CASE WHEN ?2 THEN m.thumbnail END, m.duration_ms
              FROM assets a JOIN folder_grants g ON g.id = a.folder_id
              JOIN asset_metadata m ON m.asset_id = a.id
              WHERE a.id = ?1 AND a.available = 1",
@@ -294,6 +310,7 @@ impl Store {
                         width: row.get(3)?,
                         height: row.get(4)?,
                         thumbnail: row.get(5)?,
+                    duration_ms: row.get(6)?,
                     })
                 },
             )
@@ -313,6 +330,14 @@ impl Store {
     }
 
     pub fn create_project(&self, name: &str) -> Result<Project> {
+        self.create_project_with_timeline(name, None)
+    }
+
+    pub fn create_project_with_timeline(
+        &self,
+        name: &str,
+        snapshot: Option<&TimelineSnapshot>,
+    ) -> Result<Project> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
             return Err(StudioError::Input(
@@ -328,6 +353,9 @@ impl Store {
             "INSERT INTO timeline_tracks(timeline_id, kind) VALUES (?1, 'video'), (?1, 'audio')",
             [id],
         )?;
+        if let Some(snapshot) = snapshot {
+            Self::write_timeline(&tx, id, snapshot)?;
+        }
         tx.commit()?;
         Ok(Project {
             id,
@@ -337,9 +365,14 @@ impl Store {
 
     pub fn timeline(&self, project_id: i64) -> Result<Timeline> {
         let db = self.db()?;
+        let (titles, aspect) = db.query_row(
+            "SELECT titles_json, aspect_json FROM timelines WHERE id = ?",
+            [project_id],
+            |row| Ok((decode(row, 0)?, decode(row, 1)?)),
+        )?;
         let mut statement = db.prepare(
             "SELECT c.id, a.id, a.relative_path, a.kind, t.kind, c.start_ms, c.end_ms, c.position_ms,
-                    m.duration_ms, a.available
+                    m.duration_ms, a.available, c.layer, c.look_json
              FROM timeline_clips c JOIN timeline_tracks t ON t.id = c.track_id
              JOIN assets a ON a.id = c.asset_id JOIN asset_metadata m ON m.asset_id = a.id
              WHERE t.timeline_id = ? ORDER BY t.id, c.position_ms, c.id",
@@ -356,11 +389,15 @@ impl Store {
                 position_ms: row.get(7)?,
                 source_duration_ms: row.get(8)?,
                 available: row.get(9)?,
+                layer: row.get(10)?,
+                look: decode(row, 11)?,
             })
         })?;
         Ok(Timeline {
             version: TIMELINE_VERSION,
             clips: rows.collect::<rusqlite::Result<_>>()?,
+            titles,
+            aspect,
         })
     }
 
@@ -376,26 +413,41 @@ impl Store {
                 clips: Vec::new(),
             },
         ];
-        for clip in self.timeline(project_id)?.clips {
+        let timeline = self.timeline(project_id)?;
+        for clip in timeline.clips {
             let track = if clip.track == "audio" { 1 } else { 0 };
             tracks[track].clips.push(ClipEdit {
                 asset_id: clip.asset_id,
                 start_ms: clip.start_ms,
                 end_ms: clip.end_ms,
                 position_ms: clip.position_ms,
+                layer: clip.layer,
+                look: clip.look,
             });
         }
         Ok(TimelineSnapshot {
             version: TIMELINE_VERSION,
             tracks,
+            titles: timeline.titles,
+            aspect: timeline.aspect,
         })
     }
 
     /// Replaces the project's clips with a validated snapshot in one transaction.
     pub fn save_timeline(&self, project_id: i64, snapshot: &TimelineSnapshot) -> Result<()> {
-        check_version(snapshot)?;
         let mut db = self.db()?;
         let tx = db.transaction()?;
+        Self::write_timeline(&tx, project_id, snapshot)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn write_timeline(
+        tx: &rusqlite::Transaction<'_>,
+        project_id: i64,
+        snapshot: &TimelineSnapshot,
+    ) -> Result<()> {
+        check_version(snapshot)?;
         let tracks: HashMap<String, i64> = tx
             .prepare("SELECT kind, id FROM timeline_tracks WHERE timeline_id = ?")?
             .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -403,6 +455,14 @@ impl Store {
         if tracks.is_empty() {
             return Err(StudioError::Input("Không tìm thấy dự án."));
         }
+        tx.execute(
+            "UPDATE timelines SET titles_json = ?2, aspect_json = ?3 WHERE id = ?1",
+            params![
+                project_id,
+                encode(&snapshot.titles)?,
+                encode(&snapshot.aspect)?
+            ],
+        )?;
         tx.execute(
             "DELETE FROM timeline_clips WHERE track_id IN
              (SELECT id FROM timeline_tracks WHERE timeline_id = ?)",
@@ -414,8 +474,8 @@ impl Store {
                  JOIN asset_metadata m ON m.asset_id = a.id WHERE a.id = ?",
             )?;
             let mut insert = tx.prepare(
-                "INSERT INTO timeline_clips(track_id, asset_id, start_ms, end_ms, position_ms)
-                 VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO timeline_clips(track_id, asset_id, start_ms, end_ms, position_ms, layer, look_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )?;
             for track in &snapshot.tracks {
                 let track_id = tracks
@@ -442,12 +502,13 @@ impl Store {
                         clip.asset_id,
                         clip.start_ms,
                         clip.end_ms,
-                        clip.position_ms
+                        clip.position_ms,
+                        clip.layer,
+                        encode(&clip.look)?,
                     ])?;
                 }
             }
         }
-        tx.commit()?;
         Ok(())
     }
 
@@ -460,6 +521,16 @@ impl Store {
         let json = serde_json::to_string(snapshot)
             .map_err(|_| StudioError::Input("Không thể lưu snapshot timeline."))?;
         let db = self.db()?;
+        if db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM render_jobs WHERE status IN ('queued', 'running')
+              AND output_path = ?1 COLLATE NOCASE)",
+            [output_path],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StudioError::Input(
+                "Tên tệp đã có trong hàng đợi. Hãy chọn tên khác.",
+            ));
+        }
         Ok(db.query_row(
             "INSERT INTO render_jobs(project_id, status, snapshot, output_path, duration_ms)
              VALUES (?, 'queued', ?, ?, ?)
@@ -475,6 +546,50 @@ impl Store {
             "{RENDER_JOB} WHERE project_id = ? ORDER BY id DESC LIMIT 8"
         ))?;
         let rows = statement.query_map([project_id], render_job)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn render_queue(&self) -> Result<Vec<RenderJob>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(&format!(
+            "{RENDER_JOB} WHERE status IN ('queued', 'running') OR id IN
+              (SELECT id FROM render_jobs ORDER BY id DESC LIMIT 50)
+             ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+               CASE WHEN status = 'queued' THEN id ELSE -id END"
+        ))?;
+        let rows = statement.query_map([], render_job)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn next_queued_render(&self) -> Result<Option<i64>> {
+        Ok(self
+            .db()?
+            .query_row(
+                "SELECT id FROM render_jobs WHERE status = 'queued' ORDER BY id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn insert_template(&self, template: &crate::templates::Template) -> Result<i64> {
+        let db = self.db()?;
+        db.execute(
+            "INSERT INTO editor_templates(data) VALUES (?)",
+            [encode(template)?],
+        )?;
+        Ok(db.last_insert_rowid())
+    }
+
+    pub fn templates(&self) -> Result<Vec<crate::templates::TemplateEntry>> {
+        let db = self.db()?;
+        let mut statement = db.prepare("SELECT id, data FROM editor_templates ORDER BY id DESC")?;
+        let rows = statement.query_map([], |row| {
+            Ok(crate::templates::TemplateEntry {
+                id: row.get(0)?,
+                template: decode(row, 1)?,
+            })
+        })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -522,6 +637,13 @@ impl Store {
             .optional()?;
         if !current.is_some_and(|value| from.contains(&value.as_str())) {
             return Ok(false);
+        }
+        if status == "queued" && db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM render_jobs WHERE id <> ?1 AND status IN ('queued', 'running')
+              AND output_path = (SELECT output_path FROM render_jobs WHERE id = ?1) COLLATE NOCASE)",
+            [job_id], |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StudioError::Input("Tên tệp đã có trong hàng đợi."));
         }
         db.execute(
             "UPDATE render_jobs SET status = ?2, error = ?3,

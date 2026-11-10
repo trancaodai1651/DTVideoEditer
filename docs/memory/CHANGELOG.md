@@ -1,6 +1,12 @@
 # Changelog
 
-Snapshot: 2026-11-10/M1B-M4
+Snapshot: 2026-11-10/EDITOR-020
+
+## 2026-11-10 · Editor 0.2.0
+
+- Thêm tầng video/audio/chữ, khung hình bản dựng và inspector. FFmpeg xuất transform, màu, alpha, chữ, fade, animation và âm thanh trộn.
+- Thêm kho mẫu, phân tích điểm cắt video local, gán nguồn và tạo dự án từ mẫu.
+- Hàng đợi FIFO lưu qua restart, kiểm tra trùng đích, MP4 preview theo ID lượt xuất. Thêm bộ cài Windows và workflow macOS Universal.
 
 ## 2026-11-10 · M1-B và publishing M4
 

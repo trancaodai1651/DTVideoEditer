@@ -1162,8 +1162,12 @@ fn drafts_from_exports_wait_for_a_finished_render() {
                 start_ms: 0,
                 end_ms: 1000,
                 position_ms: 0,
+                layer: 0,
+                look: Default::default(),
             }],
         }],
+        titles: vec![],
+        aspect: Default::default(),
     };
     let render = bench
         .store

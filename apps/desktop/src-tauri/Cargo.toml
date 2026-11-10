@@ -1,6 +1,6 @@
 [package]
 name = "ai-video-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first desktop media workspace"
 edition = "2024"
 rust-version = "1.95"
@@ -20,8 +20,6 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 thiserror = "2"
+tempfile = "3"
 wait-timeout = "0.2"
 walkdir = "2"
-
-[dev-dependencies]
-tempfile = "3"

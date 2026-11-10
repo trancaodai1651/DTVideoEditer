@@ -1,0 +1,47 @@
+name: Build desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --bundles nsis
+            artifact: windows-x64-setup
+            files: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          - os: macos-latest
+            args: --target universal-apple-darwin --bundles app,dmg
+            artifact: macos-universal-dmg
+            files: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+      - run: rustup toolchain install stable --profile minimal
+      - if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri build --ci ${{ matrix.args }}
+      - if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Video Studio.app"
+          binary=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")
+          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/$binary"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
