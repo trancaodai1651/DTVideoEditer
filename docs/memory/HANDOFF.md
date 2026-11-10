@@ -25,6 +25,6 @@ Snapshot: 2026-11-10/M1B-M4
 
 **Giới hạn** kết nối bằng access token dán tay, chưa có OAuth. Chưa có lịch đăng, campaign, retry tự động. Timeline chưa phát lại toàn bộ trong preview. Render dùng một lệnh FFmpeg nên timeline rất nhiều clip sẽ bị từ chối.
 
-**Git** repository chưa có commit. Toàn bộ thay đổi nằm trong working tree.
+**Git** toàn bộ công việc tới snapshot này nằm trong commit đầu tiên `da51781` trên nhánh `master`. Chưa push và chưa có remote.
 
 **Task tiếp theo** M4-B. Lấy token thật cho từng nền tảng rồi chạy live test theo bảng trong [tích hợp API](API_INTEGRATIONS.md), bắt đầu từ bài chữ Threads và Facebook vì ít điều kiện nhất. Sau đó quyết định nơi giữ app secret để làm OAuth. Việc song song không cần token: smoke M1-B trong cửa sổ Tauri bằng `pnpm demo:media`, rồi M1-C. [Tiêu chí](TASK_BACKLOG.md)
