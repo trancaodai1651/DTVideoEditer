@@ -1,23 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, desktop, fileName } from "./desktop";
-import type { Aspect, AssetPage, Folder, MediaTools, Project, RenderJob, TimelineSnapshot } from "./desktop";
+import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, Folder, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
 import { Icon } from "./Icon";
-import { Gallery, Preview } from "./MediaPanels";
+import { Gallery, Preview, selectAsset } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
 import type { Selection } from "./MediaPanels";
-import { addClip, addTitle, changeLayer, commit, fromTimeline, layerOf, newHistory, redo, toSnapshot, trackOf, undo } from "./timeline";
+import { MAX_LAYERS, addCaptions, addClip, addTitle, changeLayer, clipFinish, commit, defaultLook, fromTimeline, layerOf, newHistory, playbackRate, redo, subtitleCues, toSnapshot, totalMs, trackOf, undo, updateAppearance } from "./timeline";
 import type { Clip, History, MediaRef } from "./timeline";
 import { TimelineEditor } from "./TimelineEditor";
 import type { Lane } from "./TimelineEditor";
-import { ClipInspector, CompositionFrame } from "./ClipInspector";
+import { ClipInspector } from "./ClipInspector";
+import type { InspectorTab } from "./ClipInspector";
+import { EditorLibrary } from "./EditorLibrary";
+import type { LibraryTab } from "./EditorLibrary";
+import { EditorPlayer } from "./EditorPlayer";
 import { ExportQueue } from "./ExportQueue";
 import { TemplateLibrary } from "./TemplateLibrary";
-import { timecode, vi } from "./vi";
+import { vi } from "./vi";
 
-type View = "library" | "templates" | "queue" | "publish" | "settings";
+type View = "library" | "queue" | "publish" | "settings";
 const viewName: Record<View, string> = {
-  library: "Biên tập", templates: "Kho mẫu", queue: "Hàng đợi xuất", publish: vi.publish, settings: vi.settings,
+  library: "Biên tập", queue: "Hàng đợi xuất", publish: vi.publish, settings: vi.settings,
 };
 type Notice = { text: string; error: boolean };
 const EMPTY_PAGE: AssetPage = { items: [], total: 0, pageSize: 48 };
@@ -26,19 +30,29 @@ const isActive = (job: RenderJob) => job.status === "queued" || job.status === "
 /** The preview target for a clip, seeked to the source frame under the playhead. */
 function clipSelection(clip: Clip, playheadMs: number): Selection | null {
   if (clip.kind === "text") return null;
-  const inside = playheadMs >= clip.positionMs && playheadMs < clip.positionMs + clip.endMs - clip.startMs;
+  const inside = playheadMs >= clip.positionMs && playheadMs < clipFinish(clip);
   return {
     assetId: clip.assetId, relativePath: clip.relativePath, kind: clip.kind, durationMs: clip.sourceMs,
-    seekMs: clip.kind === "image" ? undefined : clip.startMs + (inside ? playheadMs - clip.positionMs : 0),
+    seekMs: clip.kind === "image" ? undefined : clip.startMs + (inside ? (playheadMs - clip.positionMs) * playbackRate(clip) : 0),
+    width: clip.width, height: clip.height, hasThumbnail: clip.hasThumbnail,
   };
 }
 
 export function App() {
   const [view, setView] = useState<View>("library");
+  const [tool, setTool] = useState<LibraryTab>("media");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("video");
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderId, setFolderId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [assets, setAssets] = useState<AssetPage | null>(desktop ? null : EMPTY_PAGE);
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<MediaKind | null>(null);
+  const search = useDeferredValue(query);
+  const mediaKind = tool === "audio" ? "audio" : kind;
+  const [catalog, setCatalog] = useState<CatalogItem[] | null>(null);
+  const [catalogFailed, setCatalogFailed] = useState(false);
+  const [catalogRetry, setCatalogRetry] = useState(0);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -47,6 +61,9 @@ export function App() {
   const [aspect, setAspect] = useState<Aspect>("source");
   const [lane, setLane] = useState<Lane>({ track: "video", layer: 0 });
   const [frameMode, setFrameMode] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const playback = useRef({ from: 0, start: 0 });
+  const projectMenu = useRef<HTMLDetailsElement>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
@@ -61,6 +78,9 @@ export function App() {
   const disabled = !!busy || !desktop;
   const clips = history.present;
   const selectedClip = clips.find((clip) => clip.key === selectedKey);
+  const total = totalMs(clips);
+  const captions = subtitleCues(clips);
+  const needCatalog = view === "library" && (tool === "audio" || tool === "stickers");
   const rendering = jobs.some(isActive);
 
   useEffect(() => {
@@ -82,7 +102,7 @@ export function App() {
   useEffect(() => {
     if (!desktop) return;
     let current = true;
-    void api.assets(folderId, page).then((data) => {
+    void api.assets(folderId, page, search, mediaKind).then((data) => {
       if (current) setAssets(data);
     }).catch((error: unknown) => {
       if (current) {
@@ -91,7 +111,39 @@ export function App() {
       }
     });
     return () => { current = false; };
-  }, [folderId, page, libraryRevision]);
+  }, [folderId, page, libraryRevision, search, mediaKind]);
+
+  useEffect(() => {
+    if (!desktop || !needCatalog || catalog || disabled) return;
+    let current = true;
+    void api.catalog().then((items) => { if (current) setCatalog(items); })
+      .catch((error: unknown) => {
+        if (current) { setCatalogFailed(true); setNotice({ text: String(error), error: true }); }
+      });
+    return () => { current = false; };
+  }, [needCatalog, catalog, disabled, catalogRetry]);
+
+  useEffect(() => {
+    if (!playing || view !== "library" || !frameMode) return;
+    let frame = 0;
+    let last = 0;
+    function tick(now: number) {
+      const current = playback.current;
+      const at = Math.min(total, Math.max(0, Math.round(current.from + now - current.start)));
+      if (at >= total) {
+        setPlayheadMs(total);
+        setPlaying(false);
+        return;
+      }
+      if (now - last >= 32) {
+        setPlayheadMs(at);
+        last = now;
+      }
+      frame = requestAnimationFrame(tick);
+    }
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, view, frameMode, total]);
 
   useEffect(() => {
     if (projectId === null) return;
@@ -105,6 +157,7 @@ export function App() {
       setAspect(saved.aspect ?? "source");
       setLane({ track: "video", layer: 0 });
       setFrameMode(false);
+      setPlaying(false);
       setSaveState("saved");
       saves.current.failed = false;
     }).catch((error: unknown) => {
@@ -137,6 +190,7 @@ export function App() {
 
   async function run(label: string, action: () => Promise<void>) {
     if (disabled) return;
+    setPlaying(false);
     setBusy(label);
     setNotice(null);
     try {
@@ -202,6 +256,7 @@ export function App() {
       setHistory(newHistory());
       setAspect("source");
       setProjectName("");
+      if (projectMenu.current) projectMenu.current.open = false;
       setView("library");
       success(vi.projectCreated);
     });
@@ -229,13 +284,19 @@ export function App() {
     });
   }
 
-  function addMedia(media: MediaRef, positionMs?: number, target = lane) {
+  function addMedia(media: MediaRef, positionMs?: number, target = lane, appearance?: Partial<ClipLook>) {
     if (!project || disabled) return;
     const track = trackOf(media.kind);
     const next = addClip(clips, media, positionMs, target.track === track ? target.layer : 0);
     if (!next) return setNotice({ text: vi.clipNoLength, error: true });
+    const inserted = next[next.length - 1];
+    if (appearance) next[next.length - 1] = { ...inserted, look: appearance };
     edit(commit(history, next));
-    setSelectedKey(next.at(-1)?.key ?? null);
+    setSelectedKey(inserted.key);
+    setInspectorTab(track === "audio" ? "audio" : "video");
+    setLane({ track, layer: layerOf(inserted) });
+    setPlaying(false);
+    if (track === "video" && (playheadMs < inserted.positionMs || playheadMs >= clipFinish(inserted))) setPlayheadMs(inserted.positionMs);
     setFrameMode(track === "video");
     success(vi.clipAdded);
   }
@@ -247,27 +308,99 @@ export function App() {
     setLane({ track: clip.track, layer: layerOf(clip) });
     if (clip.track !== "audio") {
       setFrameMode(true);
-      if (playheadMs < clip.positionMs || playheadMs >= clip.positionMs + clip.endMs - clip.startMs) setPlayheadMs(clip.positionMs);
+      if (playheadMs < clip.positionMs || playheadMs >= clipFinish(clip)) movePlayhead(clip.positionMs);
     } else if (clip.available) {
       setFrameMode(false);
+      setPlaying(false);
       setSelection(clipSelection(clip, playheadMs));
     }
   }
 
   function movePlayhead(ms: number) {
-    setPlayheadMs(ms);
+    const at = Math.min(total, Math.max(0, ms));
+    playback.current = { from: at, start: performance.now() };
+    setPlayheadMs(at);
     setFrameMode(true);
   }
 
-  function insertTitle() {
+  function togglePlayback() {
+    if (total <= 0 || disabled) return;
+    if (playing) { setPlaying(false); return; }
+    const at = playheadMs >= total ? 0 : playheadMs;
+    movePlayhead(at);
+    setPlaying(true);
+  }
+
+  function insertTitle(style?: TitleStyle) {
     if (!project || disabled) return;
-    const next = addTitle(clips, playheadMs, lane.track === "text" ? lane.layer : 0);
+    const next = addTitle(clips, playheadMs, lane.track === "text" ? lane.layer : 0, style);
     const title = next.at(-1);
     if (next === clips || !title) return;
     edit(commit(history, next));
     setSelectedKey(title.key);
+    setPlaying(false);
     setPlayheadMs(title.positionMs);
     setFrameMode(true);
+  }
+
+  function openTool(tab: LibraryTab) {
+    if ((tab === "audio") !== (tool === "audio")) { setPage(0); setQuery(""); }
+    setTool(tab);
+    if (tab === "adjustment") setInspectorTab("adjust");
+    if (tab === "advanced") setInspectorTab("advanced");
+  }
+
+  function changeClip(clip: Clip) {
+    try { edit(commit(history, updateAppearance(clips, clip))); }
+    catch (error) { notify(String(error), true); }
+  }
+
+  function applyLook(look: Partial<ClipLook>) {
+    if (!selectedClip || selectedClip.track !== "video") return;
+    if (selectedClip.kind !== "video" && (look.stabilize || look.opticalFlow)) {
+      notify("Chọn clip video để dùng ổn định hoặc nội suy chuyển động.", true);
+      return;
+    }
+    changeClip({ ...selectedClip, look: { ...defaultLook, ...selectedClip.look, ...look } });
+    setFrameMode(true);
+    if (tool === "transitions") setInspectorTab("animation");
+    if (tool === "filters" || tool === "adjustment") setInspectorTab("adjust");
+    success("Đã áp dụng cho clip đang chọn.");
+  }
+
+  function addStock(asset: Asset, sticker: boolean) {
+    const media = selectAsset(asset);
+    if (!sticker) { addMedia(media, playheadMs, lane); return; }
+    const layer = Math.min(MAX_LAYERS - 1, clips.filter((clip) => clip.track === "video")
+      .reduce((highest, clip) => Math.max(highest, layerOf(clip) + 1), 1));
+    addMedia(media, playheadMs, { track: "video", layer }, { scale: 28, x: 25, y: -20 });
+  }
+
+  function loadCues(cues: Cue[], offset: number) {
+    if (!cues.length) { notify("Không tìm thấy câu phụ đề.", false); return; }
+    const next = addCaptions(clips, cues, offset);
+    edit(commit(history, next));
+    setPlayheadMs(cues[0].startMs + offset);
+    setSelectedKey(next[clips.length].key);
+    setFrameMode(true);
+    success(`Đã thêm ${cues.length} câu phụ đề.`);
+  }
+
+  function importSrt() {
+    void run("Đang nhập phụ đề…", async () => { const cues = await api.importSrt(); if (cues) loadCues(cues, 0); });
+  }
+
+  function exportSrt() {
+    void run("Đang xuất phụ đề…", async () => { if (await api.exportSrt(captions)) success("Đã xuất phụ đề SRT."); });
+  }
+
+  function transcribe(language: string) {
+    if (!selectedClip || !["video", "audio"].includes(selectedClip.kind)) return;
+    void run("Đang nhận dạng giọng nói trên máy…", async () => {
+      const { assetId, startMs, endMs, positionMs, look } = selectedClip;
+      const cues = await api.transcribe({ assetId, startMs, endMs, speed: look?.speed ?? 100 }, language);
+      if (cues) loadCues(cues, positionMs);
+    });
   }
 
   function startRender(queueOnly: boolean) {
@@ -301,59 +434,52 @@ export function App() {
     setProjects((saved) => [created, ...saved]);
     setProjectId(created.id);
     setHistory(newHistory());
+    setTool("media");
     setView("library");
     success("Đã tạo dự án từ mẫu.");
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-icon"><Icon name="play" size={23} /></span>
-          <div><strong>{vi.brand}</strong><small>{vi.workspace}</small></div>
-        </div>
-        <nav aria-label={vi.workspace}>
-          <button type="button" aria-current={view === "library" ? "page" : undefined} onClick={() => setView("library")}>
-            <Icon name="library" />{viewName.library}
-          </button>
-          <button type="button" aria-current={view === "templates" ? "page" : undefined} onClick={() => setView("templates")}>
-            <Icon name="timeline" />{viewName.templates}
-          </button>
-          <button type="button" aria-current={view === "queue" ? "page" : undefined} onClick={() => setView("queue")}>
-            <Icon name="export" />{viewName.queue}
-          </button>
-          <button type="button" aria-current={view === "publish" ? "page" : undefined} onClick={() => setView("publish")}>
-            <Icon name="send" />{vi.publish}
-          </button>
-          <button type="button" aria-current={view === "settings" ? "page" : undefined} onClick={() => setView("settings")}>
-            <Icon name="settings" />{vi.settings}
-          </button>
-        </nav>
-        <div className="project-picker">
-          <label className="eyebrow" htmlFor="active-project">{vi.project}</label>
-          <select id="active-project" value={projectId ?? ""} disabled={disabled || projects.length === 0}
-            onChange={(event) => { setHistory(newHistory()); setProjectId(Number(event.target.value)); }}>
-            {!projects.length && <option value="">{vi.projectNone}</option>}
-            {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
-          <form onSubmit={createProject}>
-            <label className="sr-only" htmlFor="project-name">{vi.projectName}</label>
-            <input id="project-name" value={projectName} maxLength={160} required placeholder={vi.projectPlaceholder}
-              disabled={disabled} onChange={(event) => setProjectName(event.target.value)} />
-            <button type="submit" className="button secondary" disabled={disabled || !projectName.trim()}><Icon name="plus" />{vi.create}</button>
-          </form>
-        </div>
-        <div className="sidebar-footer"><Icon name="shield" size={17} />{vi.local}</div>
-      </aside>
-
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">{vi.workspace}</span>
-            <h1>{viewName[view]}</h1>
+    <div className="studio-shell">
+      <header className="studio-top">
+        <div className="studio-brand"><span className="brand-icon"><Icon name="play" size={17} /></span><strong>{vi.brand}</strong></div>
+        <details className="studio-project-menu" ref={projectMenu}>
+          <summary>Dự án</summary>
+          <div className="project-popover">
+            <label className="edit-field">Dự án đang mở
+              <select value={projectId ?? ""} disabled={disabled || projects.length === 0}
+                onChange={(event) => {
+                  setHistory(newHistory()); setProjectId(Number(event.target.value)); setPlaying(false);
+                  if (projectMenu.current) projectMenu.current.open = false;
+                }}>
+                {!projects.length && <option value="">{vi.projectNone}</option>}
+                {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
+            <form onSubmit={createProject}>
+              <label className="edit-field">{vi.projectName}
+                <input value={projectName} maxLength={160} required placeholder={vi.projectPlaceholder}
+                  disabled={disabled} onChange={(event) => setProjectName(event.target.value)} />
+              </label>
+              <button type="submit" className="button primary compact" disabled={disabled || !projectName.trim()}>
+                <Icon name="plus" size={16} />{vi.create}
+              </button>
+            </form>
           </div>
-          <button type="button" className="button primary" onClick={pickFolder} disabled={disabled}><Icon name="folder" />{vi.pick}</button>
-        </header>
+        </details>
+        <span className="studio-project-title" title={project?.name}>{project?.name ?? vi.projectNone}</span>
+        <nav className="studio-navigation" aria-label={vi.workspace}>
+          {(["library", "queue", "publish", "settings"] as const).map((id) => <button type="button" key={id}
+            aria-current={view === id ? "page" : undefined} onClick={() => { setPlaying(false); setView(id); }}>{viewName[id]}</button>)}
+        </nav>
+        <button type="button" className="button primary compact studio-export" disabled={disabled || !project || total === 0}
+          onClick={() => startRender(false)}><Icon name="export" size={16} />Xuất</button>
+      </header>
+
+      <main className={`studio-main ${view === "library" ? "studio-editor-main" : "studio-subpage"}`}>
+        {view !== "library" && <div className="subpage-heading"><h1>{viewName[view]}</h1>
+          {view === "settings" && <button type="button" className="button primary compact" onClick={pickFolder} disabled={disabled}>{vi.pick}</button>}
+        </div>}
         <div className="notification" aria-live="polite">
           {!desktop && <p className="notice">{vi.browserHint}</p>}
           {busy && <p className="notice"><span className="spinner" aria-hidden="true" />{busy}</p>}
@@ -362,47 +488,50 @@ export function App() {
           </p>}
         </div>
 
-        {view === "library" ? <>
-          <div className="editor-grid editor-three">
-            <Gallery data={assets} folders={folders} folderId={folderId} page={page} revision={libraryRevision}
-              selected={selection?.assetId} onSelect={(asset) => { setSelection(asset); setFrameMode(false); }}
-              onPage={(index) => { setAssets(null); setPage(index); }}
-              onFolder={(id) => {
-                if (id === folderId) return;
-                setAssets(null); setFolderId(id); setPage(0);
-              }} />
-            <div className="preview-stack">
-              <div className="preview-tabs">
-                <button type="button" className="button secondary compact" aria-pressed={!frameMode} onClick={() => setFrameMode(false)}>Nguồn</button>
-                <button type="button" className="button secondary compact" aria-pressed={frameMode} onClick={() => setFrameMode(true)}>Bản dựng</button>
-              </div>
-              {frameMode ? <section className="panel preview">
-                <div className="panel-head"><h2>Khung hình bản dựng</h2><span>{timecode(playheadMs)}</span></div>
-                <div className="monitor composition-monitor">
-                  <CompositionFrame clips={clips} aspect={aspect} at={playheadMs} revision={libraryRevision} />
-                </div>
-              </section> : <Preview selection={selection} project={project} revision={libraryRevision} busy={disabled}
-                onAppend={addMedia} onReference={() => setView("templates")} />}
-            </div>
+        {view === "library" ? <div className="editor-workspace">
+          <div className="editor-columns">
+            <EditorLibrary tab={tool} onTab={openTool} busy={disabled} catalog={catalog} catalogFailed={catalogFailed}
+              onRetryCatalog={() => { setCatalogFailed(false); setCatalogRetry((value) => value + 1); }}
+              hasProject={!!project} hasVisual={selectedClip?.track === "video"}
+              hasSpeech={!!selectedClip && (selectedClip.kind === "audio" || selectedClip.kind === "video") && selectedClip.available}
+              hasCaptions={captions.length > 0} onApply={applyLook} onTitle={insertTitle} onAdd={addStock}
+              onImportSrt={importSrt} onExportSrt={exportSrt} onTranscribe={transcribe}
+              media={<Gallery data={assets} folders={folders} folderId={folderId} page={page} revision={libraryRevision}
+                selected={selection?.assetId} onSelect={(asset) => { setSelection(asset); setFrameMode(false); setPlaying(false); }}
+                query={query} onQuery={(value) => { setQuery(value); setPage(0); }}
+                kind={kind} audioOnly={tool === "audio"} onKind={(value) => { setKind(value); setPage(0); }}
+                onImport={pickFolder} busy={disabled}
+                onPage={(index) => { setAssets(null); setPage(index); }}
+                onFolder={(id) => {
+                  if (id === folderId) return;
+                  setAssets(null); setFolderId(id); setPage(0);
+                }} />}
+              templates={<TemplateLibrary initialReference={assets?.items.find((asset) => asset.id === selection?.assetId && asset.kind === "video")}
+                disabled={disabled} onProject={openTemplateProject} notify={notify} />}
+            />
+            <EditorPlayer source={<Preview selection={selection} project={project} revision={libraryRevision} busy={disabled}
+              onAppend={addMedia} onReference={() => openTool("templates")} />}
+              clips={clips} aspect={aspect} at={playheadMs} total={total} revision={libraryRevision} frameMode={frameMode} playing={playing}
+              onMode={(mode) => { setFrameMode(mode); if (!mode) setPlaying(false); }}
+              onPlay={togglePlayback} onSeek={movePlayhead} onAspect={(value) => edit(history, value)} disabled={disabled || !project}
+            />
             <ClipInspector clip={selectedClip} aspect={aspect} disabled={disabled || !project}
+              name={project?.name} total={total} tab={inspectorTab} onTab={setInspectorTab}
               onAspect={(value) => edit(history, value)}
               onLayer={(layer) => {
                 if (!selectedClip) return;
                 edit(commit(history, changeLayer(clips, selectedClip.key, layer)));
                 setLane({ track: selectedClip.track, layer });
               }}
-              onClip={(next) => edit(commit(history, clips.map((clip) => clip.key === next.key ? next : clip)))} />
+              onClip={changeClip} />
           </div>
-          <TimelineEditor key={projectId} project={project} clips={clips} selectedKey={selectedKey} playheadMs={playheadMs}
+          <TimelineEditor key={projectId} project={project} clips={clips} selectedKey={selectedKey} playheadMs={playheadMs} revision={libraryRevision}
             busy={disabled} canUndo={history.past.length > 0} canRedo={history.future.length > 0}
-            saveState={saveState} lane={lane} onLane={setLane} onTitle={insertTitle}
+            saveState={saveState} lane={lane} onLane={setLane} onTitle={() => insertTitle()}
             onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead}
             onDropMedia={addMedia} onUndo={() => edit(undo(history))} onRedo={() => edit(redo(history))}
             onExport={startRender} />
-        </> : view === "templates" ? <TemplateLibrary
-          initialReference={assets?.items.find((asset) => asset.id === selection?.assetId && asset.kind === "video")}
-          disabled={disabled} onProject={openTemplateProject} notify={notify}
-        /> : view === "queue" ? <ExportQueue jobs={jobs} projects={projects} busy={disabled}
+        </div> : view === "queue" ? <ExportQueue jobs={jobs} projects={projects} busy={disabled}
           onRun={() => void run(vi.working, async () => { await api.runRenderQueue(); setJobs(await api.renderQueue()); })}
           onRetry={retryRender} onCancel={cancelRender}
         /> : view === "publish" ? <PublishPanel selection={selection} exports={jobs.filter((job) => job.projectId === projectId)} notify={notify} /> : <>

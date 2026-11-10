@@ -67,6 +67,9 @@ pub struct TimelineClip {
     pub available: bool,
     pub layer: u8,
     pub look: crate::timeline::Look,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub has_thumbnail: bool,
 }
 
 #[derive(Serialize)]

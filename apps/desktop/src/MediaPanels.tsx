@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fileName, mediaUrl } from "./desktop";
-import type { Asset, AssetPage, Folder, Project } from "./desktop";
+import type { Asset, AssetPage, Folder, MediaKind, Project } from "./desktop";
 import { Icon } from "./Icon";
 import { MEDIA_DRAG_TYPE } from "./TimelineEditor";
 import type { MediaRef } from "./timeline";
@@ -14,6 +14,9 @@ export interface Selection {
   detail?: string;
   /** Source time the preview should show, driven by the timeline playhead. */
   seekMs?: number;
+  hasThumbnail?: boolean;
+  width?: number | null;
+  height?: number | null;
 }
 
 export function selectAsset(asset: Asset): Selection {
@@ -21,6 +24,7 @@ export function selectAsset(asset: Asset): Selection {
   return {
     assetId: asset.id, relativePath: asset.relativePath, kind: asset.kind, durationMs: asset.durationMs,
     detail: [resolution, asset.codec?.toUpperCase(), size(asset.bytes)].filter(Boolean).join(" · "),
+    hasThumbnail: asset.hasThumbnail, width: asset.width, height: asset.height,
   };
 }
 
@@ -34,27 +38,38 @@ interface GalleryProps {
   onFolder: (id: number | null) => void;
   onPage: (page: number) => void;
   onSelect: (selection: Selection) => void;
+  query: string;
+  onQuery: (query: string) => void;
+  kind: MediaKind | null;
+  audioOnly: boolean;
+  onKind: (kind: MediaKind | null) => void;
+  onImport: () => void;
+  busy: boolean;
 }
 
-export function Gallery({ data, folders, folderId, page, revision, selected, onFolder, onPage, onSelect }: GalleryProps) {
+export function Gallery({ data, folders, folderId, page, revision, selected, onFolder, onPage, onSelect,
+  query, onQuery, kind, audioOnly, onKind, onImport, busy }: GalleryProps) {
   const pages = data ? Math.ceil(data.total / data.pageSize) : 0;
   return (
     <section className="panel gallery" aria-labelledby="gallery-heading">
-      <div className="panel-head">
-        <div>
-          <div className="panel-title"><Icon name="library" /><h2 id="gallery-heading">{vi.library}</h2></div>
-          <p>{vi.libraryHint}</p>
-        </div>
-        <span className="count-pill">{data ? vi.mediaCount(data.total) : "—"}</span>
+      <h2 className="sr-only" id="gallery-heading">Thư viện media</h2>
+      <div className="media-toolbar">
+        <button type="button" className="button primary compact" onClick={onImport} disabled={busy}><Icon name="plus" size={15} />Nhập media</button>
+        <label className="media-search"><Icon name="search" size={15} />
+          <input aria-label="Tìm media" placeholder="Tìm trong thư viện" maxLength={120} value={query} onChange={(event) => onQuery(event.target.value)} />
+        </label>
       </div>
-      {folders.length > 0 && (
-        <div className="gallery-filter">
+      <div className="gallery-filter">
+        {!audioOnly && <select aria-label="Loại media" value={kind ?? ""} onChange={(event) => onKind((event.target.value || null) as MediaKind | null)}>
+          <option value="">Tất cả loại</option><option value="video">Video</option><option value="image">Ảnh</option><option value="audio">Âm thanh</option>
+        </select>}
+        {folders.length > 0 &&
           <select aria-label={vi.filter} value={folderId ?? ""} onChange={(e) => onFolder(e.target.value ? Number(e.target.value) : null)}>
             <option value="">{vi.allFolders}</option>
             {folders.map((folder) => <option key={folder.id} value={folder.id} title={folder.root}>{fileName(folder.root) || folder.root}</option>)}
-          </select>
-        </div>
-      )}
+          </select>}
+        <span className="count-pill">{data ? vi.mediaCount(data.total) : "—"}</span>
+      </div>
       {!data ? <div className="empty small-empty">{vi.loading}</div> : data.items.length ? (
         <div className="asset-grid">
           {data.items.map((asset) => (
@@ -64,6 +79,7 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
               draggable onDragStart={(event) => {
                 const media: MediaRef = {
                   assetId: asset.id, relativePath: asset.relativePath, kind: asset.kind, durationMs: asset.durationMs,
+                  hasThumbnail: asset.hasThumbnail, width: asset.width, height: asset.height,
                 };
                 event.dataTransfer.setData(MEDIA_DRAG_TYPE, JSON.stringify(media));
                 event.dataTransfer.effectAllowed = "copy";
@@ -80,8 +96,8 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
       ) : (
         <div className="empty">
           <span className="empty-icon"><Icon name="folder" size={25} /></span>
-          <strong>{folders.length ? vi.folderEmpty : vi.libraryEmpty}</strong>
-          <p>{folders.length ? vi.folderEmptyHint : vi.libraryEmptyHint}</p>
+          <strong>{query.trim() ? "Không tìm thấy media" : folders.length ? vi.folderEmpty : vi.libraryEmpty}</strong>
+          <p>{query.trim() ? "Thử tên khác hoặc đổi bộ lọc." : folders.length ? vi.folderEmptyHint : vi.libraryEmptyHint}</p>
         </div>
       )}
       {pages > 1 && <div className="pagination">

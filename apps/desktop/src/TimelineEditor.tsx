@@ -1,10 +1,10 @@
 import { useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent, PointerEvent } from "react";
-import { fileName } from "./desktop";
+import { fileName, mediaUrl } from "./desktop";
 import type { EditorTrack, Project } from "./desktop";
 import { Icon } from "./Icon";
 import {
-  MAX_LAYERS, clipFinish, clipLength, clipsAt, layerOf, moveClip, removeClip, snap, splitClip, totalMs, trackOf, trimEnd, trimStart,
+  MAX_LAYERS, canSplit, clipFinish, clipLength, clipsAt, layerOf, moveClip, removeClip, snap, splitClip, totalMs, trackOf, trimEnd, trimStart,
 } from "./timeline";
 import type { Clip, MediaRef } from "./timeline";
 import { duration, timecode, vi } from "./vi";
@@ -21,6 +21,7 @@ interface Props {
   clips: Clip[];
   selectedKey: string | null;
   playheadMs: number;
+  revision: number;
   busy: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -167,7 +168,7 @@ export function TimelineEditor(props: Props) {
         <button type="button" id="timeline-redo" className="icon-button" title={vi.redo} aria-label={vi.redo}
           disabled={locked || !props.canRedo} onClick={props.onRedo}><Icon name="redo" size={16} /></button>
         <button type="button" className="button secondary compact" title={vi.splitHint}
-          disabled={locked || !cuts.some((clip) => splitClip(clips, clip.key, playheadMs))} onClick={split}>
+          disabled={locked || !cuts.some((clip) => canSplit(clip, playheadMs))} onClick={split}>
           <Icon name="split" size={16} />{vi.split}
         </button>
         <button type="button" className="button secondary compact danger" disabled={locked || !selected} onClick={remove}>
@@ -235,6 +236,8 @@ export function TimelineEditor(props: Props) {
                     <span className="tl-handle start" aria-hidden="true"
                       onPointerDown={(event) => begin(event, clip, "start")}
                       onPointerMove={dragTo} onPointerUp={finish} onPointerCancel={() => setDrag(null)} />
+                    {clip.available && clip.hasThumbnail && <span className="tl-clip-art" aria-hidden="true"
+                      style={{ backgroundImage: `url("${mediaUrl("thumbnail", clip.assetId, props.revision)}")` }} />}
                     <span className="tl-clip-name">{name}</span>
                     <small>{clip.available ? timecode(clipLength(clip)) : vi.unavailable}</small>
                     <span className="tl-handle end" aria-hidden="true"

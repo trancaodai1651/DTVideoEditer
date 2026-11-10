@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, place, redo, removeClip, snap, splitClip,
+  addCaptions, addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, place, redo, removeClip, snap, splitClip, subtitleCues, updateAppearance,
   toSnapshot, totalMs, trimEnd, trimStart, undo,
 } from "../apps/desktop/src/timeline.ts";
 
@@ -120,4 +120,27 @@ test("overlaps independent video/audio layers and round-trips editable titles", 
   assert.equal(saved.titles[0].positionMs, 100);
   clips = changeLayer(clips, clips[1].key, 0);
   assert.equal(clips[1].positionMs, 6000);
+});
+
+test("retimes source ranges and splits without shifting the following clip", () => {
+  let clips = addClip([], video);
+  clips = updateAppearance(clips, { ...clips[0], look: { speed: 150 } });
+  clips = addClip(clips, image);
+  assert.equal(clips[1].positionMs, 4000);
+  const split = splitClip(clips, clips[0].key, 1750);
+  assert.equal(split[0].endMs, 2625);
+  assert.equal(split[1].positionMs, 1750);
+  assert.equal(clipFinish(split[1]), 4000);
+  assert.equal(trimStart(clips, clips[0].key, 1000)[0].startMs, 1500);
+  assert.equal(trimEnd(clips, clips[0].key, -1000)[0].endMs, 4500);
+});
+
+test("imports overlapping captions in separate lanes and exports their exact times", () => {
+  const cues = [{ startMs: 0, endMs: 1200, text: "Một" }, { startMs: 900, endMs: 1800, text: "Hai" }];
+  const edited = addCaptions([], cues, 500);
+  assert.deepEqual(edited.map((clip) => clip.layer), [0, 1]);
+  assert.equal(toSnapshot(edited).titles[1].background, true);
+  assert.deepEqual(subtitleCues(edited), cues.map((cue) => ({
+    ...cue, startMs: cue.startMs + 500, endMs: cue.endMs + 500,
+  })));
 });

@@ -1,6 +1,6 @@
 # AI Video Studio
 
-Ứng dụng desktop biên tập video lưu dữ liệu trên máy. Bản 0.2.0 có timeline nhiều tầng video, âm thanh và chữ, bảng thuộc tính clip, kho mẫu cục bộ và hàng đợi xuất MP4.
+Ứng dụng desktop biên tập video lưu dữ liệu trên máy. Bản 0.3.0 đưa thư viện, player, bảng thuộc tính và timeline nhiều tầng vào cùng màn hình. Có kho mẫu cục bộ và hàng đợi xuất MP4.
 
 ## Chạy ứng dụng
 
@@ -18,19 +18,21 @@ Nếu đang dùng Corepack, chạy `corepack enable` để kích hoạt shim pnp
 
 1. Chạy `pnpm demo:media`. Lệnh tạo video MP4, WAV và PNG trong một thư mục tạm và in đường dẫn.
 2. Mở ứng dụng, chọn **Chọn thư mục**, rồi chọn thư mục mẫu. Sau khi quét, thư viện hiển thị ba tệp.
-3. Tạo một dự án ở thanh bên. Chọn video, phát trong **Xem trước**, rồi bấm **Thêm vào timeline** hoặc kéo tệp từ thư viện vào track. Làm tương tự với WAV để thấy hai track.
+3. Mở **Dự án** trên thanh trên cùng và tạo dự án. Chọn video, phát trong **Nguồn**, rồi bấm **Thêm vào timeline** hoặc kéo tệp từ thư viện vào tầng. Làm tương tự với WAV để thấy hai nhóm.
 4. Trên timeline, kéo clip để di chuyển và kéo hai mép để cắt. Bấm vào thước để đặt vạch thời gian rồi bấm **Tách** (phím `S`). `Ctrl+Z` và `Ctrl+Y` hoàn tác và làm lại. Mọi thay đổi được lưu ngay.
 5. Bấm **Xuất và chạy hàng đợi**, chọn tên tệp MP4 trong hộp thoại. Tiến độ hiện trong **Hàng đợi xuất**, có thể hủy hoặc thử lại.
 6. Đóng rồi mở lại ứng dụng để kiểm tra dữ liệu đã lưu. Trong **Cài đặt**, có thể kiểm tra FFmpeg, quét lại và thu hồi thư mục. Thu hồi gỡ metadata và clip tham chiếu khỏi ứng dụng. Tệp gốc vẫn nằm trong thư mục.
 
 Ứng dụng dùng thư mục dữ liệu Tauri cho `studio.dtedit.desktop` và lưu trong `studio.sqlite3`. Bản debug nhận biến môi trường `STUDIO_DEV_DATA_DIR` với đường dẫn tuyệt đối để chạy kiểm thử trên cơ sở dữ liệu riêng.
 
-## Dựng theo mẫu và xuất hàng loạt
+## Biên tập và xuất hàng loạt
 
 1. Trong **Biên tập**, thêm tầng video, âm thanh hoặc chữ trên toolbar timeline. Kéo media từ thư viện vào đúng tầng hoặc chọn tầng rồi thêm từ khung **Nguồn**. Tầng video số lớn hơn nằm phía trên. Chọn clip để chỉnh màu, vị trí, tỷ lệ, độ đục, âm lượng, fade hoặc animation trong **Thuộc tính**.
-2. Bấm **Chữ tại playhead** và sửa nội dung, cỡ, màu và vị trí. Kéo thước hoặc chọn tab **Bản dựng** để xem khung hình. Để phát liền mạch cả hình và tiếng đã trộn, dùng **Xem video** sau khi xuất.
-3. Trong **Kho mẫu**, chọn preset dựng sẵn hoặc video từ thư viện rồi bấm **Phân tích và lưu mẫu**. FFmpeg dò điểm cắt và tỷ lệ khung của video dài từ 0,5 giây đến 3 phút. Gán nguồn từng đoạn, hiệu ứng màu, animation, chuyển cảnh, chữ, nhạc, SFX và voice. **Tạo dự án từ mẫu** mở một dự án mới có thể chỉnh tiếp.
+2. Thêm chữ, sticker và âm thanh ở thanh thư viện. Chọn **Bản dựng** và nhấn phát để xem các tầng đồng thời. Một số xử lý nâng cao như ổn định, khử nhiễu và chroma key hiện đầy đủ trong MP4.
+3. Trong **Mẫu dựng**, chọn preset hoặc video từ thư viện rồi bấm **Phân tích và lưu mẫu**. FFmpeg dò điểm cắt và tỷ lệ khung của video dài từ 0,5 giây đến 3 phút. Gán nguồn từng đoạn, hiệu ứng màu, animation, chuyển cảnh, chữ, nhạc, SFX và voice. **Tạo dự án từ mẫu** mở một dự án mới có thể chỉnh tiếp.
 4. Trên từng dự án, bấm **Thêm vào hàng đợi** và chọn tên MP4. Mở **Hàng đợi xuất** và bấm **Chạy hàng đợi** để xử lý lần lượt. Lượt chờ được lưu khi đóng ứng dụng.
+
+Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Có thể xuất SRT từ các lớp đã đánh dấu là phụ đề. Để nhận dạng, chọn một clip có tiếng, ngôn ngữ và mô hình Whisper GGML `.bin`. Dùng bản FFmpeg có filter `whisper`. Kiểm tra bằng `ffmpeg -h filter=whisper`. [FFmpeg Whisper](https://ffmpeg.org/ffmpeg-filters.html#whisper) · [Mô hình Whisper](https://github.com/ggml-org/whisper.cpp#quick-start)
 
 ## Đăng bài lên mạng xã hội
 
@@ -62,7 +64,7 @@ pnpm tauri build --no-bundle
 
 `pnpm test:media` tạo media mẫu, phân tích điểm cắt, render MP4 nhiều tầng và kiểm tra các pixel của màu/chữ. Cần `libx264` và filter `drawtext`. Các test đăng bài dùng máy chủ giả lập cục bộ. [Backlog](docs/memory/TASK_BACKLOG.md)
 
-## Tạo bộ cài 0.2.0
+## Tạo bộ cài
 
 - Windows x64 chạy `pnpm tauri build --bundles nsis --ci`. Bộ cài nằm trong `apps/desktop/src-tauri/target/release/bundle/nsis/`. Cài FFmpeg và FFprobe riêng để phân tích và xuất.
 - Trên macOS có Xcode, chạy `rustup target add aarch64-apple-darwin x86_64-apple-darwin`, sau đó `pnpm tauri build --target universal-apple-darwin --bundles app,dmg --ci`. Workflow bộ cài chạy thủ công hoặc khi push tag `v*`. DMG dùng chữ ký ad hoc cho kiểm thử. Bản phân phối công khai cần Developer ID và notarization. [Workflow bộ cài](.github/workflows/installers.yml) · [Tauri DMG](https://v2.tauri.app/distribute/dmg/)

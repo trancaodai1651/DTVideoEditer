@@ -47,6 +47,9 @@ export interface TimelineClip {
   available: boolean;
   layer: number;
   look: ClipLook;
+  width: number | null;
+  height: number | null;
+  hasThumbnail: boolean;
 }
 
 export type Aspect = "source" | "landscape" | "portrait" | "square";
@@ -62,7 +65,19 @@ export interface ClipLook {
   y: number;
   volume: number;
   fadeMs: number;
-  motion: "none" | "slide";
+  motion: "none" | "slide" | "slide_right" | "rise";
+  speed: number;
+  rotate: number;
+  flip: boolean;
+  temperature: number;
+  effect: "none" | "blur" | "vignette" | "grain";
+  keyColor: "none" | "green" | "blue";
+  ellipse: boolean;
+  denoise: boolean;
+  sharpen: boolean;
+  stabilize: boolean;
+  opticalFlow: boolean;
+  cleanAudio: boolean;
 }
 export interface TitleStyle {
   text: string;
@@ -70,7 +85,11 @@ export interface TitleStyle {
   x: number;
   y: number;
   color: TitleColor;
+  caption?: boolean;
+  background?: boolean;
 }
+export interface Cue { startMs: number; endMs: number; text: string }
+export interface CatalogItem { title: string; group: "music" | "sound" | "sticker"; asset: Asset }
 export interface TitleEdit extends TitleStyle {
   positionMs: number;
   durationMs: number;
@@ -219,7 +238,13 @@ export const api = {
   scan: (folderId: number) => invoke<ScanReport>("scan_folder", { folderId }),
   folders: () => invoke<Folder[]>("list_folders"),
   revoke: (folderId: number) => invoke<void>("revoke_folder", { folderId }),
-  assets: (folderId: number | null, page: number) => invoke<AssetPage>("list_assets", { folderId, page }),
+  assets: (folderId: number | null, page: number, keyword = "", kind: MediaKind | null = null) =>
+    invoke<AssetPage>("list_assets", { folderId, page, keyword, kind }),
+  catalog: () => invoke<CatalogItem[]>("list_studio_catalog"),
+  importSrt: () => invoke<Cue[] | null>("import_srt"),
+  exportSrt: (cues: Cue[]) => invoke<boolean>("export_srt", { cues }),
+  transcribe: (clip: { assetId: number; startMs: number; endMs: number; speed: number }, language: string) =>
+    invoke<Cue[] | null>("transcribe_clip", { clip, language }),
   projects: () => invoke<Project[]>("list_projects"),
   createProject: (name: string) => invoke<Project>("create_project", { name }),
   createEditedProject: (name: string, snapshot: TimelineSnapshot) =>

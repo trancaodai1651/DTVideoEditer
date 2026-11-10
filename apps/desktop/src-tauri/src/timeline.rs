@@ -8,6 +8,7 @@ pub const MIN_CLIP_MS: i64 = 100;
 pub const MAX_IMAGE_MS: i64 = 10 * 60 * 1000;
 pub const MAX_TIMELINE_MS: i64 = 6 * 60 * 60 * 1000;
 pub const MAX_TRACK_CLIPS: usize = 200;
+pub const MAX_TITLES: usize = 300;
 
 /// One edit point set. `start_ms..end_ms` is the range read from the source,
 /// `position_ms` is where that range starts on the timeline.
@@ -34,6 +35,27 @@ pub enum Motion {
     #[default]
     None,
     Slide,
+    SlideRight,
+    Rise,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Effect {
+    #[default]
+    None,
+    Blur,
+    Vignette,
+    Grain,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyColor {
+    #[default]
+    None,
+    Green,
+    Blue,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +71,18 @@ pub struct Look {
     pub volume: u16,
     pub fade_ms: u16,
     pub motion: Motion,
+    pub speed: u16,
+    pub rotate: i16,
+    pub flip: bool,
+    pub temperature: i16,
+    pub effect: Effect,
+    pub key_color: KeyColor,
+    pub ellipse: bool,
+    pub denoise: bool,
+    pub sharpen: bool,
+    pub stabilize: bool,
+    pub optical_flow: bool,
+    pub clean_audio: bool,
 }
 
 impl Default for Look {
@@ -64,6 +98,18 @@ impl Default for Look {
             volume: 100,
             fade_ms: 0,
             motion: Motion::None,
+            speed: 100,
+            rotate: 0,
+            flip: false,
+            temperature: 0,
+            effect: Effect::None,
+            key_color: KeyColor::None,
+            ellipse: false,
+            denoise: false,
+            sharpen: false,
+            stabilize: false,
+            optical_flow: false,
+            clean_audio: false,
         }
     }
 }
@@ -83,6 +129,9 @@ impl Look {
             && (-100..=100).contains(&self.y)
             && self.volume <= 200
             && self.fade_ms <= 3000
+            && (50..=200).contains(&self.speed)
+            && (-180..=180).contains(&self.rotate)
+            && (-100..=100).contains(&self.temperature)
     }
 }
 
@@ -123,6 +172,14 @@ pub struct TitleEdit {
     pub x: i16,
     pub y: i16,
     pub color: TitleColor,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub caption: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub background: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,12 +203,20 @@ impl TitleColor {
 }
 
 impl ClipEdit {
+    pub fn source_length_ms(&self) -> i64 {
+        self.end_ms.saturating_sub(self.start_ms)
+    }
+
     pub fn length_ms(&self) -> i64 {
-        self.end_ms - self.start_ms
+        let speed = i64::from(self.look.speed.max(1));
+        self.source_length_ms()
+            .saturating_mul(100)
+            .saturating_add(speed / 2)
+            / speed
     }
 
     pub fn finish_ms(&self) -> i64 {
-        self.position_ms + self.length_ms()
+        self.position_ms.saturating_add(self.length_ms())
     }
 }
 
@@ -222,7 +287,7 @@ pub fn check_version(snapshot: &TimelineSnapshot) -> Result<()> {
     {
         return Err(StudioError::Input("Timeline có nhóm media không hợp lệ."));
     }
-    if snapshot.titles.len() > 100
+    if snapshot.titles.len() > MAX_TITLES
         || snapshot.titles.iter().any(|title| {
             title.text.trim().is_empty()
                 || title.text.chars().count() > 600
@@ -252,7 +317,10 @@ pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()
     if !fits_track {
         return Err(StudioError::Input("Loại media không khớp với track."));
     }
-    if clip.layer >= MAX_LAYERS || !clip.look.valid() {
+    if clip.layer >= MAX_LAYERS
+        || !clip.look.valid()
+        || (asset.kind == "image" && clip.look.speed != 100)
+    {
         return Err(StudioError::Input(
             "Tầng hoặc thuộc tính clip nằm ngoài giới hạn.",
         ));

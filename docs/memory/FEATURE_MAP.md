@@ -8,7 +8,9 @@
 | Project và timeline | [Store](../../apps/desktop/src-tauri/src/store.rs) · [Snapshot](../../apps/desktop/src-tauri/src/timeline.rs) · [Editor](../../apps/desktop/src/TimelineEditor.tsx) · [Phép sửa](../../apps/desktop/src/timeline.ts) · [Migration 002](../../apps/desktop/src-tauri/migrations/002_timeline_edit_points.sql) | Edit points theo mili giây, kéo thả, trim, split, undo/redo, tự lưu |
 | Render và hàng đợi | [Renderer](../../apps/desktop/src-tauri/src/render.rs) · [Hàng đợi](../../apps/desktop/src/ExportQueue.tsx) | Ghép lớp, chữ, màu, MP4 H.264/AAC, hàng đợi FIFO, hủy/thử lại và phát tệp đã xuất |
 | Kho mẫu | [Giao diện](../../apps/desktop/src/TemplateLibrary.tsx) · [Phân tích](../../apps/desktop/src-tauri/src/templates.rs) | Mẫu dựng sẵn và mẫu local theo điểm cắt, gán media theo cảnh |
-| Editor đầy đủ | [Backlog](TASK_BACKLOG.md) | M1-C, M1-D và M5 |
+| Không gian biên tập | [Thư viện](../../apps/desktop/src/EditorLibrary.tsx) · [Player](../../apps/desktop/src/EditorPlayer.tsx) · [Inspector](../../apps/desktop/src/ClipInspector.tsx) | Preset và tài nguyên gốc, chỉnh clip, phát timeline |
+| Phụ đề | [SRT và Whisper](../../apps/desktop/src-tauri/src/captions.rs) | Chữ có thể sửa, nhập/xuất SRT UTF-8, nhận dạng cục bộ |
+| Editor đầy đủ | [Backlog](TASK_BACKLOG.md) | M1-C, M1-D, M1-H và M5 |
 | AI script và voice | [Tích hợp](API_INTEGRATIONS.md) | M2 |
 | Rules, tìm kiếm và sắp xếp | [Media library](modules/media-library.md) | M3 |
 | Developer skills | [Catalog](../../skills/catalog) · [Sync](../../scripts/sync-skills.mjs) | Codex và Claude dùng các bản sao có checksum |

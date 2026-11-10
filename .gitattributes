@@ -4,4 +4,5 @@
 *.sql text eol=lf
 skills/sync-lock.json text eol=lf
 *.png binary
+*.wav binary
 *.ico binary

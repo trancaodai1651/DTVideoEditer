@@ -255,21 +255,39 @@ impl Store {
     }
 
     pub fn assets(&self, folder_id: Option<i64>, page: u32) -> Result<AssetPage> {
+        self.search_assets(folder_id, page, "", None)
+    }
+
+    pub fn search_assets(
+        &self,
+        folder_id: Option<i64>,
+        page: u32,
+        keyword: &str,
+        kind: Option<&str>,
+    ) -> Result<AssetPage> {
+        const FILTER: &str = "a.available = 1 AND (?1 IS NULL OR a.folder_id = ?1)
+            AND (?2 IS NULL OR a.kind = ?2) AND instr(lower(a.relative_path), lower(?3)) > 0";
+        let keyword: String = keyword.trim().chars().take(120).collect();
         let db = self.db()?;
         let total = db.query_row(
-            "SELECT COUNT(*) FROM assets WHERE available = 1 AND (?1 IS NULL OR folder_id = ?1)",
-            [folder_id],
+            &format!("SELECT COUNT(*) FROM assets a WHERE {FILTER}"),
+            params![folder_id, kind, keyword],
             |row| row.get(0),
         )?;
-        let mut statement = db.prepare(
+        let mut statement = db.prepare(&format!(
             "SELECT a.id, a.folder_id, a.relative_path, a.kind, a.bytes, m.duration_ms, m.width, m.height,
                     m.codec, m.frame_rate, m.thumbnail IS NOT NULL
              FROM assets a JOIN asset_metadata m ON m.asset_id = a.id
-             WHERE a.available = 1 AND (?1 IS NULL OR a.folder_id = ?1)
-             ORDER BY a.id DESC LIMIT ?2 OFFSET ?3",
-        )?;
+             WHERE {FILTER} ORDER BY a.id DESC LIMIT ?4 OFFSET ?5"
+        ))?;
         let rows = statement.query_map(
-            params![folder_id, PAGE_SIZE, i64::from(page) * i64::from(PAGE_SIZE)],
+            params![
+                folder_id,
+                kind,
+                keyword,
+                PAGE_SIZE,
+                i64::from(page) * i64::from(PAGE_SIZE)
+            ],
             |row| {
                 Ok(Asset {
                     id: row.get(0)?,
@@ -372,7 +390,7 @@ impl Store {
         )?;
         let mut statement = db.prepare(
             "SELECT c.id, a.id, a.relative_path, a.kind, t.kind, c.start_ms, c.end_ms, c.position_ms,
-                    m.duration_ms, a.available, c.layer, c.look_json
+                    m.duration_ms, a.available, c.layer, c.look_json, m.width, m.height, m.thumbnail IS NOT NULL
              FROM timeline_clips c JOIN timeline_tracks t ON t.id = c.track_id
              JOIN assets a ON a.id = c.asset_id JOIN asset_metadata m ON m.asset_id = a.id
              WHERE t.timeline_id = ? ORDER BY t.id, c.position_ms, c.id",
@@ -391,6 +409,9 @@ impl Store {
                 available: row.get(9)?,
                 layer: row.get(10)?,
                 look: decode(row, 11)?,
+                width: row.get(12)?,
+                height: row.get(13)?,
+                has_thumbnail: row.get(14)?,
             })
         })?;
         Ok(Timeline {

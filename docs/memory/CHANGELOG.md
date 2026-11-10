@@ -1,6 +1,12 @@
 # Changelog
 
-Snapshot: 2026-11-10/EDITOR-020
+Snapshot: 2026-11-10/WORKBENCH-030
+
+## 2026-11-10 · Editor 0.3.0
+
+- M1-G: chuyển editor sang bố cục thư viện, trình phát, inspector và timeline, dựa trên CapCut desktop đã quan sát. Thêm nhạc, SFX, sticker gốc, preset chữ, hiệu ứng, chuyển động, bộ lọc và mẫu.
+- M1-C/M1-D: phát timeline trong WebView, chỉnh tốc độ, xoay, lật, chroma key, mặt nạ, xử lý hình/tiếng, nhập và xuất SRT, nhận dạng cục bộ qua Whisper. Snapshot cũ dùng mặc định, schema SQLite giữ nguyên.
+- Export dùng tệp filter graph tạm khi graph dài. Bộ test FFmpeg đọc pixel để kiểm tra chroma key, sticker và phụ đề trên MP4.
 
 ## 2026-11-10 · Editor 0.2.0
 

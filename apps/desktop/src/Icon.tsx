@@ -23,6 +23,15 @@ const paths = {
   send: "M4 12l16-8-6 16-3-7z M11 13l9-9",
   link: "M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1 M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1",
   refresh: "M20 11a8 8 0 0 0-14-5L4 8 M4 4v4h4 M4 13a8 8 0 0 0 14 5l2-2 M20 20v-4h-4",
+  text: "M4 7V4h16v3 M12 4v16 M8 20h8",
+  sticker: "M12 2a10 10 0 1 0 0 20h2l8-8v-2A10 10 0 0 0 12 2z M14 22v-6a2 2 0 0 1 2-2h6",
+  effect: "M12 2l2.4 6.8 7.1 2.4-7.1 2.4L12 21l-2.4-7.4-7.1-2.4 7.1-2.4z M19 2v5 M16.5 4.5h5",
+  transition: "M4 5l8 7-8 7z M20 5l-8 7 8 7z",
+  caption: "M3 5h18v14H3z M6 12h4 M13 12h5 M6 15h7 M16 15h2",
+  filter: "M12 8a4 4 0 1 0 0-8 4 4 0 1 0 0 8z M7 20a5 5 0 1 0 0-10 5 5 0 1 0 0 10z M17 20a5 5 0 1 0 0-10 5 5 0 1 0 0 10z",
+  pause: "M9 5v14 M15 5v14",
+  expand: "M9 4H4v5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5",
+  search: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M15 15l6 6",
 };
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths; size?: number }) {

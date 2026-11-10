@@ -645,6 +645,8 @@ fn real_ffmpeg_analyzes_cuts_and_exports_layers_with_text_and_color() {
         x: 0,
         y: 82,
         color: TitleColor::White,
+        caption: false,
+        background: false,
     });
     let project = store
         .create_project_with_timeline("Bản dựng", Some(&edits))
@@ -715,4 +717,164 @@ fn real_ffmpeg_analyzes_cuts_and_exports_layers_with_text_and_color() {
     );
     assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
     assert!(response.body().windows(4).any(|bytes| bytes == b"ftyp"));
+}
+
+#[test]
+#[ignore = "requires FFmpeg with drawtext and FFprobe installed on PATH"]
+fn real_ffmpeg_exports_speed_keying_stickers_and_captions() {
+    use crate::timeline::{Effect, KeyColor, Look, TitleColor, TitleEdit};
+
+    let dir = tempfile::tempdir().unwrap();
+    let media = dir.path().join("media");
+    fs::create_dir(&media).unwrap();
+    let ffmpeg = find_tool("ffmpeg").expect("ffmpeg on PATH");
+    let ffprobe = find_tool("ffprobe").expect("ffprobe on PATH");
+    for (name, video) in [
+        ("base.mp4", "color=blue:s=320x180:r=30:d=3"),
+        (
+            "overlay.mp4",
+            "color=0x00ff00:s=320x180:r=24:d=3,drawbox=x=100:y=60:w=120:h=60:c=red:t=fill",
+        ),
+    ] {
+        let status = Command::new(&ffmpeg)
+            .args([
+                "-v", "error", "-f", "lavfi", "-i", video, "-c:v", "libx264", "-threads", "1",
+                "-pix_fmt", "yuv420p",
+            ])
+            .arg(media.join(name))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    let root = selected_root(&media).unwrap();
+    let store = Store::open(&dir.path().join("test.sqlite3")).unwrap();
+    let folder = store.grant(root.to_str().unwrap()).unwrap();
+    let probe = Ffprobe {
+        binary: ffprobe,
+        ffmpeg: None,
+    };
+    assert_eq!(scan(&store, folder, &probe).unwrap().indexed, 2);
+    let assets = store.assets(Some(folder), 0).unwrap().items;
+    let id = |name: &str| {
+        assets
+            .iter()
+            .find(|asset| asset.relative_path == name)
+            .unwrap()
+            .id
+    };
+    let catalog = crate::catalog::load(&store, dir.path()).unwrap();
+    let stock_id = |name: &str| {
+        catalog
+            .iter()
+            .find(|item| item.asset.relative_path == name)
+            .unwrap()
+            .asset
+            .id
+    };
+    let mut edits = snapshot(
+        vec![
+            clip(id("base.mp4"), 0, 3000, 0),
+            ClipEdit {
+                layer: 1,
+                look: Look {
+                    speed: 150,
+                    key_color: KeyColor::Green,
+                    ellipse: true,
+                    rotate: 8,
+                    denoise: true,
+                    sharpen: true,
+                    stabilize: true,
+                    optical_flow: true,
+                    effect: Effect::Grain,
+                    ..Look::default()
+                },
+                ..clip(id("overlay.mp4"), 0, 3000, 0)
+            },
+            ClipEdit {
+                layer: 2,
+                look: Look {
+                    scale: 50,
+                    ..Look::default()
+                },
+                ..clip(stock_id("gold-star.png"), 0, 700, 2100)
+            },
+        ],
+        vec![ClipEdit {
+            look: Look {
+                speed: 150,
+                clean_audio: true,
+                ..Look::default()
+            },
+            ..clip(stock_id("soft-steps.wav"), 0, 1500, 0)
+        }],
+    );
+    edits.titles.push(TitleEdit {
+        text: "Phụ đề thử".into(),
+        position_ms: 400,
+        duration_ms: 500,
+        layer: 0,
+        size: 10,
+        x: 0,
+        y: 80,
+        color: TitleColor::White,
+        caption: true,
+        background: true,
+    });
+    let project = store
+        .create_project_with_timeline("Thử thư viện", Some(&edits))
+        .unwrap();
+    assert_eq!(store.snapshot(project.id).unwrap(), edits);
+    let output = dunce::canonicalize(dir.path()).unwrap().join("export.mp4");
+    let job = store
+        .create_render_job(project.id, &edits, output.to_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        execute(&store, job.id, &AtomicBool::new(false)).unwrap(),
+        Outcome::Done
+    );
+
+    let frame = |seconds: &str| {
+        let result = Command::new(&ffmpeg)
+            .args(["-v", "error", "-ss", seconds, "-i"])
+            .arg(&output)
+            .args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(result.stdout.len(), 320 * 180 * 3);
+        result.stdout
+    };
+    let pixel = |bytes: &[u8], x: usize, y: usize| -> [u8; 3] {
+        bytes[(y * 320 + x) * 3..][..3].try_into().unwrap()
+    };
+    let blue = |[r, g, b]: [u8; 3]| r < 35 && g < 35 && b > 210;
+    let keyed = frame("0.65");
+    let [r, g, b] = pixel(&keyed, 160, 90);
+    assert!(r > 180 && g < 70 && b < 70, "{r}, {g}, {b}");
+    assert!(blue(pixel(&keyed, 70, 90)));
+    assert!(
+        keyed[140 * 320 * 3..]
+            .chunks_exact(3)
+            .filter(|rgb| rgb.iter().all(|v| *v > 210))
+            .count()
+            > 60
+    );
+    assert!(blue(pixel(&frame("2.03"), 160, 90)));
+    let sticker = frame("2.4");
+    let [r, g, b] = pixel(&sticker, 160, 90);
+    assert!(r > 180 && g > 120 && b < 120, "{r}, {g}, {b}");
+    assert!(blue(pixel(&sticker, 120, 50)));
 }

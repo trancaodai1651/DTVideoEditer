@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod captions;
+mod catalog;
 mod library;
 mod model;
 mod preview;
@@ -41,6 +43,7 @@ struct ActiveRender {
 
 struct AppState {
     store: Store,
+    data_dir: PathBuf,
     scan: Mutex<()>,
     render: Mutex<Option<ActiveRender>>,
     publisher: Publisher,
@@ -137,8 +140,114 @@ fn list_assets(
     state: State<AppState>,
     folder_id: Option<i64>,
     page: u32,
+    keyword: Option<String>,
+    kind: Option<String>,
 ) -> CommandResult<AssetPage> {
-    command(state.store.assets(folder_id, page))
+    command(state.store.search_assets(
+        folder_id,
+        page,
+        keyword.as_deref().unwrap_or_default(),
+        kind.as_deref(),
+    ))
+}
+
+#[tauri::command]
+async fn list_studio_catalog(app: AppHandle) -> CommandResult<Vec<catalog::CatalogItem>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let _scan = state
+            .scan
+            .try_lock()
+            .map_err(|_| StudioError::Input("Đang cập nhật thư viện."))?;
+        catalog::load(&state.store, &state.data_dir)
+    })
+    .await
+}
+
+fn subtitle_dialog(app: &AppHandle, save: bool) -> Result<Option<PathBuf>> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
+    let dialog = app
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .add_filter("SubRip SRT", &["srt"]);
+    let selected = if save {
+        dialog
+            .set_title("Xuất phụ đề SRT")
+            .set_file_name("phu-de.srt")
+            .blocking_save_file()
+    } else {
+        dialog.set_title("Nhập phụ đề SRT").blocking_pick_file()
+    };
+    selected
+        .map(|file| {
+            file.into_path()
+                .map_err(|_| StudioError::Input("Chỉ hỗ trợ tệp trên máy."))
+        })
+        .transpose()
+}
+
+#[tauri::command]
+async fn import_srt(app: AppHandle) -> CommandResult<Option<Vec<captions::Cue>>> {
+    blocking(move || {
+        subtitle_dialog(&app, false)?
+            .map(|path| captions::read(&path))
+            .transpose()
+    })
+    .await
+}
+
+#[tauri::command]
+async fn export_srt(app: AppHandle, cues: Vec<captions::Cue>) -> CommandResult<bool> {
+    blocking(move || {
+        let Some(mut path) = subtitle_dialog(&app, true)? else {
+            return Ok(false);
+        };
+        if !path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("srt"))
+        {
+            path.as_mut_os_string().push(".srt");
+        }
+        captions::write(&path, cues)?;
+        Ok(true)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn transcribe_clip(
+    app: AppHandle,
+    clip: captions::SpeechClip,
+    language: String,
+) -> CommandResult<Option<Vec<captions::Cue>>> {
+    blocking(move || {
+        let window = app
+            .get_webview_window("main")
+            .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
+        let Some(selected) = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Chọn mô hình Whisper GGML")
+            .add_filter("Mô hình Whisper", &["bin"])
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|_| StudioError::Input("Chỉ hỗ trợ mô hình trên máy."))?;
+        let state = app.state::<AppState>();
+        let _scan = state
+            .scan
+            .try_lock()
+            .map_err(|_| StudioError::Input("Đang cập nhật thư viện."))?;
+        captions::transcribe(&state.store, &clip, &language, &path).map(Some)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -576,6 +685,7 @@ fn main() {
             std::fs::create_dir_all(&data_dir)?;
             app.manage(AppState {
                 store: Store::open(&data_dir.join("studio.sqlite3"))?,
+                data_dir,
                 scan: Mutex::new(()),
                 render: Mutex::new(None),
                 publisher: Publisher::new()?,
@@ -600,6 +710,10 @@ fn main() {
             list_folders,
             revoke_folder,
             list_assets,
+            list_studio_catalog,
+            import_srt,
+            export_srt,
+            transcribe_clip,
             list_projects,
             create_project,
             load_timeline,

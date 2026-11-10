@@ -20,7 +20,7 @@ use crate::{
     model::{Result, StudioError},
     probe::{self, MediaFormat},
     store::Store,
-    timeline::{Aspect, ClipEdit, Motion, TimelineSnapshot, check_version},
+    timeline::{Aspect, ClipEdit, Effect, KeyColor, Look, Motion, TimelineSnapshot, check_version},
 };
 
 pub const FPS: u32 = 30;
@@ -43,6 +43,7 @@ pub struct Plan {
     pub duration_ms: i64,
     pub output: PathBuf,
     titles: Vec<String>,
+    graph_file: Option<OsString>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -90,7 +91,7 @@ fn push_input(args: &mut Vec<OsString>, source: &Source, clip: &ClipEdit) {
                 "-ss".to_owned(),
                 seconds(clip.start_ms),
                 "-t".to_owned(),
-                seconds(clip.length_ms() + 500),
+                seconds(clip.source_length_ms() + 500),
             ]
             .map(OsString::from),
         );
@@ -112,13 +113,70 @@ fn audio_chain(index: usize, clip: &ClipEdit) -> String {
             seconds(fade)
         )
     };
+    let tempo = if clip.look.speed == 100 {
+        String::new()
+    } else {
+        format!(",atempo={:.2}", f64::from(clip.look.speed) / 100.0)
+    };
+    let clean = if clip.look.clean_audio {
+        ",afftdn=nf=-28,highpass=f=70"
+    } else {
+        ""
+    };
     format!(
         "[{index}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,\
-         atrim=duration={},asetpts=PTS-STARTPTS,volume={:.2}{fades},adelay={}:all=1[a{index}]",
-        seconds(length),
+         atrim=duration={},asetpts=PTS-STARTPTS{tempo}{clean},volume={:.2}{fades},adelay={}:all=1[a{index}]",
+        seconds(clip.source_length_ms()),
         f64::from(clip.look.volume) / 100.0,
         clip.position_ms
     )
+}
+
+fn grade_filters(look: Look) -> String {
+    let mut filters = String::new();
+    if look.temperature != 0 {
+        let heat = f64::from(look.temperature) / 500.0;
+        filters.push_str(&format!(",colorbalance=rm={heat:.3}:bm={:.3}:pl=1", -heat));
+    }
+    if look.denoise {
+        filters.push_str(",hqdn3d=3:2:4:3");
+    }
+    if look.sharpen {
+        filters.push_str(",unsharp=5:5:0.85:5:5:0");
+    }
+    filters.push_str(match look.effect {
+        Effect::None => "",
+        Effect::Blur => ",gblur=sigma=4",
+        Effect::Vignette => ",vignette=PI/5",
+        Effect::Grain => ",noise=alls=10:allf=t+u:all_seed=37",
+    });
+    filters
+}
+
+fn alpha_filters(look: Look) -> String {
+    let mut filters = String::new();
+    let key = match look.key_color {
+        KeyColor::None => None,
+        KeyColor::Green => Some("0x00ff00"),
+        KeyColor::Blue => Some("0x0000ff"),
+    };
+    if let Some(color) = key {
+        filters.push_str(&format!(",format=yuva444p,chromakey={color}:0.17:0.08"));
+    }
+    filters.push_str(&format!(
+        ",format=rgba,colorchannelmixer=aa={:.2}",
+        f64::from(look.opacity) / 100.0
+    ));
+    if look.ellipse {
+        filters.push_str(",format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='alpha(X,Y)*lte(pow(2*X/W-1,2)+pow(2*Y/H-1,2),1)'");
+    }
+    if look.rotate != 0 {
+        let angle = format!("{}*PI/180", look.rotate);
+        filters.push_str(&format!(
+            ",rotate={angle}:ow=ceil(rotw({angle})/2)*2:oh=ceil(roth({angle})/2)*2:c=none"
+        ));
+    }
+    filters
 }
 
 /// Builds the FFmpeg invocation for a snapshot. Video-track gaps render black,
@@ -169,25 +227,41 @@ pub fn plan(
                 seconds(fade)
             )
         };
-        graph.push(format!(
-            "[{index}:V:0]scale={fit_width}:{fit_height}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
-             setsar=1,fps={FPS},tpad=stop_mode=clone:stop_duration={length},trim=duration={length},setpts=PTS-STARTPTS,\
-             eq=brightness={:.2}:contrast={:.2}:saturation={:.2},format=rgba,colorchannelmixer=aa={:.2},\
-             format=yuva420p{fades},setpts=PTS+{at}/TB[v{index}]",
-            f64::from(look.brightness) / 100.0, f64::from(look.contrast) / 100.0,
-            f64::from(look.saturation) / 100.0, f64::from(look.opacity) / 100.0,
-        ));
-        let slide = if look.motion == Motion::Slide {
-            format!(
-                "-(W+w)/2*max(0,1-(t-{at})/{})",
-                seconds(clip.length_ms().min(450))
-            )
+        let stabilize = if source.kind == "video" && look.stabilize {
+            "deshake=edge=mirror,"
         } else {
+            ""
+        };
+        let flip = if look.flip { "hflip," } else { "" };
+        let timing = if look.speed == 100 {
             String::new()
+        } else {
+            format!("setpts=(PTS-STARTPTS)*100/{},", look.speed)
+        };
+        let sampling = if source.kind == "video" && look.optical_flow {
+            format!("tpad=stop_mode=clone:stop_duration=0.2,minterpolate=fps={FPS}:mi_mode=mci")
+        } else {
+            format!("fps={FPS}")
+        };
+        let grade = grade_filters(look);
+        let alpha = alpha_filters(look);
+        graph.push(format!(
+            "[{index}:V:0]{stabilize}{flip}scale={fit_width}:{fit_height}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
+             setsar=1,{timing}{sampling},tpad=stop_mode=clone:stop_duration={length},trim=duration={length},setpts=PTS-STARTPTS,\
+             eq=brightness={:.2}:contrast={:.2}:saturation={:.2}{grade}{alpha},format=yuva420p{fades},setpts=PTS+{at}/TB[v{index}]",
+            f64::from(look.brightness) / 100.0, f64::from(look.contrast) / 100.0,
+            f64::from(look.saturation) / 100.0,
+        ));
+        let easing = format!("max(0,1-(t-{at})/{})", seconds(clip.length_ms().min(450)));
+        let (slide_x, slide_y) = match look.motion {
+            Motion::None => (String::new(), String::new()),
+            Motion::Slide => (format!("-(W+w)/2*{easing}"), String::new()),
+            Motion::SlideRight => (format!("+(W+w)/2*{easing}"), String::new()),
+            Motion::Rise => (String::new(), format!("+(H+h)/2*{easing}")),
         };
         let composed = format!("[layer{index}]");
         graph.push(format!(
-            "{video}[v{index}]overlay=x='(W-w)/2+W*{}/100{slide}':y='(H-h)/2+H*{}/100':\
+            "{video}[v{index}]overlay=x='(W-w)/2+W*{}/100{slide_x}':y='(H-h)/2+H*{}/100{slide_y}':\
              eof_action=pass:repeatlast=0:enable='gte(t,{at})*lt(t,{end})'{composed}",
             look.x, look.y,
         ));
@@ -217,9 +291,14 @@ pub fn plan(
         let label = format!("[title{index}]");
         let color = title.color.name();
         let border = if color == "black" { "white" } else { "black" };
+        let background = if title.background {
+            "box=1:boxcolor=black@0.66:boxborderw=8:"
+        } else {
+            ""
+        };
         graph.push(format!(
             "{video}drawtext=fontfile=font.ttf:textfile=title-{index}.txt:expansion=none:\
-             fontsize=h*{}/100:fontcolor={color}:borderw=2:bordercolor={border}:\
+             fontsize=h*{}/100:fontcolor={color}:borderw=2:bordercolor={border}:{background}\
              x=(w-tw)*{}/200:y=(h-th)*{}/200:enable='gte(t,{})*lt(t,{})'{label}",
             title.size,
             title.x + 100,
@@ -252,6 +331,7 @@ pub fn plan(
     .map(OsString::from)
     .into();
     args.extend(inputs);
+    let graph_index = args.len();
     args.push("-filter_complex".into());
     args.push(graph.join(";").into());
     args.extend(
@@ -274,9 +354,19 @@ pub fn plan(
         ]
         .map(OsString::from),
     );
-    if args.iter().map(|arg| arg.len() + 3).sum::<usize>() + output.as_os_str().len() + 64
-        > MAX_COMMAND_CHARS
-    {
+    let command_length = |args: &[OsString]| {
+        args.iter().map(|arg| arg.len() + 3).sum::<usize>() + output.as_os_str().len() + 64
+    };
+    let graph_file = if command_length(&args) > MAX_COMMAND_CHARS {
+        args[graph_index] = "-/filter_complex".into();
+        Some(std::mem::replace(
+            &mut args[graph_index + 1],
+            "filters.txt".into(),
+        ))
+    } else {
+        None
+    };
+    if command_length(&args) > MAX_COMMAND_CHARS {
         return Err(StudioError::Input(
             "Timeline có quá nhiều clip để xuất trong một lượt.",
         ));
@@ -286,6 +376,7 @@ pub fn plan(
         duration_ms: total,
         output: output.to_path_buf(),
         titles: titles.into_iter().map(|title| title.text.clone()).collect(),
+        graph_file,
     })
 }
 
@@ -310,30 +401,35 @@ pub fn run(
         .tempfile_in(folder)?
         .into_temp_path();
     let mut cmd = probe::command(ffmpeg);
-    let work = if plan.titles.is_empty() {
+    let work = if plan.titles.is_empty() && plan.graph_file.is_none() {
         None
     } else {
         let work = tempfile::tempdir()?;
-        let font = [
-            std::env::var_os("WINDIR")
-                .map(PathBuf::from)
-                .map(|dir| dir.join("Fonts/arial.ttf")),
-            Some(PathBuf::from(
-                "/System/Library/Fonts/Supplemental/Arial.ttf",
-            )),
-            Some(PathBuf::from(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            )),
-        ]
-        .into_iter()
-        .flatten()
-        .find(|path| path.is_absolute() && path.is_file())
-        .ok_or(StudioError::Input(
-            "Thiếu phông chữ Arial hoặc DejaVu Sans để xuất lớp chữ.",
-        ))?;
-        fs::copy(font, work.path().join("font.ttf"))?;
-        for (index, text) in plan.titles.iter().enumerate() {
-            fs::write(work.path().join(format!("title-{index}.txt")), text)?;
+        if let Some(graph) = &plan.graph_file {
+            fs::write(work.path().join("filters.txt"), graph.as_encoded_bytes())?;
+        }
+        if !plan.titles.is_empty() {
+            let font = [
+                std::env::var_os("WINDIR")
+                    .map(PathBuf::from)
+                    .map(|dir| dir.join("Fonts/arial.ttf")),
+                Some(PathBuf::from(
+                    "/System/Library/Fonts/Supplemental/Arial.ttf",
+                )),
+                Some(PathBuf::from(
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                )),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|path| path.is_absolute() && path.is_file())
+            .ok_or(StudioError::Input(
+                "Thiếu phông chữ Arial hoặc DejaVu Sans để xuất lớp chữ.",
+            ))?;
+            fs::copy(font, work.path().join("font.ttf"))?;
+            for (index, text) in plan.titles.iter().enumerate() {
+                fs::write(work.path().join(format!("title-{index}.txt")), text)?;
+            }
         }
         cmd.current_dir(work.path());
         Some(work)
