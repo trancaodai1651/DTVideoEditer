@@ -37,6 +37,7 @@ fn snapshot(video: Vec<ClipEdit>, audio: Vec<ClipEdit>) -> TimelineSnapshot {
         ],
         titles: vec![],
         aspect: Default::default(),
+        export_range: None,
     }
 }
 
@@ -143,6 +144,57 @@ fn grant_scan_preview_project_reopen_and_revoke() {
     assert!(scan(&store, folder, &probe).is_err());
     assert_eq!(serve(&store, request()).status(), StatusCode::NOT_FOUND);
     assert_eq!(fs::read(&clip_path).unwrap(), b"0123456789");
+}
+
+#[test]
+fn exact_import_preserves_id_reopens_and_rejects_siblings() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("ảnh thử.mp4");
+    let sibling = dir.path().join("khác.mp4");
+    let unsupported = dir.path().join("notes.txt");
+    fs::write(&original, b"0123456789").unwrap();
+    fs::write(&sibling, b"ungranted").unwrap();
+    fs::write(&unsupported, b"text").unwrap();
+    let db = dir.path().join("studio.sqlite3");
+    let store = Store::open(&db).unwrap();
+    let probe = CountingProbe(Cell::new(0));
+    let report = crate::library::import_files(
+        &store,
+        &[original.clone(), unsupported, original.clone()],
+        &probe,
+    )
+    .unwrap();
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.assets.len(), 1);
+    let asset = &report.assets[0];
+    assert!(store.folders().unwrap()[0].file_only);
+    assert_eq!(
+        crate::library::import_files(&store, std::slice::from_ref(&original), &probe)
+            .unwrap()
+            .assets[0]
+            .id,
+        asset.id
+    );
+    assert_eq!(probe.0.get(), 1);
+    drop(store);
+
+    let store = Store::open(&db).unwrap();
+    let mut source = store.source(asset.id, false).unwrap().unwrap();
+    assert!(source.file_only);
+    assert!(crate::library::authorized_asset(&source).is_ok());
+    source.relative_path = "khác.mp4".into();
+    assert!(crate::library::authorized_asset(&source).is_err());
+    let request = || {
+        Request::builder()
+            .uri(format!("http://studio-media.localhost/source-{}", asset.id))
+            .header(header::RANGE, "bytes=2-4")
+            .body(Vec::new())
+            .unwrap()
+    };
+    assert_eq!(serve(&store, request()).body(), b"234");
+    store.revoke(asset.folder_id).unwrap();
+    assert_eq!(serve(&store, request()).status(), StatusCode::NOT_FOUND);
+    assert_eq!(fs::read(original).unwrap(), b"0123456789");
 }
 
 #[test]
@@ -647,6 +699,7 @@ fn real_ffmpeg_analyzes_cuts_and_exports_layers_with_text_and_color() {
         color: TitleColor::White,
         caption: false,
         background: false,
+        edit_group: None,
     });
     let project = store
         .create_project_with_timeline("Bản dựng", Some(&edits))
@@ -820,6 +873,7 @@ fn real_ffmpeg_exports_speed_keying_stickers_and_captions() {
         color: TitleColor::White,
         caption: true,
         background: true,
+        edit_group: None,
     });
     let project = store
         .create_project_with_timeline("Thử thư viện", Some(&edits))
@@ -877,4 +931,205 @@ fn real_ffmpeg_exports_speed_keying_stickers_and_captions() {
     let [r, g, b] = pixel(&sticker, 160, 90);
     assert!(r > 180 && g > 120 && b < 120, "{r}, {g}, {b}");
     assert!(blue(pixel(&sticker, 120, 50)));
+}
+
+#[test]
+#[ignore = "requires FFmpeg and FFprobe installed on PATH"]
+fn real_ffmpeg_exports_keyframes_and_transitions_with_in_out() {
+    use crate::timeline::{ClipTransition, ExportRange, Look, TransformKey, TransitionKind};
+
+    let dir = tempfile::tempdir().unwrap();
+    let ffmpeg = find_tool("ffmpeg").expect("ffmpeg on PATH");
+    let ffprobe = find_tool("ffprobe").expect("ffprobe on PATH");
+    let paths: Vec<_> = ["red", "blue"]
+        .into_iter()
+        .map(|color| {
+            let path = dir.path().join(format!("{color}.mp4"));
+            let status = Command::new(&ffmpeg)
+                .args(["-v", "error", "-f", "lavfi", "-i"])
+                .arg(format!("color={color}:s=320x180:r=30:d=1"))
+                .args([
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=1",
+                    "-c:v",
+                    "libx264",
+                    "-threads",
+                    "1",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                ])
+                .arg(&path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            path
+        })
+        .collect();
+    let store = Store::open(&dir.path().join("test.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: ffprobe.clone(),
+        ffmpeg: None,
+    };
+    let imported = crate::library::import_files(&store, &paths, &probe).unwrap();
+    assert_eq!(imported.skipped, 0);
+    let red = imported.assets[0].id;
+    let blue = imported.assets[1].id;
+    let stock = crate::catalog::load(&store, dir.path()).unwrap();
+    let star = stock
+        .iter()
+        .find(|item| item.asset.relative_path == "gold-star.png")
+        .unwrap()
+        .asset
+        .id;
+    let response = serve(
+        &store,
+        Request::builder()
+            .uri(format!("/waveform-{red}"))
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.body().starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(store.waveform(red).unwrap().is_some());
+
+    for (name, kind) in [
+        ("dissolve", TransitionKind::Dissolve),
+        ("black", TransitionKind::Black),
+    ] {
+        let mut edits = snapshot(
+            vec![
+                clip(red, 0, 1000, 0),
+                ClipEdit {
+                    look: Look {
+                        transition: Some(ClipTransition {
+                            kind,
+                            duration_ms: 400,
+                            from_asset_id: red,
+                            from_start_ms: 0,
+                        }),
+                        ..Look::default()
+                    },
+                    ..clip(blue, 0, 1000, 1000)
+                },
+                ClipEdit {
+                    layer: 1,
+                    look: Look {
+                        keyframes: vec![
+                            TransformKey {
+                                at_ms: 0,
+                                x: -20,
+                                y: 0,
+                                scale: 20,
+                                rotate: 0,
+                                opacity: 100,
+                                smooth: false,
+                            },
+                            TransformKey {
+                                at_ms: 500,
+                                x: 20,
+                                y: 0,
+                                scale: 60,
+                                rotate: 25,
+                                opacity: 85,
+                                smooth: true,
+                            },
+                        ],
+                        ..Look::default()
+                    },
+                    ..clip(star, 0, 500, 1500)
+                },
+            ],
+            Vec::new(),
+        );
+        let project = store
+            .create_project_with_timeline(name, Some(&edits))
+            .unwrap();
+        edits.export_range = Some(ExportRange {
+            start_ms: 800,
+            end_ms: 1900,
+        });
+        let output = dunce::canonicalize(dir.path())
+            .unwrap()
+            .join(format!("{name}.mp4"));
+        let job = store
+            .create_render_job(project.id, &edits, output.to_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            execute(&store, job.id, &AtomicBool::new(false)).unwrap(),
+            Outcome::Done
+        );
+        let metadata = Command::new(&ffprobe)
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=codec_type",
+                "-of",
+                "json",
+            ])
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(metadata.status.success());
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+        let duration: f64 = metadata["format"]["duration"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((duration - 1.1).abs() < 0.06, "{duration}");
+        assert!(
+            metadata["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|stream| stream["codec_type"] == "audio")
+        );
+
+        let sample = |time: &str, x: usize| {
+            let frame = Command::new(&ffmpeg)
+                .args(["-v", "error", "-ss", time, "-i"])
+                .arg(&output)
+                .args([
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "-threads",
+                    "1",
+                    "pipe:1",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                frame.status.success(),
+                "{}",
+                String::from_utf8_lossy(&frame.stderr)
+            );
+            assert_eq!(frame.stdout.len(), 320 * 180 * 3);
+            let offset = (90 * 320 + x) * 3;
+            [
+                frame.stdout[offset],
+                frame.stdout[offset + 1],
+                frame.stdout[offset + 2],
+            ]
+        };
+        let [r, g, b] = sample(if name == "dissolve" { "0.4" } else { "0.2" }, 160);
+        if name == "dissolve" {
+            assert!(r > 55 && g < 35 && b > 55, "dissolve: {r}, {g}, {b}");
+        } else {
+            assert!(r < 45 && g < 35 && b < 45, "black join: {r}, {g}, {b}");
+        }
+        let [r, g, b] = sample("0.93", 155);
+        assert!(
+            r > 135 && g > 90 && b < 140,
+            "keyframed star: {r}, {g}, {b}"
+        );
+    }
 }

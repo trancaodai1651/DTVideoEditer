@@ -20,6 +20,7 @@ pub struct Folder {
     pub id: i64,
     pub root: String,
     pub asset_count: u32,
+    pub file_only: bool,
 }
 
 #[derive(Debug, Serialize)]

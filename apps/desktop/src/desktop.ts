@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export type MediaKind = "video" | "audio" | "image";
 export type Track = "video" | "audio";
@@ -7,6 +8,7 @@ export interface Folder {
   id: number;
   root: string;
   assetCount: number;
+  fileOnly: boolean;
 }
 
 export interface Asset {
@@ -28,6 +30,15 @@ export interface AssetPage {
   total: number;
   pageSize: number;
 }
+
+export interface ImportedFiles {
+  assets: Asset[];
+  skipped: number;
+}
+
+export type MediaDrop = { type: "started"; id: number; x: number; y: number }
+  | { type: "finished"; id: number; result: { Ok: ImportedFiles } | { Err: string } };
+export interface ExportRange { startMs: number; endMs: number }
 
 export interface Project {
   id: number;
@@ -78,6 +89,28 @@ export interface ClipLook {
   stabilize: boolean;
   opticalFlow: boolean;
   cleanAudio: boolean;
+  audioFadeInMs?: number;
+  audioFadeOutMs?: number;
+  gainDb?: number;
+  editGroup?: number;
+  keyframes?: TransformKey[];
+  transition?: ClipTransition;
+}
+export type TransitionKind = "black" | "dissolve";
+export interface ClipTransition {
+  kind: TransitionKind;
+  durationMs: number;
+  fromAssetId: number;
+  fromStartMs: number;
+}
+export interface TransformKey {
+  atMs: number;
+  x: number;
+  y: number;
+  scale: number;
+  rotate: number;
+  opacity: number;
+  smooth?: boolean;
 }
 export interface TitleStyle {
   text: string;
@@ -87,6 +120,7 @@ export interface TitleStyle {
   color: TitleColor;
   caption?: boolean;
   background?: boolean;
+  editGroup?: number;
 }
 export interface Cue { startMs: number; endMs: number; text: string }
 export interface CatalogItem { title: string; group: "music" | "sound" | "sticker"; asset: Asset }
@@ -235,6 +269,8 @@ export const desktop = isTauri();
 
 export const api = {
   pickFolder: () => invoke<number | null>("pick_folder"),
+  pickMediaFiles: () => invoke<ImportedFiles | null>("pick_media_files"),
+  onMediaDrop: (receive: (drop: MediaDrop) => void) => listen<MediaDrop>("studio-media-drop", ({ payload }) => receive(payload)),
   scan: (folderId: number) => invoke<ScanReport>("scan_folder", { folderId }),
   folders: () => invoke<Folder[]>("list_folders"),
   revoke: (folderId: number) => invoke<void>("revoke_folder", { folderId }),
@@ -251,7 +287,8 @@ export const api = {
     invoke<Project>("create_edited_project", { name, snapshot }),
   timeline: (projectId: number) => invoke<Timeline>("load_timeline", { projectId }),
   saveTimeline: (projectId: number, snapshot: TimelineSnapshot) => invoke<void>("save_timeline", { projectId, snapshot }),
-  startRender: (projectId: number, queueOnly: boolean) => invoke<RenderJob | null>("start_render", { projectId, queueOnly }),
+  startRender: (projectId: number, queueOnly: boolean, exportRange?: ExportRange) =>
+    invoke<RenderJob | null>("start_render", { projectId, queueOnly, exportRange }),
   retryRender: (jobId: number) => invoke<RenderJob>("retry_render", { jobId }),
   cancelRender: (jobId: number) => invoke<void>("cancel_render", { jobId }),
   renderJobs: (projectId: number) => invoke<RenderJob[]>("list_render_jobs", { projectId }),
@@ -276,7 +313,7 @@ export const api = {
     invoke<boolean>("edit_remote_post", { accountId, remoteId, message }),
 };
 
-export function mediaUrl(route: "source" | "thumbnail" | "render", id: number, revision: number) {
+export function mediaUrl(route: "source" | "thumbnail" | "render" | "waveform", id: number, revision: number) {
   return `${convertFileSrc(`${route}-${id}`, "studio-media")}?v=${revision}`;
 }
 

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
 import { fileName, mediaUrl } from "./desktop";
 import type { Aspect, ClipLook, TitleColor } from "./desktop";
-import { MAX_LAYERS, clipLength, clipsAt, defaultLook, layerOf, offsetVisual, playbackRate } from "./timeline";
+import { MAX_LAYERS, audioFades, clipFinish, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, playbackRate, previousVisual, transformProperties, transitionBetween } from "./timeline";
 import type { Clip } from "./timeline";
 import { timecode } from "./vi";
 
@@ -63,27 +63,36 @@ const inspectorTabs = [
 ] as const;
 export type InspectorTab = (typeof inspectorTabs)[number][0];
 
-export function ClipInspector({ clip, aspect, disabled, name, total, tab, onTab, onAspect, onLayer, onClip }: {
+export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs, tab, onTab, onAspect, onLayer, onClip, onKeyframe, onSeek }: {
   clip: Clip | undefined;
   aspect: Aspect;
   disabled: boolean;
   name: string | undefined;
   total: number;
+  playheadMs: number;
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
   onAspect: (aspect: Aspect) => void;
   onLayer: (layer: number) => void;
-  onClip: (clip: Clip) => void;
+  onClip: (clip: Clip, animate?: boolean) => void;
+  onKeyframe: (clip: Clip, elapsed: number) => void;
+  onSeek: (at: number) => void;
 }) {
   const title = clip?.title;
-  const look = { ...defaultLook, ...clip?.look };
-  const lookEdit = (changes: Partial<ClipLook>) => { if (clip) onClip({ ...clip, look: { ...look, ...changes } }); };
+  const elapsed = clip ? playheadMs - clip.positionMs : 0;
+  const look = clip ? lookAt(clip, elapsed) : defaultLook;
+  const previous = look.keyframes?.filter((key) => key.atMs < elapsed).at(-1);
+  const following = look.keyframes?.find((key) => key.atMs > elapsed);
+  const atKey = look.keyframes?.find((key) => key.atMs === elapsed);
+  const lookEdit = (changes: Partial<ClipLook>) => {
+    if (clip) onClip({ ...clip, look: { ...look, ...changes } }, transformProperties.some((property) => property in changes));
+  };
   const visibleTabs = inspectorTabs.filter(([id]) => clip?.track === "audio"
     ? id === "audio" || id === "speed"
     : clip?.kind === "image" ? id !== "audio" && id !== "speed" : true);
   const current = visibleTabs.some(([id]) => id === tab) ? tab : visibleTabs[0][0];
   const field = (label: string, key: "scale" | "opacity" | "volume" | "brightness" | "contrast" | "saturation" | "temperature" | "speed", min: number, max: number) =>
-    <Slider key={`${key}-${look[key]}`} label={label} value={look[key]} min={min} max={max}
+    <Slider key={`${key}-${Math.round(look[key])}`} label={label} value={Math.round(look[key])} min={min} max={max}
       onChange={(value) => lookEdit({ [key]: value })} />;
   return <section className="studio-pane inspector" aria-label="Thuộc tính">
     <div className="pane-heading"><h2>{clip ? title ? "Thuộc tính chữ" : "Thuộc tính clip" : "Chi tiết dự án"}</h2>
@@ -133,12 +142,22 @@ export function ClipInspector({ clip, aspect, disabled, name, total, tab, onTab,
       </>}
       {clip && !title && current === "video" && <>
         <h3>Biến đổi</h3>
+        <div className="inspector-inline" role="group" aria-label="Keyframe biến đổi">
+          <button type="button" className="button secondary compact" disabled={!previous} aria-label="Keyframe trước"
+            onClick={() => previous && onSeek(clip.positionMs + previous.atMs)}>‹</button>
+          <button type="button" className="button secondary compact" aria-pressed={!!atKey} disabled={elapsed < 0 || elapsed > clipLength(clip)}
+            onClick={() => onKeyframe(clip, elapsed)}>{atKey ? "◆ Xóa keyframe" : "◇ Thêm keyframe"}</button>
+          <button type="button" className="button secondary compact" disabled={!following} aria-label="Keyframe sau"
+            onClick={() => following && onSeek(clip.positionMs + following.atMs)}>›</button>
+          {atKey && <Toggle label="Nội suy êm" checked={!!atKey.smooth} onChange={(smooth) =>
+            onClip({ ...clip, look: { ...clip.look, keyframes: look.keyframes?.map((key) => key === atKey ? { ...key, smooth } : key) } })} />}
+        </div>
         {field("Tỷ lệ (%)", "scale", 10, 200)}
         <div className="inspector-pair">
-          <NumberField label="Dịch ngang (%)" value={look.x} min={-100} max={100} onChange={(x) => lookEdit({ x })} />
-          <NumberField label="Dịch dọc (%)" value={look.y} min={-100} max={100} onChange={(y) => lookEdit({ y })} />
+          <NumberField label="Dịch ngang (%)" value={Math.round(look.x)} min={-100} max={100} onChange={(x) => lookEdit({ x })} />
+          <NumberField label="Dịch dọc (%)" value={Math.round(look.y)} min={-100} max={100} onChange={(y) => lookEdit({ y })} />
         </div>
-        <NumberField label="Xoay (°)" value={look.rotate} min={-180} max={180} onChange={(rotate) => lookEdit({ rotate })} />
+        <NumberField label="Xoay (°)" value={Math.round(look.rotate)} min={-180} max={180} onChange={(rotate) => lookEdit({ rotate })} />
         <Toggle label="Lật ngang" checked={look.flip} onChange={(flip) => lookEdit({ flip })} />
         <div className="inspector-inline">
           <button type="button" className="button secondary compact" onClick={() => lookEdit({ x: 0, y: 0 })}>Về giữa</button>
@@ -148,8 +167,14 @@ export function ClipInspector({ clip, aspect, disabled, name, total, tab, onTab,
         {field("Độ đục (%)", "opacity", 0, 100)}
       </>}
       {clip && !title && current === "audio" && <>
-        {field("Âm lượng (%)", "volume", 0, 200)}
-        <NumberField label="Fade hai đầu (ms)" value={look.fadeMs} min={0} max={3000} onChange={(fadeMs) => lookEdit({ fadeMs })} />
+        <NumberField label="Âm lượng (dB)" value={look.gainDb ?? Math.max(-60, Math.round(20 * Math.log10(look.volume / 100)))}
+          min={-60} max={6} onChange={(gainDb) => lookEdit({ gainDb })} />
+        <div className="inspector-pair">
+          <NumberField label="Fade đầu (ms)" value={look.audioFadeInMs ?? look.fadeMs} min={0} max={10000}
+            onChange={(audioFadeInMs) => lookEdit({ audioFadeInMs })} />
+          <NumberField label="Fade cuối (ms)" value={look.audioFadeOutMs ?? look.fadeMs} min={0} max={10000}
+            onChange={(audioFadeOutMs) => lookEdit({ audioFadeOutMs })} />
+        </div>
         <Toggle label="Khử nhiễu âm thanh" checked={look.cleanAudio} onChange={(cleanAudio) => lookEdit({ cleanAudio })} />
       </>}
       {clip && !title && current === "speed" && <>
@@ -196,9 +221,10 @@ function useMediaClock(clip: Clip, at: number, playing: boolean, revision: numbe
   const player = useRef<HTMLMediaElement | null>(null);
   const rate = playbackRate(clip);
   const time = (clip.startMs + at * rate) / 1000;
-  const fade = Math.min(clip.look?.fadeMs ?? 0, clipLength(clip) / 2);
-  const gain = fade ? Math.min(1, at / fade, (clipLength(clip) - at) / fade) : 1;
-  const volume = Math.min(1, (clip.look?.volume ?? 100) / 100 * gain);
+  const [fadeIn, fadeOut] = audioFades(clip);
+  const gain = Math.min(1, fadeIn ? at / fadeIn : 1, fadeOut ? (clipLength(clip) - at) / fadeOut : 1);
+  const baseGain = clip.look?.gainDb === undefined ? (clip.look?.volume ?? 100) / 100 : 10 ** (clip.look.gainDb / 20);
+  const volume = Math.min(1, baseGain * gain);
   useEffect(() => {
     const element = player.current;
     if (!element) return;
@@ -219,15 +245,18 @@ function useMediaClock(clip: Clip, at: number, playing: boolean, revision: numbe
 
 type TransformMode = "move" | "scale" | "rotate";
 
-function VisualFrame({ clip, at, revision, playing, aspectRatio, editable, selected, onTransform }: {
+function VisualFrame({ clip, at, revision, playing, aspectRatio, editable, selected, onTransform, live, blend, shade }: {
   clip: Clip; at: number; revision: number; playing: boolean; aspectRatio: number; editable: boolean; selected: boolean;
   onTransform: (event: PointerEvent<HTMLElement>, clip: Clip, mode: TransformMode) => void;
+  live: boolean;
+  blend: number;
+  shade: number;
 }) {
   const player = useMediaClock(clip, at, playing, revision);
   const src = mediaUrl("source", clip.assetId, revision);
-  const look = { ...defaultLook, ...clip.look };
+  const look = live ? { ...defaultLook, ...clip.look } : lookAt(clip, at);
   const fade = Math.min(look.fadeMs, clipLength(clip) / 2);
-  const opacity = look.opacity / 100 * (fade ? Math.min(1, at / fade, (clipLength(clip) - at) / fade) : 1);
+  const opacity = look.opacity / 100 * blend * (fade ? Math.min(1, at / fade, (clipLength(clip) - at) / fade) : 1);
   const travel = (100 + look.scale) / 2 * Math.max(0, 1 - at / Math.min(450, clipLength(clip)));
   const slideX = look.motion === "slide" ? -travel : look.motion === "slide_right" ? travel : 0;
   const slideY = look.motion === "rise" ? travel : 0;
@@ -242,20 +271,20 @@ function VisualFrame({ clip, at, revision, playing, aspectRatio, editable, selec
     transform: `translate(-50%, -50%) rotate(${look.rotate}deg)`,
   };
   const style = {
-    opacity, filter: `brightness(${1 + look.brightness / 100}) contrast(${look.contrast}%) saturate(${look.saturation}%)${color}${effect}`,
+    opacity, filter: `brightness(${1 + look.brightness / 100}) contrast(${look.contrast}%) saturate(${look.saturation}%)${color}${effect} brightness(${shade})`,
     transform: look.flip ? "scaleX(-1)" : undefined,
     clipPath: look.ellipse ? "ellipse(50% 50%)" : undefined,
   };
   return <div className={`frame-object ${editable ? "editable" : ""} ${selected && editable ? "frame-selected" : ""}`}
     style={bounds} title={editable ? fileName(clip.relativePath) : undefined}
-    onPointerDown={editable ? (event) => onTransform(event, clip, "move") : undefined}>
+    onPointerDown={editable ? (event) => onTransform(event, { ...clip, look }, "move") : undefined}>
     {clip.kind === "image" ? <img className="frame-layer" src={src} style={style} alt="" draggable={false} />
       : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} playsInline preload="auto" />}
     {editable && selected && <>
       {["nw", "ne", "sw", "se"].map((corner) => <span className={`frame-handle ${corner}`} key={corner} aria-hidden="true"
-        title="Đổi cỡ" onPointerDown={(event) => onTransform(event, clip, "scale")} />)}
+        title="Đổi cỡ" onPointerDown={(event) => onTransform(event, { ...clip, look }, "scale")} />)}
       <span className="frame-handle rotate" aria-hidden="true" title="Xoay"
-        onPointerDown={(event) => onTransform(event, clip, "rotate")} />
+        onPointerDown={(event) => onTransform(event, { ...clip, look }, "rotate")} />
     </>}
   </div>;
 }
@@ -275,8 +304,18 @@ export function CompositionFrame({ clips, aspect, at, revision, playing, selecte
     centerX: number; centerY: number; width: number; height: number;
   } | null>(null);
   const [draft, setDraft] = useState<Clip | null>(null);
+  const joins = useMemo(() => clips.flatMap((right) => {
+    if (!right.look?.transition) return [];
+    const left = previousVisual(clips, right);
+    const join = left && transitionBetween(left, right);
+    return left && join ? [{ left, right, ...join }] : [];
+  }), [clips]);
   const active = clipsAt(clips, at).filter((clip) => clip.available)
     .map((clip) => draft?.key === clip.key ? draft : clip).sort((a, b) => layerOf(a) - layerOf(b));
+  const held = joins.filter(({ right, kind, durationMs }) => kind === "dissolve" && at >= right.positionMs
+    && at < right.positionMs + durationMs).map(({ left }) => left);
+  const visuals = [...active.filter((clip) => clip.track === "video"), ...held]
+    .sort((a, b) => layerOf(a) - layerOf(b) || a.positionMs - b.positionMs);
   const source = aspect === "source" ? clips.reduce<Clip | undefined>((first, clip) =>
     clip.track === "video" && clip.width && clip.height && (!first || clip.positionMs < first.positionMs) ? clip : first, undefined) : undefined;
   const size = source?.width && source.height ? source.width / source.height : ratio[aspect];
@@ -341,9 +380,18 @@ export function CompositionFrame({ clips, aspect, at, revision, playing, selecte
     aria-label="Khung hình tại playhead" onPointerMove={(event) => transform(event, false)}
     onPointerUp={(event) => transform(event, true)} onPointerCancel={cancel} onLostPointerCapture={cancel}
     onPointerDown={(event) => { if (editable && event.target === event.currentTarget) onSelect(null); }}>
-    {active.filter((clip) => clip.track === "video").map((clip) =>
-      <VisualFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing}
-        aspectRatio={size} editable={editable && !playing} selected={clip.key === selectedKey} onTransform={begin} />)}
+    {visuals.map((clip) => {
+      const frozen = at >= clipFinish(clip);
+      const elapsed = frozen ? clipLength(clip) - 1 : at - clip.positionMs;
+      const incoming = joins.find((join) => join.right.key === clip.key);
+      const outgoing = joins.find((join) => join.left.key === clip.key && join.kind === "black");
+      const blend = incoming?.kind === "dissolve" ? Math.min(1, elapsed / incoming.durationMs) : 1;
+      const shade = Math.min(1, incoming?.kind === "black" ? 2 * elapsed / incoming.durationMs : 1,
+        outgoing ? 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 1);
+      return <VisualFrame key={clip.key} clip={clip} at={elapsed} revision={revision} playing={playing && !frozen}
+        aspectRatio={size} editable={editable && !playing && !frozen} selected={clip.key === selectedKey}
+        onTransform={begin} live={draft?.key === clip.key} blend={blend} shade={shade} />;
+    })}
     {playing && active.filter((clip) => clip.track === "audio").map((clip) =>
       <AudioFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing} />)}
     {active.filter((clip) => clip.title).map((clip) => {

@@ -1,9 +1,9 @@
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    library::authorized_file,
+    library::authorized_asset,
     model::{Result, StudioError},
     probe::{self, MediaFormat},
     store::Store,
@@ -73,7 +73,7 @@ pub fn analyze(store: &Store, asset_id: i64, name: &str) -> Result<TemplateEntry
             "Video mẫu cần dài từ 0,5 giây đến 3 phút.",
         ));
     };
-    let (path, _) = authorized_file(Path::new(&asset.root), Path::new(&asset.relative_path))?;
+    let (path, _) = authorized_asset(&asset)?;
     let format = MediaFormat::for_path(&path)
         .ok_or(StudioError::Input("Định dạng video mẫu chưa được hỗ trợ."))?;
     let ffmpeg = probe::find_tool("ffmpeg")

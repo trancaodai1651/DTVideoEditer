@@ -45,6 +45,7 @@ interface GalleryProps {
   audioOnly: boolean;
   onKind: (kind: MediaKind | null) => void;
   onImport: () => void;
+  onFolderImport: () => void;
   busy: boolean;
   canAdd: boolean;
   timeline: RefObject<TimelineDrop | null>;
@@ -52,7 +53,7 @@ interface GalleryProps {
 }
 
 export function Gallery({ data, folders, folderId, page, revision, selected, onFolder, onPage, onSelect,
-  query, onQuery, kind, audioOnly, onKind, onImport, busy, canAdd, timeline, onAppend }: GalleryProps) {
+  query, onQuery, kind, audioOnly, onKind, onImport, onFolderImport, busy, canAdd, timeline, onAppend }: GalleryProps) {
   const gesture = useRef<{ pointer: number; x: number; y: number; media: MediaRef; moved: boolean } | null>(null);
   const pages = data ? Math.ceil(data.total / data.pageSize) : 0;
 
@@ -74,7 +75,8 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
     <section className="panel gallery" aria-labelledby="gallery-heading">
       <h2 className="sr-only" id="gallery-heading">Thư viện media</h2>
       <div className="media-toolbar">
-        <button type="button" className="button primary compact" onClick={onImport} disabled={busy}><Icon name="plus" size={15} />Nhập media</button>
+        <button type="button" className="button primary compact" onClick={onImport} disabled={busy}><Icon name="plus" size={15} />Nhập tệp</button>
+        <button type="button" className="icon-button" onClick={onFolderImport} disabled={busy} title="Chọn thư mục media" aria-label="Chọn thư mục media"><Icon name="folder" size={15} /></button>
         <label className="media-search"><Icon name="search" size={15} />
           <input aria-label="Tìm media" placeholder="Tìm trong thư viện" maxLength={120} value={query} onChange={(event) => onQuery(event.target.value)} />
         </label>
@@ -115,7 +117,7 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
         <div className="empty">
           <span className="empty-icon"><Icon name="folder" size={25} /></span>
           <strong>{query.trim() ? "Không tìm thấy media" : folders.length ? vi.folderEmpty : vi.libraryEmpty}</strong>
-          <p>{query.trim() ? "Thử tên khác hoặc đổi bộ lọc." : folders.length ? vi.folderEmptyHint : vi.libraryEmptyHint}</p>
+          <p>{query.trim() ? "Thử tên khác hoặc đổi bộ lọc." : folders.length ? vi.folderEmptyHint : "Chọn tệp, chọn thư mục hoặc kéo tệp từ Explorer/Finder vào đây."}</p>
         </div>
       )}
       {pages > 1 && <div className="pagination">

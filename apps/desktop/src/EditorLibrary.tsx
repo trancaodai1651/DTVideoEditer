@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ComponentProps, CSSProperties, ReactNode } from "react";
 import { mediaUrl } from "./desktop";
-import type { Asset, CatalogItem, ClipLook, TitleStyle } from "./desktop";
+import type { Asset, CatalogItem, ClipLook, ClipTransition, TitleStyle, TransitionKind } from "./desktop";
 import { Icon } from "./Icon";
 import { grades } from "./ClipInspector";
 import { captionStyle, defaultTitle } from "./timeline";
@@ -73,7 +73,7 @@ const titles = [
   { label: "Nhãn dưới", description: "Nền tối cho tên hoặc địa điểm", title: { ...defaultTitle, text: "Tên · Địa điểm", size: 5, x: -78, y: 75, background: true } },
 ] satisfies { label: string; description: string; title: TitleStyle }[];
 
-export function EditorLibrary({ tab, onTab, media, templates, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe }: {
+export function EditorLibrary({ tab, onTab, media, templates, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
   tab: LibraryTab;
   onTab: (tab: LibraryTab) => void;
   media: ReactNode;
@@ -92,10 +92,14 @@ export function EditorLibrary({ tab, onTab, media, templates, catalog, catalogFa
   onImportSrt: () => void;
   onExportSrt: () => void;
   onTranscribe: (language: string) => void;
+  canJoin: boolean;
+  join?: ClipTransition;
+  onJoin: (kind: TransitionKind | null, durationMs: number) => void;
 }) {
   const [audioGroup, setAudioGroup] = useState<"music" | "sound" | "local">("music");
   const [previewSound, setPreviewSound] = useState<number | null>(null);
   const [language, setLanguage] = useState("vi");
+  const [joinDuration, setJoinDuration] = useState(500);
   const selected = tabs.find((item) => item.id === tab)!;
   const hasStock = tab === "stickers" || tab === "audio" && audioGroup !== "local";
   const items = hasStock ? catalog?.filter((item) => item.group === (tab === "stickers" ? "sticker" : audioGroup)) : undefined;
@@ -154,8 +158,25 @@ export function EditorLibrary({ tab, onTab, media, templates, catalog, catalogFa
         </div>
       </div>}
       {tab === "templates" && templates}
+      {tab === "transitions" && <div className="library-section">
+        <h2>Điểm nối hai clip</h2>
+        <p>Chọn clip phía sau trên cùng tầng. Hai clip phải chạm mép.</p>
+        <label className="edit-field">Thời lượng chuyển cảnh (ms)
+          <input type="number" min={100} max={3000} step={100} value={joinDuration}
+            onChange={(event) => setJoinDuration(Number(event.target.value))} />
+        </label>
+        <div className="library-filters">
+          <button type="button" className="button secondary compact" disabled={busy || !canJoin}
+            onClick={() => onJoin("dissolve", joinDuration)}>Hòa trộn</button>
+          <button type="button" className="button secondary compact" disabled={busy || !canJoin}
+            onClick={() => onJoin("black", joinDuration)}>Qua đen</button>
+          <button type="button" className="button secondary compact" disabled={busy || !join}
+            onClick={() => onJoin(null, 0)}>Gỡ điểm nối</button>
+        </div>
+        {join && <p>{join.kind === "black" ? "Qua đen" : "Hòa trộn"} · {join.durationMs} ms</p>}
+      </div>}
       {(tab === "effects" || tab === "transitions" || tab === "filters" || tab === "adjustment" || tab === "advanced") &&
-        <div className="library-section"><h2>{selected.label}</h2><p>{hasVisual
+        <div className="library-section"><h2>{tab === "transitions" ? "Vào và ra trên một clip" : selected.label}</h2><p>{hasVisual
           ? "Bấm một mẫu để áp dụng cho clip đang chọn."
           : "Chọn một clip video hoặc ảnh trên timeline để áp dụng."}</p>
           <div className="preset-grid">{presets[tab].map((preset) => <button type="button" key={preset.label}

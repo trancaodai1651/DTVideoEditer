@@ -1,6 +1,14 @@
 # Changelog
 
-Snapshot: 2026-11-11/CAPCUT-AUDIT
+Snapshot: 2026-11-11/EDITOR-040
+
+## 2026-11-11 · Editor 0.4.0
+
+- M1-H1 thêm hộp thoại nhập nhiều tệp và native drop vào thư viện hoặc timeline. Migration 005 cấp quyền theo tệp đã chọn. Nguồn ở vị trí gốc.
+- M1-H2 thêm dồn clip chính, hít mép và liên kết độc lập. Đa chọn, chọn theo hướng, nhóm, clipboard và marker dùng chung lịch sử timeline cho các phép sửa clip.
+- M1-H3 thêm waveform PNG qua migration 006, gain dB và fade in/out riêng cho audio.
+- M1-H4 và M1-H5 thêm keyframe transform, easing, hòa trộn và qua đen ở mối nối giữa hai clip.
+- M1-H6 thêm điểm In/Out. Mỗi lượt xuất giữ phạm vi của timeline tại lúc đưa vào hàng đợi.
 
 ## 2026-11-11 · Khảo sát CapCut Desktop
 

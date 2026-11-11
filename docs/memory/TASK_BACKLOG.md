@@ -6,17 +6,17 @@
 | M1-A | P0 | Xong | M0 | Chọn thư mục native, đọc FFprobe, tạo thumbnail FFmpeg, index SQLite, gallery và preview hoạt động với fixture, clip có thể mở lại, thu hồi kiểm tra qua native smoke. |
 | M1-B | P0 | Xong | M1-A | Snapshot timeline có version, start/end/position theo mili giây, drag/drop, trim/split và undo/redo. Project mở lại giữ edit points. Render MP4 H.264/AAC từ timeline thật, xem tiến độ, hủy và thử lại, fixture đo độ dài bằng FFprobe. |
 | M1-C | P1 | Đang làm | M1-B | Nhiều tầng video/ảnh/âm thanh/chữ, màu, transform, fade/volume, 9:16/16:9/1:1 và hàng đợi. Tiếp theo là crop, rotate, speed, nhiều chuyển cảnh, preset chất lượng và phát timeline theo thời gian thực. |
-| M1-D | P1 | Đang làm | M1-B | Đã có phụ đề thủ công, SRT, Whisper và preset chữ. Còn waveform, thumbnail theo từng thời điểm và thao tác bàn phím mở rộng. |
+| M1-D | P1 | Đang làm | M1-B | Có phụ đề thủ công, SRT, Whisper, preset chữ và waveform. Còn thumbnail theo từng thời điểm và thao tác bàn phím nâng cao. |
 | M1-E | P0 | Xong | M1-C | Mẫu sẵn và mẫu cục bộ từ video, dò nhịp cắt/tỷ lệ, gán nguồn và các lớp âm thanh, tạo dự án chỉnh sửa được. |
 | M1-F | P0 | Chờ | M1-E | Mở rộng nhận dạng chữ, chuyển cảnh, chuyển động, nhạc và lời nói theo confidence. Cho phép xem và sửa đề xuất, giữ quyền với mẫu và giọng nói, đo chất lượng trên video tham chiếu có ground truth. |
 | M1-G | P1 | Xong | M1-C | Giao diện biên tập ba khung với timeline và các thư viện tích hợp. Các preset cập nhật clip hoặc tạo lớp chỉnh sửa được và đi vào MP4. |
 | M1-H | P1 | Đang làm | M1-I | Nhóm triển khai theo các ca nghiệm thu trong [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md). |
-| M1-H1 | P0 | Kế tiếp | M1-I | Picker nhiều tệp và OS drop Explorer/Finder. Đọc đúng tệp chọn, giữ nguồn tại chỗ, drop vào track đặt đúng mốc. Test quyền, trùng, revoke, restart và hai hệ điều hành. |
-| M1-H2 | P0 | Chờ | M1-I | Main track magnet, snapping và linkage độc lập. Ripple trim có và không kéo overlay, đa chọn, group, range, marker và hotkeys. Dùng CC-05 đến CC-11 làm ca so sánh. |
-| M1-H3 | P1 | Chờ | M1-H1 | Filmstrip nhiều mốc, waveform, gain dB, fade in/out, mute/lock/visibility và tách audio theo nguồn. |
-| M1-H4 | P1 | Chờ | M1-I | Keyframe theo tham số, nội suy, easing, marker, undo, trim/split. So preview và pixel trong export. |
-| M1-H5 | P1 | Chờ | M1-H2 | Transition giữa clip kề, thời lượng có giới hạn, xử lý gap và undo. Kiểm tra hai input trong preview và MP4. |
-| M1-H6 | P1 | Chờ | M1-H2, M1-H4 | Compound, multicam, speed curve, mask/tracking, rich text, adjustment layer/LUT, effect layer, export range/preset và AI theo quyền. |
+| M1-H1 | P0 | Đang kiểm chứng | M1-I | Có picker nhiều tệp, native drop và grant theo tệp. Picker MP4/WAV đã thử trên Windows. Test native kiểm tra trùng, thu hồi và mở lại. Kiểm thử riêng thao tác thả từ Explorer/Finder và picker trên macOS. |
+| M1-H2 | P0 | Đang làm | M1-I | Có công tắc dồn clip chính, hít mép và liên kết, đa chọn, chọn theo hướng, group, clipboard và marker. Test CC-06/CC-07 cho ripple và nhóm. Còn chọn bằng khung, thuộc tính đa chọn và bước frame. |
+| M1-H3 | P1 | Kế tiếp | M1-H1 | Có waveform, gain dB và fade in/out. Bổ sung filmstrip theo thời gian, khóa/ẩn/tắt tiếng theo tầng, meter và tách audio giữ liên hệ với clip nguồn. |
+| M1-H4 | P1 | Đang làm | M1-I | Có một bộ keyframe transform cho vị trí, scale, xoay và opacity, easing tuyến tính hoặc smooth, diamond và phép sửa split/trim. Còn keyframe riêng từng tham số và đồ thị easing. |
+| M1-H5 | P1 | Đang làm | M1-H2 | Hai chuyển cảnh hòa trộn và qua đen giữa clip kề nhau, giới hạn thời lượng và khôi phục sau undo. Fixture FFmpeg kiểm tra cả hai. Còn xác minh độ khớp preview trên macOS và mở rộng preset. |
+| M1-H6 | P1 | Đang làm | M1-H2, M1-H4 | Có xuất In–Out kèm snapshot mỗi job. Còn compound/subproject, multicam, speed curve, tracking, rich text, adjustment layer/LUT, effect layer, preset xuất và AI theo quyền. |
 | M1-I | P1 | Xong | M1-G | Kéo media từ thư viện lên timeline, di chuyển clip giữa các tầng cùng loại, zoom timeline và preview, kéo vị trí/đổi cỡ/xoay hình trên preview và lưu qua undo/redo. |
 | M1-J | P1 | Đang làm | M1-I | Kiểm kê thao tác CapCut Desktop có ca tái lập và ghi phạm vi theo bản, tài khoản, nền tảng. Đã có khảo sát Windows khi chưa đăng nhập. Còn ca Pro, cloud, macOS và các dòng ghi Cần thử. |
 | M2-A | P1 | Chờ | M1-A, key khi test live | Gemini adapter thật, model/quota theo thời điểm cấu hình, OpenAI và Claude adapters qua cùng contract, keychain, consent khi gửi tài liệu, schema cảnh, outline/VO/shot list/on-screen text/caption/hashtags/title, sửa cảnh và version history. Chi phí/quota chỉ hiển thị nếu có dữ liệu. |

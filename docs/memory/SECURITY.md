@@ -1,9 +1,9 @@
 # Ranh giới bảo mật
 
-- Chỉ native picker ghi grant. IPC cho WebView dùng ID và không nhận path media tùy ý. Scan không mở rộng qua symbolic link và Windows reparse point trong cây.
+- Native picker ghi quyền thư mục hoặc từng tệp. Sự kiện thả tệp của hệ điều hành chỉ ghi quyền từng tệp; frontend nhận asset ID và vị trí, không gửi đường dẫn nguồn qua IPC. Scan không mở rộng qua symbolic link và Windows reparse point trong cây.
 - Scan và preview đối chiếu root canonical, kiểm tra từng phần path và chỉ đọc tệp thường trong root. Giải pháp kiểm tra path và mở tệp có cửa sổ TOCTOU nếu tiến trình khác cố ý thay đổi filesystem đồng thời. Hardening theo file handle thuộc M5.
 - FFprobe và FFmpeg chạy với argument list cố định, demuxer whitelist, file protocol, thời gian và stdout có giới hạn. FFmpeg là công cụ do người dùng cài trên PATH.
-- Media protocol dùng ID, phân biệt thumbnail và source, giới hạn byte range và cache policy `no-store`. Mỗi request mới kiểm tra grant. Thu hồi chờ scan kết thúc, gỡ metadata và clip tham chiếu sau xác nhận. App mở local và không cấp plugin filesystem cho WebView.
+- Media protocol dùng ID cho thumbnail, waveform và source, giới hạn byte range và cache policy `no-store`. Mỗi request mới kiểm tra grant. Quyền từng tệp kiểm tra canonical path, tên tệp và loại tệp trước khi mở. Thu hồi chờ scan kết thúc, gỡ metadata và clip tham chiếu sau xác nhận. App mở local và không cấp plugin filesystem cho WebView.
 - Xuất video ghi tệp tạm riêng trong thư mục người dùng chọn qua dialog native rồi hoàn tất với kiểm tra chống ghi đè. Hàng đợi từ chối đích trùng. Mọi input qua grant và demuxer whitelist. Chữ render qua tệp UTF-8 do app tạo trong thư mục tạm, với expansion tắt.
 - Video tham chiếu được đọc local qua asset ID. Kho mẫu giữ timing và tỷ lệ, không giữ bản sao media. Preview video xuất chỉ phục vụ job đã xong và kiểm tra path.
 - Kho tích hợp chỉ đăng ký các tệp cố định đi kèm ứng dụng trong thư mục dữ liệu nội bộ, kiểm tra đường dẫn canonical và nội dung trước khi cấp ID. Tài nguyên người dùng vẫn qua native picker.

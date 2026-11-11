@@ -3,5 +3,5 @@
   "identifier": "main",
   "description": "Local main window. Filesystem and folder dialogs are mediated by Rust.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AI Video Studio",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "identifier": "studio.dtedit.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -15,7 +15,7 @@
         "label": "main",
         "title": "AI Video Studio",
         "theme": "Dark",
-        "dragDropEnabled": false,
+        "dragDropEnabled": true,
         "width": 1320,
         "height": 850,
         "minWidth": 840,

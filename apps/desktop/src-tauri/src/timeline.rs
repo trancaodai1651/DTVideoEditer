@@ -58,7 +58,7 @@ pub enum KeyColor {
     Blue,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Look {
     pub brightness: i16,
@@ -83,6 +83,62 @@ pub struct Look {
     pub stabilize: bool,
     pub optical_flow: bool,
     pub clean_audio: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_fade_in_ms: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_fade_out_ms: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gain_db: Option<i8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit_group: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keyframes: Vec<TransformKey>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition: Option<ClipTransition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransformKey {
+    pub at_ms: i64,
+    pub x: i16,
+    pub y: i16,
+    pub scale: u16,
+    pub rotate: i16,
+    pub opacity: u8,
+    #[serde(default)]
+    pub smooth: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionKind {
+    Black,
+    Dissolve,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClipTransition {
+    pub kind: TransitionKind,
+    pub duration_ms: u16,
+    pub from_asset_id: i64,
+    pub from_start_ms: i64,
+}
+
+pub fn transition_between(left: &ClipEdit, right: &ClipEdit) -> Option<(TransitionKind, i64)> {
+    let edit = right.look.transition.as_ref()?;
+    if left.layer != right.layer
+        || left.finish_ms() != right.position_ms
+        || left.asset_id != edit.from_asset_id
+        || left.start_ms != edit.from_start_ms
+    {
+        return None;
+    }
+    let length = i64::from(edit.duration_ms)
+        .min(left.length_ms())
+        .min(right.length_ms());
+    Some((edit.kind, length))
 }
 
 impl Default for Look {
@@ -110,6 +166,12 @@ impl Default for Look {
             stabilize: false,
             optical_flow: false,
             clean_audio: false,
+            audio_fade_in_ms: None,
+            audio_fade_out_ms: None,
+            gain_db: None,
+            edit_group: None,
+            keyframes: Vec::new(),
+            transition: None,
         }
     }
 }
@@ -129,6 +191,9 @@ impl Look {
             && (-100..=100).contains(&self.y)
             && self.volume <= 200
             && self.fade_ms <= 3000
+            && self.audio_fade_in_ms.is_none_or(|ms| ms <= 10_000)
+            && self.audio_fade_out_ms.is_none_or(|ms| ms <= 10_000)
+            && self.gain_db.is_none_or(|db| (-60..=6).contains(&db))
             && (50..=200).contains(&self.speed)
             && (-180..=180).contains(&self.rotate)
             && (-100..=100).contains(&self.temperature)
@@ -176,6 +241,8 @@ pub struct TitleEdit {
     pub caption: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub background: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_group: Option<u32>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -237,9 +304,38 @@ pub struct TimelineSnapshot {
     pub titles: Vec<TitleEdit>,
     #[serde(default, skip_serializing_if = "Aspect::is_source")]
     pub aspect: Aspect,
+    #[serde(
+        default,
+        rename = "exportRange",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub export_range: Option<ExportRange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportRange {
+    pub start_ms: i64,
+    pub end_ms: i64,
 }
 
 impl TimelineSnapshot {
+    pub fn export_duration_ms(&self) -> Result<i64> {
+        let total = self.duration_ms();
+        match self.export_range {
+            Some(range)
+                if range.start_ms >= 0
+                    && range.end_ms <= total
+                    && range.end_ms.saturating_sub(range.start_ms) >= MIN_CLIP_MS =>
+            {
+                Ok(range.end_ms - range.start_ms)
+            }
+            Some(_) => Err(StudioError::Input(
+                "Vùng In–Out không hợp lệ hoặc ngắn hơn 100 ms.",
+            )),
+            None => Ok(total),
+        }
+    }
     pub fn clips(&self, kind: &str) -> Vec<&ClipEdit> {
         let mut clips: Vec<_> = self
             .tracks
@@ -320,6 +416,27 @@ pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()
     if clip.layer >= MAX_LAYERS
         || !clip.look.valid()
         || (asset.kind == "image" && clip.look.speed != 100)
+        || (track == "audio" && !clip.look.keyframes.is_empty())
+        || clip.look.transition.as_ref().is_some_and(|edit| {
+            track != "video"
+                || !(100..=3000).contains(&edit.duration_ms)
+                || edit.from_asset_id < 1
+                || edit.from_start_ms < 0
+        })
+        || clip.look.keyframes.len() > 32
+        || clip
+            .look
+            .keyframes
+            .windows(2)
+            .any(|pair| pair[0].at_ms >= pair[1].at_ms)
+        || clip.look.keyframes.iter().any(|key| {
+            !(0..=clip.length_ms()).contains(&key.at_ms)
+                || !(-100..=100).contains(&key.x)
+                || !(-100..=100).contains(&key.y)
+                || !(10..=200).contains(&key.scale)
+                || !(-180..=180).contains(&key.rotate)
+                || key.opacity > 100
+        })
     {
         return Err(StudioError::Input(
             "Tầng hoặc thuộc tính clip nằm ngoài giới hạn.",
@@ -434,6 +551,7 @@ mod tests {
                 .collect(),
             titles: vec![],
             aspect: Aspect::Source,
+            export_range: None,
         };
         assert!(check_version(&snapshot(2, &["video", "audio"])).is_ok());
         assert!(check_version(&snapshot(2, &["video"])).is_ok());

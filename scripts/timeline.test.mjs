@@ -2,13 +2,62 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAX_TIMELINE_MS, addCaptions, addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, offsetVisual, place, redo, removeClip, snap, splitClip, subtitleCues, updateAppearance,
-  toSnapshot, totalMs, trimEnd, trimStart, undo,
+  deleteSelection, groupSelection, lookAt, moveSelection, pasteSelection, setTransformKey,
+  toSnapshot, totalMs, transitionBetween, trimClip, trimEnd, trimStart, undo,
 } from "../apps/desktop/src/timeline.ts";
 
 const video = { assetId: 1, relativePath: "a.mp4", kind: "video", durationMs: 6000 };
 const image = { assetId: 2, relativePath: "b.png", kind: "image", durationMs: null };
 const audio = { assetId: 3, relativePath: "c.wav", kind: "audio", durationMs: 3000 };
 const points = (clips) => clips.map((clip) => [clip.track, clip.startMs, clip.endMs, clip.positionMs]);
+
+test("main track magnet and linkage move following clips independently", () => {
+  const clips = addTitle(addClip(addClip([], video), video), 6200, 0);
+  const first = clips[0].key;
+  const starts = (edits) => edits.map((clip) => clip.positionMs);
+  assert.deepEqual(starts(trimClip(clips, first, "end", -200, false, true)), [0, 6000, 6200]);
+  assert.deepEqual(starts(trimClip(clips, first, "end", -200, true, false)), [0, 5800, 6200]);
+  assert.deepEqual(starts(trimClip(clips, first, "end", -200, true, true)), [0, 5800, 6000]);
+  assert.deepEqual(starts(deleteSelection(clips, new Set([first]), true, true)), [0, 200]);
+});
+
+test("moving and pasting groups preserve each lane and relative start", () => {
+  const base = addTitle(addClip([], video), 300, 0);
+  const keys = new Set(base.map((clip) => clip.key));
+  const group = groupSelection(base, keys);
+  const snapshot = toSnapshot(group);
+  const groupId = snapshot.tracks[0].clips[0].look.editGroup;
+  assert.ok(groupId > 0);
+  assert.equal(snapshot.titles[0].editGroup, groupId);
+  const moved = moveSelection(group, keys, 1500);
+  assert.deepEqual(moved.map((clip) => clip.positionMs), [1500, 1800]);
+  const pasted = pasteSelection(group, group, 7200);
+  assert.deepEqual(pasted.slice(2).map((clip) => clip.positionMs), [7200, 7500]);
+  assert.notEqual(toSnapshot(pasted).titles[1].editGroup, groupId);
+});
+
+test("interpolates transform keyframes and preserves the split boundary", () => {
+  const [base] = addClip([], video);
+  const first = setTransformKey(base, 0, { x: 0, scale: 100 });
+  const animated = setTransformKey(first, 2000, { x: 40, scale: 200 });
+  assert.equal(lookAt(animated, 1000).x, 20);
+  assert.equal(lookAt(animated, 1000).scale, 150);
+  const [left, right] = splitClip([animated], animated.key, 1000);
+  assert.equal(lookAt(left, 1000).scale, 150);
+  assert.equal(lookAt(right, 0).scale, 150);
+  assert.equal(lookAt(right, 1000).x, 40);
+});
+
+test("a join disappears across a gap and returns after undo", () => {
+  const [left, right] = addClip(addClip([], video), image);
+  const joined = [left, { ...right, look: { transition: {
+    kind: "dissolve", durationMs: 400, fromAssetId: left.assetId, fromStartMs: left.startMs,
+  } } }];
+  assert.equal(transitionBetween(...joined)?.durationMs, 400);
+  const gap = trimClip(joined, left.key, "end", -200, false, false);
+  assert.equal(transitionBetween(...gap), undefined);
+  assert.equal(transitionBetween(...undo(commit(commit(newHistory(), joined), gap)).present)?.kind, "dissolve");
+});
 
 test("adds clips to the matching track without overlap", () => {
   let clips = addClip([], video);

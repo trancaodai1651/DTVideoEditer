@@ -1,8 +1,9 @@
-import type { Aspect, ClipLook, Cue, EditorTrack, MediaKind, Timeline, TimelineSnapshot, TitleStyle, Track } from "./desktop";
+import type { Aspect, ClipLook, Cue, EditorTrack, MediaKind, Timeline, TimelineSnapshot, TitleStyle, Track, TransformKey, TransitionKind } from "./desktop";
 
 // Limits mirror src-tauri/src/timeline.rs, which is the authority on save.
 export const TIMELINE_VERSION = 3;
 export const MAX_LAYERS = 12;
+export const MAX_TRACK_CLIPS = 200;
 export const MAX_TITLES = 300;
 export const MIN_CLIP_MS = 100;
 export const MAX_IMAGE_MS = 600_000;
@@ -52,6 +53,23 @@ export const clipFinish = (clip: Clip) => clip.positionMs + clipLength(clip);
 export const trackOf = (kind: MediaKind): Track => (kind === "audio" ? "audio" : "video");
 export const layerOf = (clip: Clip) => clip.layer ?? 0;
 export const sameLane = (left: Clip, right: Clip) => left.track === right.track && layerOf(left) === layerOf(right);
+export function previousVisual(clips: Clip[], target: Clip) {
+  return target.track === "video" ? clips.find((clip) => clip.key !== target.key && sameLane(clip, target)
+    && clipFinish(clip) === target.positionMs && clip.available && target.available) : undefined;
+}
+export function transitionBetween(left: Clip, right: Clip) {
+  const transition = right.look?.transition;
+  if (!transition || !sameLane(left, right) || !left.available || !right.available || clipFinish(left) !== right.positionMs
+    || left.assetId !== transition.fromAssetId || left.startMs !== transition.fromStartMs) return undefined;
+  return { kind: transition.kind, durationMs: Math.min(transition.durationMs, clipLength(left), clipLength(right)) };
+}
+export function setTransition(clips: Clip[], target: Clip, kind: TransitionKind | null, durationMs: number) {
+  const previous = previousVisual(clips, target);
+  if (kind && !previous) return clips;
+  return updateAppearance(clips, { ...target, look: { ...target.look, transition: kind && previous ? {
+    kind, durationMs: clamp(Math.round(durationMs), 100, 3000), fromAssetId: previous.assetId, fromStartMs: previous.startMs,
+  } : undefined } });
+}
 export const defaultLook: ClipLook = {
   brightness: 0, contrast: 100, saturation: 100, opacity: 100, scale: 100, x: 0, y: 0, volume: 100, fadeMs: 0, motion: "none",
   speed: 100, rotate: 0, flip: false, temperature: 0, effect: "none", keyColor: "none", ellipse: false,
@@ -61,6 +79,52 @@ export const defaultTitle: TitleStyle = { text: "Tiêu đề", size: 7, x: 0, y:
 export const captionStyle: TitleStyle = { text: "Nhập phụ đề", size: 5, x: 0, y: 86, color: "white", caption: true, background: true };
 export const totalMs = (clips: Clip[]) => clips.reduce((end, clip) => Math.max(end, clipFinish(clip)), 0);
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
+export const transformProperties = ["x", "y", "scale", "rotate", "opacity"] as const;
+
+export function lookAt(clip: Clip, elapsed: number): ClipLook {
+  const look = { ...defaultLook, ...clip.look };
+  const keys = look.keyframes;
+  if (!keys?.length) return look;
+  const rightIndex = keys.findIndex((key) => key.atMs >= elapsed);
+  const right = keys[rightIndex] ?? keys.at(-1)!;
+  const left = rightIndex > 0 ? keys[rightIndex - 1] : right;
+  const linear = left === right ? 0 : (elapsed - left.atMs) / (right.atMs - left.atMs);
+  const t = right.smooth ? linear * linear * (3 - 2 * linear) : linear;
+  for (const property of transformProperties) look[property] = left[property] + (right[property] - left[property]) * t;
+  return look;
+}
+
+function transformKey(atMs: number, look: ClipLook, smooth = false): TransformKey {
+  return { atMs, x: Math.round(look.x), y: Math.round(look.y), scale: Math.round(look.scale),
+    rotate: Math.round(look.rotate), opacity: Math.round(look.opacity), smooth };
+}
+
+export function setTransformKey(clip: Clip, elapsed: number, look: ClipLook, toggle = false): Clip {
+  if (clip.track !== "video" || elapsed < 0 || elapsed > clipLength(clip)) return clip;
+  const keys = clip.look?.keyframes ?? [];
+  const current = keys.find((key) => key.atMs === elapsed);
+  if (!current && keys.length >= 32) throw new Error("Mỗi clip hỗ trợ tối đa 32 keyframe biến đổi.");
+  const next = keys.filter((key) => key.atMs !== elapsed);
+  if (!toggle || !current) next.push(transformKey(elapsed, look, current?.smooth));
+  next.sort((a, b) => a.atMs - b.atMs);
+  const base = { ...look, keyframes: next };
+  for (const property of transformProperties) base[property] = Math.round(base[property]);
+  return { ...clip, look: base };
+}
+
+function trimKeys(before: Clip, after: Clip, offset: number): Clip {
+  const keys = before.look?.keyframes;
+  if (!keys?.length) return after;
+  const end = offset + clipLength(after);
+  const retained = keys.filter((key) => key.atMs >= offset && key.atMs <= end).map((key) => ({ ...key, atMs: key.atMs - offset }));
+  for (const boundary of [offset, end]) {
+    if (boundary > keys[0].atMs && boundary < keys.at(-1)!.atMs && !keys.some((key) => key.atMs === boundary)) {
+      retained.push(transformKey(boundary - offset, lookAt(before, boundary), keys.find((key) => key.atMs > boundary)?.smooth));
+    }
+  }
+  const look = retained.length ? after.look : lookAt(before, offset);
+  return { ...after, look: { ...look, keyframes: retained.sort((a, b) => a.atMs - b.atMs) } };
+}
 
 export function fromTimeline(timeline: Timeline): Clip[] {
   const media: Clip[] = timeline.clips.map((clip) => ({
@@ -113,6 +177,7 @@ export function addClip(clips: Clip[], media: MediaRef, positionMs?: number, lay
   const lengthMs = mediaLength(media);
   if (!lengthMs || lengthMs < MIN_CLIP_MS) return null;
   const track = trackOf(media.kind);
+  if (clips.filter((clip) => clip.track === track && layerOf(clip) === layer).length >= MAX_TRACK_CLIPS) return null;
   const wanted = positionMs ?? totalMs(clips.filter((clip) => clip.track === track && layerOf(clip) === layer));
   const position = place(clips, track, lengthMs, wanted, undefined, layer);
   if (position + lengthMs > MAX_TIMELINE_MS) return null;
@@ -168,6 +233,14 @@ export function updateAppearance(clips: Clip[], clip: Clip): Clip[] {
   if (!before) return clips;
   const changedLength = clipLength(before) !== clipLength(clip);
   if (clipLength(clip) < MIN_CLIP_MS) throw new Error("Tốc độ này làm clip ngắn hơn 100 ms.");
+  if (playbackRate(before) !== playbackRate(clip) && clip.look?.keyframes?.length) {
+    const rate = playbackRate(before) / playbackRate(clip);
+    const keys = new Map(clip.look.keyframes.map((key) => {
+      const atMs = Math.min(clipLength(clip), Math.round(key.atMs * rate));
+      return [atMs, { ...key, atMs }];
+    }));
+    clip = { ...clip, look: { ...clip.look, keyframes: [...keys.values()] } };
+  }
   const positionMs = changedLength
     ? place(clips, clip.track, clipLength(clip), clip.positionMs, clip.key, layerOf(clip)) : clip.positionMs;
   return clips.map((item) => item.key === clip.key ? { ...clip, positionMs } : item);
@@ -211,18 +284,126 @@ export function moveClip(clips: Clip[], key: string, wantedMs: number, layer?: n
   });
 }
 
+const mainTrack = (clip: Clip) => clip.track === "video" && layerOf(clip) === 0;
+
+function validPositions(clips: Clip[]) {
+  const ends = new Map<string, number>();
+  for (const clip of [...clips].sort((a, b) => a.positionMs - b.positionMs)) {
+    const lane = `${clip.track}-${layerOf(clip)}`;
+    const end = clipFinish(clip);
+    if (clip.positionMs < (ends.get(lane) ?? 0) || end > MAX_TIMELINE_MS) return false;
+    ends.set(lane, end);
+  }
+  return true;
+}
+
+export function moveSelection(clips: Clip[], keys: ReadonlySet<string>, wantedDelta: number): Clip[] {
+  const selected = clips.filter((clip) => keys.has(clip.key));
+  if (!selected.length) return clips;
+  const delta = clamp(Math.round(wantedDelta), -Math.min(...selected.map((clip) => clip.positionMs)), MAX_TIMELINE_MS - totalMs(selected));
+  if (!delta) return clips;
+  const next = clips.map((clip) => keys.has(clip.key) ? { ...clip, positionMs: clip.positionMs + delta } : clip);
+  return validPositions(next) ? next : clips;
+}
+
+function shiftAfter(clips: Clip[], boundary: number, delta: number, linkage: boolean, except: string) {
+  return clips.map((clip) => clip.key !== except && clip.positionMs >= boundary && (mainTrack(clip) || linkage)
+    ? { ...clip, positionMs: clip.positionMs + delta } : clip);
+}
+
+export function trimClip(clips: Clip[], key: string, edge: "start" | "end", delta: number, magnet: boolean, linkage: boolean) {
+  const before = clips.find((clip) => clip.key === key);
+  const trim = edge === "start" ? trimStart : trimEnd;
+  if (!before || !magnet || !mainTrack(before)) return trim(clips, key, delta);
+  const after = (edge === "start" ? trimStart([before], key, delta, true) : trimEnd([before], key, delta))[0];
+  const durationDelta = clipLength(after) - clipLength(before);
+  if (!durationDelta) return clips;
+  const changed = clips.map((clip) => clip.key === key ? { ...after, positionMs: before.positionMs } : clip);
+  const next = shiftAfter(changed, clipFinish(before), durationDelta, linkage, key);
+  return validPositions(next) ? next : clips;
+}
+
+export function deleteSelection(clips: Clip[], keys: ReadonlySet<string>, magnet: boolean, linkage: boolean) {
+  const deleted = clips.filter((clip) => keys.has(clip.key));
+  if (!deleted.length) return clips;
+  let next = clips.filter((clip) => !keys.has(clip.key));
+  if (magnet) {
+    for (const clip of deleted.filter(mainTrack).sort((a, b) => b.positionMs - a.positionMs)) {
+      next = shiftAfter(next, clipFinish(clip), -clipLength(clip), linkage, clip.key);
+    }
+  }
+  return validPositions(next) ? next : clips;
+}
+
+export const groupOf = (clip: Clip) => clip.title?.editGroup ?? clip.look?.editGroup;
+
+function withGroup(clip: Clip, editGroup?: number): Clip {
+  return clip.title ? { ...clip, title: { ...clip.title, editGroup } } : { ...clip, look: { ...clip.look, editGroup } };
+}
+
+export function groupSelection(clips: Clip[], keys: ReadonlySet<string>, clear = false) {
+  const selected = clips.filter((clip) => keys.has(clip.key));
+  if (selected.length < 2 && !clear || !selected.length) return clips;
+  const groups = new Set(selected.map(groupOf).filter((id) => id !== undefined));
+  const nextGroup = clips.reduce((max, clip) => Math.max(max, groupOf(clip) ?? 0), 0) + 1;
+  if (!clear && nextGroup > 0xffffffff) return clips;
+  return clips.map((clip) => keys.has(clip.key) || groups.has(groupOf(clip) ?? -1)
+    ? withGroup(clip, clear ? undefined : nextGroup) : clip);
+}
+
+export function pasteSelection(clips: Clip[], copied: Clip[], at: number): Clip[] {
+  if (!copied.length) return clips;
+  const earliest = Math.min(...copied.map((clip) => clip.positionMs));
+  const wanted = Math.max(0, Math.round(at));
+  const shifts = new Set([wanted]);
+  for (const item of copied) {
+    for (const existing of clips) {
+      if (sameLane(item, existing)) shifts.add(clipFinish(existing) - item.positionMs + earliest);
+    }
+  }
+  for (const start of [...shifts].filter((time) => time >= wanted).sort((a, b) => a - b)) {
+    if (totalMs(copied) + start - earliest > MAX_TIMELINE_MS) return clips;
+    const pasted = copied.map((clip) => ({ ...withGroup(clip), positionMs: clip.positionMs + start - earliest }));
+    const next = [...clips, ...pasted];
+    if (!validPositions(next)) continue;
+    const counts = new Map<string, number>();
+    let titles = 0;
+    for (const clip of next) {
+      const lane = `${clip.track}-${layerOf(clip)}`;
+      if (clip.title) {
+        if (++titles > MAX_TITLES) return clips;
+      } else {
+        const count = (counts.get(lane) ?? 0) + 1;
+        if (count > MAX_TRACK_CLIPS) return clips;
+        counts.set(lane, count);
+      }
+    }
+    return [...clips, ...pasted.map((clip) => ({ ...clip, key: newKey() }))];
+  }
+  return clips;
+}
+
+export function audioFades(clip: Clip) {
+  const length = clipLength(clip);
+  const legacy = Math.min(clip.look?.fadeMs ?? 0, Math.floor(length / 2));
+  const fadeIn = clip.look?.audioFadeInMs ?? legacy;
+  const fadeOut = clip.look?.audioFadeOutMs ?? legacy;
+  const denominator = Math.max(1, length, fadeIn + fadeOut);
+  return [Math.floor(fadeIn * length / denominator), Math.floor(fadeOut * length / denominator)] as const;
+}
+
 /** Drags the in point. The out point stays where it is on the timeline. */
-export function trimStart(clips: Clip[], key: string, deltaMs: number) {
+export function trimStart(clips: Clip[], key: string, deltaMs: number, ripple = false) {
   return update(clips, key, (clip) => {
     const before = clips.filter((other) => sameLane(other, clip) && other.key !== key
       && clipFinish(other) <= clip.positionMs).reduce((end, other) => Math.max(end, clipFinish(other)), 0);
-    const room = clip.positionMs - before;
+    const room = ripple ? Infinity : clip.positionMs - before;
     const still = clip.kind === "image" || clip.kind === "text";
     const rate = playbackRate(clip);
     const extend = still ? Math.min(room, MAX_IMAGE_MS - clipLength(clip)) : Math.min(Math.floor(room * rate), clip.startMs);
     const delta = clamp(Math.round(deltaMs * rate), -extend, clip.endMs - clip.startMs - Math.ceil(MIN_CLIP_MS * rate));
     const edited = still ? { ...clip, endMs: clip.endMs - delta } : { ...clip, startMs: clip.startMs + delta };
-    return { ...edited, positionMs: clipFinish(clip) - clipLength(edited) };
+    return trimKeys(clip, { ...edited, positionMs: clipFinish(clip) - clipLength(edited) }, clipLength(clip) - clipLength(edited));
   });
 }
 
@@ -235,7 +416,7 @@ export function trimEnd(clips: Clip[], key: string, deltaMs: number) {
     const rate = playbackRate(clip);
     const shortest = Math.ceil(MIN_CLIP_MS * rate);
     const longest = Math.max(shortest, Math.min(Math.floor((next - clip.positionMs) * rate), source));
-    return { ...clip, endMs: clip.startMs + clamp(clip.endMs - clip.startMs + Math.round(deltaMs * rate), shortest, longest) };
+    return trimKeys(clip, { ...clip, endMs: clip.startMs + clamp(clip.endMs - clip.startMs + Math.round(deltaMs * rate), shortest, longest) }, 0);
   });
 }
 
@@ -258,7 +439,10 @@ export function splitClip(clips: Clip[], key: string, atMs: number): Clip[] | nu
       ? { ...clip, endMs: clip.endMs - sourceOffset, positionMs: clipFinish(left) }
       : { ...clip, startMs: clip.startMs + sourceOffset, positionMs: clipFinish(left) };
     if (clipLength(left) >= MIN_CLIP_MS && clipLength(right) >= MIN_CLIP_MS && clipFinish(right) === clipFinish(clip)) {
-      return clips.flatMap((item) => (item.key === key ? [left, { ...right, key: newKey() }] : [item]));
+      const tail = trimKeys(clip, right, clipLength(left));
+      return clips.flatMap((item) => item.key === key ? [trimKeys(clip, left, 0), {
+        ...tail, key: newKey(), ...(tail.look?.transition ? { look: { ...tail.look, transition: undefined } } : {}),
+      }] : [item]);
     }
   }
   return null;

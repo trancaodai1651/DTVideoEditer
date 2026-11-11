@@ -7,7 +7,11 @@ use std::{
 use http_range::HttpRange;
 use tauri::http::{Method, Request, Response, StatusCode, header};
 
-use crate::{library::authorized_file, probe::MediaFormat, store::Store};
+use crate::{
+    library::{authorized_asset, authorized_file},
+    probe::{self, MediaFormat},
+    store::Store,
+};
 
 const MAX_RANGE: u64 = 4 * 1024 * 1024;
 const MAX_FULL: u64 = 24 * 1024 * 1024;
@@ -62,7 +66,7 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
         return empty(StatusCode::NOT_FOUND);
     };
     let thumbnail = route == "thumbnail";
-    if asset_id < 1 || (!thumbnail && !matches!(route, "source" | "render")) {
+    if asset_id < 1 || (!thumbnail && !matches!(route, "source" | "render" | "waveform")) {
         return empty(StatusCode::NOT_FOUND);
     }
     if route == "render" {
@@ -88,8 +92,7 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
     let Ok(Some(source)) = store.source(asset_id, thumbnail) else {
         return empty(StatusCode::NOT_FOUND);
     };
-    let Ok((path, _)) = authorized_file(Path::new(&source.root), Path::new(&source.relative_path))
-    else {
+    let Ok((path, _)) = authorized_asset(&source) else {
         return empty(StatusCode::NOT_FOUND);
     };
     if thumbnail {
@@ -100,11 +103,57 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
             .body(if head { Vec::new() } else { bytes })
             .expect("static thumbnail headers");
     }
+    if route == "waveform" {
+        if head {
+            return empty(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        return waveform_response(store, asset_id);
+    }
 
     let Some(format) = MediaFormat::for_path(&path) else {
         return empty(StatusCode::NOT_FOUND);
     };
     file_response(&path, format.mime(&source.kind), head, request)
+}
+
+fn waveform_response(store: &Store, asset_id: i64) -> Response<Vec<u8>> {
+    let Ok(_generation) = store.1.lock() else {
+        return empty(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let Ok(Some(source)) = store.source(asset_id, false) else {
+        return empty(StatusCode::NOT_FOUND);
+    };
+    let Ok((path, metadata)) = authorized_asset(&source) else {
+        return empty(StatusCode::NOT_FOUND);
+    };
+    let bytes = match store.waveform(asset_id) {
+        Ok(Some(bytes)) => bytes,
+        _ => {
+            let Some(bytes) = probe::waveform(&path, source.duration_ms.unwrap_or(0)) else {
+                return empty(StatusCode::NOT_FOUND);
+            };
+            let still_allowed =
+                store
+                    .source(asset_id, false)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|current| {
+                        authorized_asset(&current).is_ok_and(|(checked, file)| {
+                            checked == path
+                                && file.len() == metadata.len()
+                                && file.modified().ok() == metadata.modified().ok()
+                        })
+                    });
+            if !still_allowed {
+                return empty(StatusCode::NOT_FOUND);
+            }
+            let _ = store.cache_waveform(asset_id, &bytes);
+            bytes
+        }
+    };
+    headers("image/png", bytes.len() as u64)
+        .body(bytes)
+        .expect("static waveform headers")
 }
 
 fn file_response(

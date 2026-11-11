@@ -19,16 +19,18 @@ use crate::{
 };
 
 const PAGE_SIZE: u32 = 48;
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 6] = [
     include_str!("../migrations/001_library.sql"),
     include_str!("../migrations/002_timeline_edit_points.sql"),
     include_str!("../migrations/003_publishing.sql"),
     include_str!("../migrations/004_editor_layers.sql"),
+    include_str!("../migrations/005_file_grants.sql"),
+    include_str!("../migrations/006_waveforms.sql"),
 ];
 const RENDER_JOB: &str = "SELECT id, project_id, status, progress, output_path, duration_ms, error, created_at, finished_at FROM render_jobs";
 const NOT_GRANTED: StudioError = StudioError::Input("Thư mục đã bị thu hồi hoặc không tồn tại.");
 
-pub struct Store(Mutex<Connection>);
+pub struct Store(Mutex<Connection>, pub Mutex<()>);
 
 pub struct IndexEntry {
     pub relative_path: String,
@@ -45,6 +47,7 @@ pub struct AssetSource {
     pub height: Option<u32>,
     pub duration_ms: Option<i64>,
     pub thumbnail: Option<Vec<u8>>,
+    pub file_only: bool,
 }
 
 pub struct RenderTask {
@@ -120,7 +123,7 @@ impl Store {
         )?;
         tx.commit()?;
         db.execute_batch("PRAGMA foreign_keys = ON;")?;
-        Ok(Self(Mutex::new(db)))
+        Ok(Self(Mutex::new(db), Mutex::new(())))
     }
 
     pub(crate) fn db(&self) -> Result<MutexGuard<'_, Connection>> {
@@ -131,21 +134,38 @@ impl Store {
 
     pub fn grant(&self, root: &str) -> Result<i64> {
         let db = self.db()?;
+        Self::grant_scope(&db, root, false)
+    }
+
+    fn grant_scope(db: &Connection, root: &str, file_only: bool) -> Result<i64> {
         db.execute(
-            "INSERT OR IGNORE INTO folder_grants(root) VALUES (?)",
-            [root],
+            "INSERT OR IGNORE INTO folder_grants(root, file_only) VALUES (?1, ?2)",
+            params![root, file_only],
         )?;
-        Ok(db.query_row(
-            "SELECT id FROM folder_grants WHERE root = ?",
-            [root],
+        db.query_row(
+            "SELECT id FROM folder_grants WHERE root = ?1 AND file_only = ?2",
+            params![root, file_only],
             |row| row.get(0),
-        )?)
+        )
+        .optional()?
+        .ok_or(StudioError::Input(
+            "Loại nguồn đã thay đổi. Hãy thu hồi quyền cũ trước.",
+        ))
+    }
+
+    pub fn register_file(&self, path: &str, entry: &IndexEntry) -> Result<i64> {
+        let mut db = self.db()?;
+        let tx = db.transaction()?;
+        let id = Self::grant_scope(&tx, path, true)?;
+        Self::write_entries(&tx, id, std::slice::from_ref(entry))?;
+        tx.commit()?;
+        Ok(id)
     }
 
     pub fn folders(&self) -> Result<Vec<Folder>> {
         let db = self.db()?;
         let mut statement = db.prepare(
-            "SELECT g.id, g.root, COUNT(a.id) FROM folder_grants g
+            "SELECT g.id, g.root, COUNT(a.id), g.file_only FROM folder_grants g
              LEFT JOIN assets a ON a.folder_id = g.id AND a.available = 1
              GROUP BY g.id ORDER BY g.id",
         )?;
@@ -154,20 +174,32 @@ impl Store {
                 id: row.get(0)?,
                 root: row.get(1)?,
                 asset_count: row.get(2)?,
+                file_only: row.get(3)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    pub fn root(&self, folder_id: i64) -> Result<String> {
+    pub fn scope(&self, folder_id: i64) -> Result<(String, bool)> {
         self.db()?
             .query_row(
-                "SELECT root FROM folder_grants WHERE id = ?",
+                "SELECT root, file_only FROM folder_grants WHERE id = ?",
                 [folder_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?
             .ok_or(NOT_GRANTED)
+    }
+
+    pub fn file_grant(&self, root: &str) -> Result<Option<i64>> {
+        Ok(self
+            .db()?
+            .query_row(
+                "SELECT id FROM folder_grants WHERE root = ? AND file_only = 1",
+                [root],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     pub fn revoke(&self, folder_id: i64) -> Result<()> {
@@ -210,6 +242,12 @@ impl Store {
                 [folder_id],
             )?;
         }
+        Self::write_entries(&tx, folder_id, entries)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn write_entries(tx: &Connection, folder_id: i64, entries: &[IndexEntry]) -> Result<()> {
         {
             let mut unchanged = tx.prepare(
                 "UPDATE assets SET available = 1 WHERE folder_id = ? AND relative_path = ?",
@@ -250,7 +288,6 @@ impl Store {
                 }
             }
         }
-        tx.commit()?;
         Ok(())
     }
 
@@ -315,7 +352,7 @@ impl Store {
         Ok(self
             .db()?
             .query_row(
-                "SELECT g.root, a.relative_path, a.kind, m.width, m.height, CASE WHEN ?2 THEN m.thumbnail END, m.duration_ms
+                "SELECT g.root, a.relative_path, a.kind, m.width, m.height, CASE WHEN ?2 THEN m.thumbnail END, m.duration_ms, g.file_only
              FROM assets a JOIN folder_grants g ON g.id = a.folder_id
              JOIN asset_metadata m ON m.asset_id = a.id
              WHERE a.id = ?1 AND a.available = 1",
@@ -329,10 +366,26 @@ impl Store {
                         height: row.get(4)?,
                         thumbnail: row.get(5)?,
                     duration_ms: row.get(6)?,
+                    file_only: row.get(7)?,
                     })
                 },
             )
             .optional()?)
+    }
+
+    pub fn waveform(&self, asset_id: i64) -> Result<Option<Vec<u8>>> {
+        Ok(self.db()?.query_row(
+            "SELECT m.waveform FROM asset_metadata m JOIN assets a ON a.id = m.asset_id WHERE a.id = ? AND a.available = 1",
+            [asset_id], |row| row.get::<_, Option<Vec<u8>>>(0),
+        ).optional()?.flatten())
+    }
+
+    pub fn cache_waveform(&self, asset_id: i64, bytes: &[u8]) -> Result<()> {
+        self.db()?.execute(
+            "UPDATE asset_metadata SET waveform = ? WHERE asset_id = ?",
+            params![bytes, asset_id],
+        )?;
+        Ok(())
     }
 
     pub fn projects(&self) -> Result<Vec<Project>> {
@@ -451,6 +504,7 @@ impl Store {
             tracks,
             titles: timeline.titles,
             aspect: timeline.aspect,
+            export_range: None,
         })
     }
 
@@ -556,7 +610,7 @@ impl Store {
             "INSERT INTO render_jobs(project_id, status, snapshot, output_path, duration_ms)
              VALUES (?, 'queued', ?, ?, ?)
              RETURNING id, project_id, status, progress, output_path, duration_ms, error, created_at, finished_at",
-            params![project_id, json, output_path, snapshot.duration_ms()],
+            params![project_id, json, output_path, snapshot.export_duration_ms()?],
             render_job,
         )?)
     }

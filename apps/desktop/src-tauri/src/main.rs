@@ -19,11 +19,11 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
-use tauri::{AppHandle, Manager, State, http::StatusCode};
+use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WebviewEvent, http::StatusCode};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use model::{
@@ -89,6 +89,91 @@ async fn pick_folder(app: AppHandle) -> CommandResult<Option<i64>> {
         app.state::<AppState>().store.grant(root).map(Some)
     })
     .await
+}
+
+fn import_local_files(app: &AppHandle, paths: &[PathBuf]) -> Result<library::ImportedFiles> {
+    let state = app.state::<AppState>();
+    let _scan = state
+        .scan
+        .try_lock()
+        .map_err(|_| StudioError::Input("Đang cập nhật thư viện. Thử lại sau."))?;
+    let binary = probe::find_tool("ffprobe")
+        .filter(|path| probe::tool_ready(Some(path)))
+        .ok_or(StudioError::Input(
+            "Cần FFprobe trong PATH để nhập media. Xem Cài đặt.",
+        ))?;
+    let ffmpeg = probe::find_tool("ffmpeg").filter(|path| probe::tool_ready(Some(path)));
+    library::import_files(&state.store, paths, &probe::Ffprobe { binary, ffmpeg })
+}
+
+#[tauri::command]
+async fn pick_media_files(app: AppHandle) -> CommandResult<Option<library::ImportedFiles>> {
+    blocking(move || {
+        let window = app
+            .get_webview_window("main")
+            .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
+        let Some(files) = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Nhập tệp media")
+            .add_filter(
+                "Media",
+                &[
+                    "mp4", "mov", "m4v", "m4a", "webm", "mkv", "mp3", "wav", "flac", "ogg", "opus",
+                    "png", "jpg", "jpeg", "webp",
+                ],
+            )
+            .blocking_pick_files()
+        else {
+            return Ok(None);
+        };
+        let paths = files
+            .into_iter()
+            .filter_map(|file| file.into_path().ok())
+            .collect::<Vec<_>>();
+        import_local_files(&app, &paths).map(Some)
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum MediaDrop {
+    Started {
+        id: usize,
+        x: f64,
+        y: f64,
+    },
+    Finished {
+        id: usize,
+        result: CommandResult<library::ImportedFiles>,
+    },
+}
+
+fn native_drop(webview: &tauri::Webview, event: &WebviewEvent) {
+    let WebviewEvent::DragDrop(DragDropEvent::Drop { paths, position }) = event else {
+        return;
+    };
+    if webview.label() != "main" || paths.is_empty() {
+        return;
+    }
+    static NEXT_DROP: AtomicUsize = AtomicUsize::new(1);
+    let id = NEXT_DROP.fetch_add(1, Ordering::Relaxed);
+    let app = webview.app_handle().clone();
+    let _ = app.emit(
+        "studio-media-drop",
+        &MediaDrop::Started {
+            id,
+            x: position.x,
+            y: position.y,
+        },
+    );
+    let paths = paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = command(import_local_files(&app, &paths));
+        let _ = app.emit("studio-media-drop", &MediaDrop::Finished { id, result });
+    });
 }
 
 #[tauri::command]
@@ -357,6 +442,7 @@ async fn start_render(
     app: AppHandle,
     project_id: i64,
     queue_only: Option<bool>,
+    export_range: Option<timeline::ExportRange>,
 ) -> CommandResult<Option<RenderJob>> {
     blocking(move || {
         let state = app.state::<AppState>();
@@ -366,8 +452,9 @@ async fn start_render(
             .into_iter()
             .find(|project| project.id == project_id)
             .ok_or(StudioError::Input("Không tìm thấy dự án."))?;
-        let snapshot = state.store.snapshot(project_id)?;
-        if snapshot.duration_ms() == 0 {
+        let mut snapshot = state.store.snapshot(project_id)?;
+        snapshot.export_range = export_range;
+        if snapshot.export_duration_ms()? == 0 {
             return Err(StudioError::Input("Thêm clip vào timeline trước khi xuất."));
         }
         // Only the native dialog chooses where the video is written.
@@ -680,6 +767,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .on_webview_event(native_drop)
         .setup(|app| {
             let data_dir = data_dir(app)?;
             std::fs::create_dir_all(&data_dir)?;
@@ -705,6 +793,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             pick_folder,
+            pick_media_files,
             scan_folder,
             media_tools,
             list_folders,

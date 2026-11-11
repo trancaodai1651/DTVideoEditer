@@ -100,6 +100,19 @@ input::placeholder { color: var(--muted); }
 .tl-canvas { position: relative; min-width: 100%; min-height: 100%; }
 .tl-zoom { display: flex; align-items: center; gap: 4px; }
 .tl-zoom input { width: 88px; min-height: 20px; padding: 0; accent-color: var(--accent); }
+.tl-tool { min-height: 30px; max-width: 134px; padding: 3px 6px; font-size: 11px; }
+.tl-selection { font-size: 11px; color: var(--accent); white-space: nowrap; }
+.tl-group-badge { position: absolute; top: 3px; right: 8px; z-index: 2; color: var(--accent); pointer-events: none; }
+.tl-transition { position: absolute; left: 0; top: 16px; padding: 0 2px; z-index: 2; background: #8e68ad; color: white; pointer-events: none; }
+.tl-keyframe { position: absolute; bottom: 2px; width: 6px; height: 6px; z-index: 2; transform: translateX(-50%) rotate(45deg); background: #f1df9c; pointer-events: none; }
+.tl-marker { position: absolute; top: 1px; width: 10px; height: 10px; padding: 0; transform: translateX(-50%) rotate(45deg); background: #ffd171; cursor: pointer; }
+.tl-export-range { position: absolute; top: 24px; bottom: 0; z-index: 2; border-inline: 1px solid #66d9e9; background: #54bed919; pointer-events: none; }
+.tl-fade { position: absolute; bottom: 0; height: 65%; z-index: 1; pointer-events: none; background: #a6eaf38c; }
+.tl-fade.in { left: 0; clip-path: polygon(0 100%, 100% 0, 100% 100%); }
+.tl-fade.out { right: 0; clip-path: polygon(0 0, 100% 100%, 0 100%); }
+.tl-waveform { position: absolute; inset: auto 0 1px; height: 25%; overflow: hidden; opacity: .8; pointer-events: none; }
+.tl-clip.audio .tl-waveform { height: 62%; }
+.tl-waveform img { position: absolute; bottom: 0; height: 100%; max-width: none; }
 .tl-drop-ghost { position: absolute; z-index: 2; top: 5px; bottom: 5px; overflow: hidden; padding: 6px; border: 1px dashed var(--accent); border-radius: 4px; color: var(--accent); background: #183f47dc; font-size: 11px; pointer-events: none; white-space: nowrap; }
 .tl-ruler { position: relative; height: 24px; background: #191c26; cursor: col-resize; touch-action: none; user-select: none; overflow: clip; }
 .tl-ruler span { position: absolute; top: 0; height: 100%; padding: 5px 0 0 4px; border-left: 1px solid #343949; color: var(--muted); font: 10px ui-monospace, monospace; pointer-events: none; }

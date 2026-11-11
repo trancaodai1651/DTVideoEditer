@@ -14,7 +14,7 @@ mod threads;
 mod tiktok;
 
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -22,7 +22,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    library::authorized_file,
+    library::authorized_asset,
     model::{Result, StudioError},
     store::Store,
 };
@@ -590,8 +590,7 @@ impl Publisher {
                         "Media của bài đăng không còn khả dụng. Hãy quét lại thư viện.",
                     ));
                 };
-                let (path, _) =
-                    authorized_file(Path::new(&asset.root), Path::new(&asset.relative_path))?;
+                let (path, _) = authorized_asset(&asset)?;
                 Media::File(media_file(path)?)
             }
             _ => {

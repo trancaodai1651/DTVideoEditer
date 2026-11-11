@@ -16,11 +16,14 @@ use std::{
 use wait_timeout::ChildExt;
 
 use crate::{
-    library::authorized_file,
+    library::authorized_asset,
     model::{Result, StudioError},
     probe::{self, MediaFormat},
     store::Store,
-    timeline::{Aspect, ClipEdit, Effect, KeyColor, Look, Motion, TimelineSnapshot, check_version},
+    timeline::{
+        Aspect, ClipEdit, Effect, KeyColor, Look, Motion, TimelineSnapshot, TransformKey,
+        TransitionKind, check_version, transition_between,
+    },
 };
 
 pub const FPS: u32 = 30;
@@ -102,17 +105,29 @@ fn push_input(args: &mut Vec<OsString>, source: &Source, clip: &ClipEdit) {
 
 fn audio_chain(index: usize, clip: &ClipEdit) -> String {
     let length = clip.length_ms();
-    let fade = i64::from(clip.look.fade_ms).min(length / 2);
-    let fades = if fade == 0 {
-        String::new()
-    } else {
-        format!(
-            ",afade=t=in:d={},afade=t=out:st={}:d={}",
-            seconds(fade),
-            seconds(length - fade),
-            seconds(fade)
-        )
-    };
+    let legacy = i64::from(clip.look.fade_ms).min(length / 2);
+    let fade_in = clip.look.audio_fade_in_ms.map_or(legacy, i64::from);
+    let fade_out = clip.look.audio_fade_out_ms.map_or(legacy, i64::from);
+    let denominator = length.max(fade_in + fade_out);
+    let (fade_in, fade_out) = (
+        fade_in * length / denominator,
+        fade_out * length / denominator,
+    );
+    let mut fades = String::new();
+    if fade_in > 0 {
+        fades.push_str(&format!(",afade=t=in:d={}", seconds(fade_in)));
+    }
+    if fade_out > 0 {
+        fades.push_str(&format!(
+            ",afade=t=out:st={}:d={}",
+            seconds(length - fade_out),
+            seconds(fade_out)
+        ));
+    }
+    let volume = clip.look.gain_db.map_or_else(
+        || format!("{:.2}", f64::from(clip.look.volume) / 100.0),
+        |db| format!("{db}dB"),
+    );
     let tempo = if clip.look.speed == 100 {
         String::new()
     } else {
@@ -125,14 +140,13 @@ fn audio_chain(index: usize, clip: &ClipEdit) -> String {
     };
     format!(
         "[{index}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,\
-         atrim=duration={},asetpts=PTS-STARTPTS{tempo}{clean},volume={:.2}{fades},adelay={}:all=1[a{index}]",
+         atrim=duration={},asetpts=PTS-STARTPTS{tempo}{clean},volume={volume}{fades},adelay={}:all=1[a{index}]",
         seconds(clip.source_length_ms()),
-        f64::from(clip.look.volume) / 100.0,
         clip.position_ms
     )
 }
 
-fn grade_filters(look: Look) -> String {
+fn grade_filters(look: &Look) -> String {
     let mut filters = String::new();
     if look.temperature != 0 {
         let heat = f64::from(look.temperature) / 500.0;
@@ -153,7 +167,39 @@ fn grade_filters(look: Look) -> String {
     filters
 }
 
-fn alpha_filters(look: Look) -> String {
+fn key_expression(
+    look: &Look,
+    time: &str,
+    fallback: i32,
+    value: impl Fn(&TransformKey) -> i32,
+) -> String {
+    let Some(last) = look.keyframes.last() else {
+        return fallback.to_string();
+    };
+    let mut result = value(last).to_string();
+    for pair in look.keyframes.windows(2).rev() {
+        let (from, to) = (&pair[0], &pair[1]);
+        let start = value(from);
+        let delta = value(to) - start;
+        let progress = format!(
+            "clip(({time}-{})/{},0,1)",
+            seconds(from.at_ms),
+            seconds(to.at_ms - from.at_ms)
+        );
+        let ease = if to.smooth {
+            format!("({progress})*({progress})*(3-2*({progress}))")
+        } else {
+            progress
+        };
+        result = format!(
+            "if(lt({time},{}),{start}+({delta})*({ease}),{result})",
+            seconds(to.at_ms)
+        );
+    }
+    result
+}
+
+fn alpha_filters(look: &Look) -> String {
     let mut filters = String::new();
     let key = match look.key_color {
         KeyColor::None => None,
@@ -163,14 +209,37 @@ fn alpha_filters(look: Look) -> String {
     if let Some(color) = key {
         filters.push_str(&format!(",format=yuva444p,chromakey={color}:0.17:0.08"));
     }
-    filters.push_str(&format!(
-        ",format=rgba,colorchannelmixer=aa={:.2}",
-        f64::from(look.opacity) / 100.0
-    ));
-    if look.ellipse {
-        filters.push_str(",format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='alpha(X,Y)*lte(pow(2*X/W-1,2)+pow(2*Y/H-1,2),1)'");
+    let opacity_animated = !look.keyframes.is_empty();
+    if !opacity_animated {
+        filters.push_str(&format!(
+            ",format=rgba,colorchannelmixer=aa={:.2}",
+            f64::from(look.opacity) / 100.0
+        ));
     }
-    if look.rotate != 0 {
+    if look.ellipse || opacity_animated {
+        let shape = if look.ellipse {
+            "*lte(pow(2*X/W-1,2)+pow(2*Y/H-1,2),1)"
+        } else {
+            ""
+        };
+        let opacity = if opacity_animated {
+            format!(
+                "*({})/100",
+                key_expression(look, "T", i32::from(look.opacity), |key| i32::from(
+                    key.opacity
+                ))
+            )
+        } else {
+            String::new()
+        };
+        filters.push_str(&format!(",format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='alpha(X,Y){shape}{opacity}'"));
+    }
+    if opacity_animated && look.keyframes.iter().any(|key| key.rotate != 0) {
+        let angle = key_expression(look, "t", i32::from(look.rotate), |key| {
+            i32::from(key.rotate)
+        });
+        filters.push_str(&format!(",rotate=a='({angle})*PI/180':ow='ceil(hypot(iw,ih)/2)*2':oh='ceil(hypot(iw,ih)/2)*2':c=none"));
+    } else if !opacity_animated && look.rotate != 0 {
         let angle = format!("{}*PI/180", look.rotate);
         filters.push_str(&format!(
             ",rotate={angle}:ow=ceil(rotw({angle})/2)*2:oh=ceil(roth({angle})/2)*2:c=none"
@@ -188,7 +257,8 @@ pub fn plan(
 ) -> Result<Plan> {
     check_version(snapshot)?;
     let total = snapshot.duration_ms();
-    if total <= 0 {
+    let export_duration = snapshot.export_duration_ms()?;
+    if export_duration <= 0 {
         return Err(StudioError::Input("Thêm clip vào timeline trước khi xuất."));
     }
     let missing = || StudioError::Input("Media của một clip không còn khả dụng. Hãy quét lại.");
@@ -204,7 +274,11 @@ pub fn plan(
     let mut visuals = snapshot.clips("video");
     visuals.sort_by_key(|clip| (clip.layer, clip.position_ms));
 
-    for clip in visuals {
+    let joins: Vec<_> = visuals
+        .windows(2)
+        .map(|pair| transition_between(pair[0], pair[1]))
+        .collect();
+    for (visual_index, clip) in visuals.into_iter().enumerate() {
         let source = sources.get(&clip.asset_id).ok_or_else(missing)?;
         if source.kind == "audio" {
             return Err(StudioError::Input("Loại media không khớp với track."));
@@ -212,10 +286,18 @@ pub fn plan(
         push_input(&mut inputs, source, clip);
         let length = seconds(clip.length_ms());
         let at = seconds(clip.position_ms);
-        let end = seconds(clip.finish_ms());
-        let look = clip.look;
-        let fit_width = (width * u32::from(look.scale) / 100).max(2);
-        let fit_height = (height * u32::from(look.scale) / 100).max(2);
+        let incoming = visual_index.checked_sub(1).and_then(|index| joins[index]);
+        let outgoing = joins.get(visual_index).copied().flatten();
+        let hold = match outgoing {
+            Some((TransitionKind::Dissolve, ms)) => ms,
+            _ => 0,
+        };
+        let end = seconds(clip.finish_ms() + hold);
+        let look = &clip.look;
+        let animated = !look.keyframes.is_empty();
+        let fit_scale = if animated { 100 } else { u32::from(look.scale) };
+        let fit_width = (width * fit_scale / 100).max(2);
+        let fit_height = (height * fit_scale / 100).max(2);
         let fade = i64::from(look.fade_ms).min(clip.length_ms() / 2);
         let fades = if fade == 0 {
             String::new()
@@ -226,6 +308,31 @@ pub fn plan(
                 seconds(clip.length_ms() - fade),
                 seconds(fade)
             )
+        };
+        let mut join_colors = String::new();
+        let mut join_alpha = String::new();
+        if let Some((kind, ms)) = incoming {
+            match kind {
+                TransitionKind::Black => {
+                    join_colors.push_str(&format!(",fade=t=in:d={}:color=black", seconds(ms / 2)))
+                }
+                TransitionKind::Dissolve => {
+                    join_alpha.push_str(&format!(",fade=t=in:d={}:alpha=1", seconds(ms)))
+                }
+            }
+        }
+        if let Some((TransitionKind::Black, ms)) = outgoing {
+            let half = ms / 2;
+            join_colors.push_str(&format!(
+                ",fade=t=out:st={}:d={}:color=black",
+                seconds(clip.length_ms() - half),
+                seconds(half)
+            ));
+        }
+        let hold_tail = if hold == 0 {
+            String::new()
+        } else {
+            format!(",tpad=stop_mode=clone:stop_duration={}", seconds(hold))
         };
         let stabilize = if source.kind == "video" && look.stabilize {
             "deshake=edge=mirror,"
@@ -245,10 +352,19 @@ pub fn plan(
         };
         let grade = grade_filters(look);
         let alpha = alpha_filters(look);
+        let animated_scale = if animated {
+            let scale =
+                key_expression(look, "t", i32::from(look.scale), |key| i32::from(key.scale));
+            format!(
+                ",scale=w='max(2,trunc(iw*({scale})/200)*2)':h='max(2,trunc(ih*({scale})/200)*2)':eval=frame"
+            )
+        } else {
+            String::new()
+        };
         graph.push(format!(
             "[{index}:V:0]{stabilize}{flip}scale={fit_width}:{fit_height}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
              setsar=1,{timing}{sampling},tpad=stop_mode=clone:stop_duration={length},trim=duration={length},setpts=PTS-STARTPTS,\
-             eq=brightness={:.2}:contrast={:.2}:saturation={:.2}{grade}{alpha},format=yuva420p{fades},setpts=PTS+{at}/TB[v{index}]",
+             eq=brightness={:.2}:contrast={:.2}:saturation={:.2}{grade}{join_colors}{alpha},format=yuva420p{fades}{join_alpha}{animated_scale}{hold_tail},setsar=1,setpts=PTS+{at}/TB[v{index}]",
             f64::from(look.brightness) / 100.0, f64::from(look.contrast) / 100.0,
             f64::from(look.saturation) / 100.0,
         ));
@@ -260,10 +376,17 @@ pub fn plan(
             Motion::Rise => (String::new(), format!("+(H+h)/2*{easing}")),
         };
         let composed = format!("[layer{index}]");
+        let (x, y) = (
+            key_expression(look, &format!("(t-{at})"), i32::from(look.x), |key| {
+                i32::from(key.x)
+            }),
+            key_expression(look, &format!("(t-{at})"), i32::from(look.y), |key| {
+                i32::from(key.y)
+            }),
+        );
         graph.push(format!(
-            "{video}[v{index}]overlay=x='(W-w)/2+W*{}/100{slide_x}':y='(H-h)/2+H*{}/100{slide_y}':\
+            "{video}[v{index}]overlay=x='(W-w)/2+W*({x})/100{slide_x}':y='(H-h)/2+H*({y})/100{slide_y}':\
              eof_action=pass:repeatlast=0:enable='gte(t,{at})*lt(t,{end})'{composed}",
-            look.x, look.y,
         ));
         video = composed;
         if source.kind == "video" && source.has_audio {
@@ -308,13 +431,23 @@ pub fn plan(
         ));
         video = label;
     }
-    graph.push(format!("{video}format=yuv420p[vout]"));
+    let (video_range, audio_range) = snapshot.export_range.map_or_else(
+        || (String::new(), String::new()),
+        |range| {
+            let (start, end) = (seconds(range.start_ms), seconds(range.end_ms));
+            (
+                format!("trim=start={start}:end={end},setpts=PTS-STARTPTS,"),
+                format!(",atrim=start={start}:end={end},asetpts=PTS-STARTPTS"),
+            )
+        },
+    );
+    graph.push(format!("{video}{video_range}format=yuv420p[vout]"));
     graph.push(format!(
         "anullsrc=r=48000:cl=stereo,atrim=duration={}[abase]",
         seconds(total)
     ));
     graph.push(format!(
-        "{}amix=inputs={}:duration=first:normalize=0,alimiter=limit=0.95:level=0:latency=1[aout]",
+        "{}amix=inputs={}:duration=first:normalize=0,alimiter=limit=0.95:level=0:latency=1{audio_range}[aout]",
         audio.concat(),
         audio.len()
     ));
@@ -341,7 +474,7 @@ pub fn plan(
         ]
         .map(OsString::from),
     );
-    args.push(seconds(total).into());
+    args.push(seconds(export_duration).into());
     args.extend(
         [
             "-movflags",
@@ -373,7 +506,7 @@ pub fn plan(
     }
     Ok(Plan {
         args,
-        duration_ms: total,
+        duration_ms: export_duration,
         output: output.to_path_buf(),
         titles: titles.into_iter().map(|title| title.text.clone()).collect(),
         graph_file,
@@ -452,20 +585,26 @@ pub fn run(
             }
         })
     };
-    // Drain stderr completely so FFmpeg never blocks on a full pipe. Keep the tail.
+    // Drain stderr completely. Keep the first diagnostic and the tail for failures.
     let errors = thread::spawn(move || {
+        let mut first = Vec::new();
         let mut tail = Vec::new();
         let mut chunk = [0; 4096];
         while let Ok(read) = stderr.read(&mut chunk) {
             if read == 0 {
                 break;
             }
+            let retain = read.min((2 * ERROR_TAIL).saturating_sub(first.len()));
+            first.extend_from_slice(&chunk[..retain]);
             tail.extend_from_slice(&chunk[..read]);
             if tail.len() > 4 * ERROR_TAIL {
                 tail.drain(..tail.len() - 4 * ERROR_TAIL);
             }
         }
-        String::from_utf8_lossy(&tail).into_owned()
+        (
+            String::from_utf8_lossy(&first).into_owned(),
+            String::from_utf8_lossy(&tail).into_owned(),
+        )
     });
 
     let deadline = Instant::now()
@@ -488,7 +627,7 @@ pub fn run(
         }
     };
     let _ = progress.join();
-    let tail = errors.join().unwrap_or_default();
+    let (first, tail) = errors.join().unwrap_or_default();
     drop(work);
 
     match status {
@@ -502,15 +641,11 @@ pub fn run(
             if cancel.load(Ordering::Relaxed) {
                 Ok(Outcome::Canceled)
             } else if finished.is_some() {
-                let detail: String = tail
-                    .trim()
-                    .chars()
-                    .rev()
-                    .take(ERROR_TAIL)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
+                let diagnostic = first
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or(tail.trim());
+                let detail: String = diagnostic.chars().take(ERROR_TAIL).collect();
                 Err(StudioError::Message(format!(
                     "FFmpeg không xuất được video. {detail}"
                 )))
@@ -547,7 +682,7 @@ pub fn resolve(
         let Some(asset) = store.source(clip.asset_id, false)? else {
             return Err(unavailable);
         };
-        let (path, _) = authorized_file(Path::new(&asset.root), Path::new(&asset.relative_path))?;
+        let (path, _) = authorized_asset(&asset)?;
         let Some(format) = MediaFormat::for_path(&path) else {
             return Err(unavailable);
         };
@@ -670,6 +805,7 @@ mod tests {
             ],
             titles: vec![],
             aspect: Aspect::Source,
+            export_range: None,
         };
         let output = sources[&1].path.with_file_name("out.mp4");
         let plan = plan(&snapshot, &sources, &output).unwrap();
@@ -713,6 +849,7 @@ mod tests {
             tracks: Vec::new(),
             titles: vec![],
             aspect: Aspect::Source,
+            export_range: None,
         };
         assert!(plan(&empty, &sources, &output).is_err());
         let missing = TimelineSnapshot {
@@ -723,6 +860,7 @@ mod tests {
             }],
             titles: vec![],
             aspect: Aspect::Source,
+            export_range: None,
         };
         assert!(plan(&missing, &sources, &output).is_err());
 

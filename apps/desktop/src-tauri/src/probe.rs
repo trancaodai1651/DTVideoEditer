@@ -284,6 +284,19 @@ pub fn command(binary: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
+pub fn waveform(path: &Path, duration_ms: i64) -> Option<Vec<u8>> {
+    if !(1..=900_000).contains(&duration_ms) {
+        return None;
+    }
+    let format = MediaFormat::for_path(path)?;
+    let mut cmd = command(find_tool("ffmpeg")?);
+    cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin"]).args(format.input_args())
+        .arg("-i").arg(path)
+        .args(["-filter_complex", "[0:a:0]aformat=channel_layouts=mono,aresample=1000,showwavespic=s=480x48:colors=0x76d9d6,format=rgba,colorkey=black:0.01:0[wave]",
+            "-map", "[wave]", "-frames:v", "1", "-c:v", "png", "-f", "image2pipe", "pipe:1"]);
+    capture(cmd, Duration::from_secs(18)).filter(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"))
+}
+
 fn capture(cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
     capture_allow_empty(cmd, deadline).filter(|bytes| !bytes.is_empty())
 }

@@ -3,7 +3,7 @@ use std::{fs, io::Read, path::Path, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    library::authorized_file,
+    library::authorized_asset,
     model::{Result, StudioError},
     probe::{self, MediaFormat},
     store::Store,
@@ -188,8 +188,7 @@ pub fn transcribe(
             "Phụ đề tự động hỗ trợ clip có âm thanh dài tối đa 15 phút.",
         ));
     }
-    let (source_path, _) =
-        authorized_file(Path::new(&source.root), Path::new(&source.relative_path))?;
+    let (source_path, _) = authorized_asset(&source)?;
     let format = MediaFormat::for_path(&source_path)
         .ok_or(StudioError::Input("Định dạng nguồn không hợp lệ."))?;
     let ffmpeg =

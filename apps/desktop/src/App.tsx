@@ -1,15 +1,15 @@
-import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, desktop, fileName } from "./desktop";
-import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, Folder, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
+import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
 import { Icon } from "./Icon";
 import { Gallery, Preview, selectAsset } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
 import type { Selection } from "./MediaPanels";
-import { MAX_LAYERS, addCaptions, addClip, addTitle, changeLayer, clipFinish, commit, defaultLook, fromTimeline, layerOf, newHistory, playbackRate, redo, subtitleCues, toSnapshot, totalMs, trackOf, undo, updateAppearance } from "./timeline";
+import { MAX_LAYERS, addCaptions, addClip, addTitle, changeLayer, clipFinish, commit, defaultLook, fromTimeline, layerOf, lookAt, newHistory, playbackRate, previousVisual, redo, setTransformKey, setTransition, subtitleCues, toSnapshot, totalMs, trackOf, transformProperties, undo, updateAppearance } from "./timeline";
 import type { Clip, History, MediaRef } from "./timeline";
 import { TimelineEditor } from "./TimelineEditor";
-import type { Lane, TimelineDrop } from "./TimelineEditor";
+import type { Lane, TimelineDrop, TimelineDropTarget } from "./TimelineEditor";
 import { ClipInspector } from "./ClipInspector";
 import type { InspectorTab } from "./ClipInspector";
 import { EditorLibrary } from "./EditorLibrary";
@@ -40,6 +40,7 @@ function clipSelection(clip: Clip, playheadMs: number): Selection | null {
 
 export function App() {
   const timelineDrop = useRef<TimelineDrop>(null);
+  const dropTargets = useRef(new Map<number, { projectId: number; target: TimelineDropTarget }>());
   const [view, setView] = useState<View>("library");
   const [tool, setTool] = useState<LibraryTab>("media");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("video");
@@ -67,6 +68,7 @@ export function App() {
   const projectMenu = useRef<HTMLDetailsElement>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
+  const [rangeMarks, setRangeMarks] = useState<{ projectId: number; start?: number; end?: number } | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [jobs, setJobs] = useState<RenderJob[]>([]);
   const saves = useRef({ chain: Promise.resolve(), pending: 0, failed: false });
@@ -74,12 +76,16 @@ export function App() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [libraryRevision, setLibraryRevision] = useState(0);
+  const [timelineRevision, setTimelineRevision] = useState(0);
   const [revokeId, setRevokeId] = useState<number | null>(null);
   const project = projects.find((item) => item.id === projectId);
   const disabled = !!busy || !desktop;
   const clips = history.present;
   const selectedClip = clips.find((clip) => clip.key === selectedKey);
   const total = totalMs(clips);
+  const marks = rangeMarks?.projectId === projectId ? rangeMarks : null;
+  const exportRange: ExportRange | undefined = marks
+    ? { startMs: marks.start ?? 0, endMs: Math.min(total, marks.end ?? total) } : undefined;
   const captions = subtitleCues(clips);
   const needCatalog = view === "library" && (tool === "audio" || tool === "stickers");
   const rendering = jobs.some(isActive);
@@ -165,7 +171,31 @@ export function App() {
       if (current) setNotice({ text: String(error), error: true });
     });
     return () => { current = false; };
-  }, [projectId, libraryRevision]);
+  }, [projectId, timelineRevision]);
+
+  const receiveDrop = useEffectEvent((drop: MediaDrop) => {
+    if (drop.type === "started") {
+      const target = timelineDrop.current?.target(drop.x / window.devicePixelRatio, drop.y / window.devicePixelRatio);
+      if (target && project) dropTargets.current.set(drop.id, { projectId: project.id, target });
+      return;
+    }
+    const captured = dropTargets.current.get(drop.id);
+    dropTargets.current.delete(drop.id);
+    if ("Err" in drop.result) {
+      setNotice({ text: drop.result.Err, error: true });
+      return;
+    }
+    const target = captured?.projectId === project?.id && view === "library" && !disabled ? captured?.target : undefined;
+    applyImported(drop.result.Ok, target);
+  });
+
+  useEffect(() => {
+    if (!desktop) return;
+    let active = true;
+    const listener = api.onMediaDrop((drop) => { if (active) receiveDrop(drop); });
+    void listener.catch((error: unknown) => { if (active) setNotice({ text: String(error), error: true }); });
+    return () => { active = false; void listener.then((unlisten) => unlisten(), () => undefined); };
+  }, []);
 
   useEffect(() => {
     if (!desktop || (!rendering && view !== "queue")) return;
@@ -226,6 +256,7 @@ export function App() {
         success(vi.scanReport(await api.scan(picked)));
       } finally {
         await refreshLibrary();
+        setTimelineRevision((value) => value + 1);
       }
     });
   }
@@ -234,17 +265,65 @@ export function App() {
     void run(vi.scanning, async () => {
       success(vi.scanReport(await api.scan(id)));
       await refreshLibrary();
+      setTimelineRevision((value) => value + 1);
     });
   }
 
   function revoke(id: number) {
     void run(vi.working, async () => {
+      await saves.current.chain;
       await api.revoke(id);
       setRevokeId(null);
       setSelection(null);
       if (folderId === id) setFolderId(null);
       await refreshLibrary();
+      setTimelineRevision((value) => value + 1);
       success(vi.revoked);
+    });
+  }
+
+  function applyImported(report: ImportedFiles, target?: TimelineDropTarget) {
+    if (!report.assets.length) {
+      setNotice({ text: "Không có tệp media đọc được trong lựa chọn.", error: true });
+      return;
+    }
+    setFolderId(null);
+    setQuery("");
+    setKind(null);
+    setTool("media");
+    setView("library");
+    void refreshLibrary().catch((error: unknown) => setNotice({ text: String(error), error: true }));
+    let inserted = 0;
+    if (target && project) {
+      let next = clips;
+      const times = { video: target.positionMs, audio: target.positionMs };
+      for (const asset of report.assets) {
+        const media = selectAsset(asset);
+        const track = trackOf(media.kind);
+        const added = addClip(next, media, times[track], target.lane.track === track ? target.lane.layer : 0);
+        if (!added) continue;
+        next = added;
+        times[track] = clipFinish(added.at(-1)!);
+        inserted += 1;
+      }
+      if (inserted) {
+        const first = next[clips.length];
+        edit(commit(history, next));
+        setSelectedKey(first.key);
+        setInspectorTab(first.track === "audio" ? "audio" : "video");
+        setLane({ track: first.track, layer: layerOf(first) });
+        setPlayheadMs(first.positionMs);
+        setFrameMode(true);
+        setPlaying(false);
+      }
+    }
+    success(`Đã nhập ${report.assets.length} tệp${target ? `, đặt ${inserted} clip lên timeline` : ""}${report.skipped ? `, bỏ qua ${report.skipped} tệp` : ""}.`);
+  }
+
+  function pickMediaFiles() {
+    void run("Đang nhập tệp media…", async () => {
+      const report = await api.pickMediaFiles();
+      if (report) applyImported(report);
     });
   }
 
@@ -351,8 +430,29 @@ export function App() {
     if (tab === "advanced") setInspectorTab("advanced");
   }
 
-  function changeClip(clip: Clip) {
-    try { edit(commit(history, updateAppearance(clips, clip))); }
+  function changeClip(clip: Clip, animate = false) {
+    try {
+      const before = clips.find((item) => item.key === clip.key);
+      const original = before?.look;
+      if (before && original?.keyframes?.length && clip.look?.keyframes === original.keyframes) {
+        const elapsed = playheadMs - before.positionMs;
+        const changed = { ...defaultLook, ...clip.look };
+        if (animate) {
+          if (elapsed < 0 || elapsed > clipFinish(before) - before.positionMs) return;
+          clip = setTransformKey(clip, elapsed, changed);
+        }
+        else {
+          for (const property of transformProperties) changed[property] = original[property] ?? defaultLook[property];
+          clip = { ...clip, look: changed };
+        }
+      }
+      edit(commit(history, updateAppearance(clips, clip)));
+    }
+    catch (error) { notify(String(error), true); }
+  }
+
+  function toggleTransformKey(clip: Clip, elapsed: number) {
+    try { changeClip(setTransformKey(clip, elapsed, lookAt(clip, elapsed), true)); }
     catch (error) { notify(String(error), true); }
   }
 
@@ -406,15 +506,31 @@ export function App() {
 
   function startRender(queueOnly: boolean) {
     if (!project) return;
+    if (exportRange && exportRange.endMs - exportRange.startMs < 100) {
+      notify("Vùng In–Out nằm ngoài timeline hiện tại. Hãy đặt lại hoặc bỏ vùng.", true);
+      return;
+    }
     void run(vi.working, async () => {
       await saves.current.chain;
       if (saves.current.failed) throw new Error("Timeline chưa lưu thành công. Hãy sửa lỗi lưu trước khi xuất.");
-      const job = await api.startRender(project.id, queueOnly);
+      const job = await api.startRender(project.id, queueOnly, exportRange);
       if (!job) return;
       setJobs(await api.renderQueue());
       setView("queue");
       success(queueOnly ? "Đã thêm bản dựng vào hàng đợi." : vi.exportStarted);
     });
+  }
+
+  function markRange(edge: "start" | "end" | "clear") {
+    if (!project) return;
+    if (edge === "clear") { setRangeMarks(null); return; }
+    const at = Math.min(total, Math.max(0, Math.round(Math.round(playheadMs * 30 / 1000) * 1000 / 30)));
+    const next = edge === "start" ? { start: at, end: marks?.end } : { start: marks?.start, end: at };
+    if ((next.end ?? total) - (next.start ?? 0) < 100) {
+      notify("Vùng In–Out phải dài ít nhất 100 ms.", true);
+      return;
+    }
+    setRangeMarks({ projectId: project.id, ...next });
   }
 
   function retryRender(jobId: number) {
@@ -497,11 +613,17 @@ export function App() {
               hasSpeech={!!selectedClip && (selectedClip.kind === "audio" || selectedClip.kind === "video") && selectedClip.available}
               hasCaptions={captions.length > 0} onApply={applyLook} onTitle={insertTitle} onAdd={addStock}
               onImportSrt={importSrt} onExportSrt={exportSrt} onTranscribe={transcribe}
+              canJoin={!!selectedClip && !!previousVisual(clips, selectedClip)} join={selectedClip?.look?.transition}
+              onJoin={(kind, duration) => {
+                if (!selectedClip) return;
+                edit(commit(history, setTransition(clips, selectedClip, kind, duration)));
+                movePlayhead(selectedClip.positionMs);
+              }}
               media={<Gallery data={assets} folders={folders} folderId={folderId} page={page} revision={libraryRevision}
                 selected={selection?.assetId} onSelect={(asset) => { setSelection(asset); setFrameMode(false); setPlaying(false); }}
                 query={query} onQuery={(value) => { setQuery(value); setPage(0); }}
                 kind={kind} audioOnly={tool === "audio"} onKind={(value) => { setKind(value); setPage(0); }}
-                onImport={pickFolder} busy={disabled} canAdd={!!project && !disabled} timeline={timelineDrop} onAppend={addMedia}
+                onImport={pickMediaFiles} onFolderImport={pickFolder} busy={disabled} canAdd={!!project && !disabled} timeline={timelineDrop} onAppend={addMedia}
                 onPage={(index) => { setAssets(null); setPage(index); }}
                 onFolder={(id) => {
                   if (id === folderId) return;
@@ -515,10 +637,11 @@ export function App() {
               clips={clips} aspect={aspect} at={playheadMs} total={total} revision={libraryRevision} frameMode={frameMode} playing={playing}
               onMode={(mode) => { setFrameMode(mode); if (!mode) setPlaying(false); }}
               onPlay={togglePlayback} onSeek={movePlayhead} onAspect={(value) => edit(history, value)} disabled={disabled || !project}
-              selectedKey={selectedKey} onSelect={selectClip} onTransform={changeClip}
+              selectedKey={selectedKey} onSelect={selectClip} onTransform={(clip) => changeClip(clip, true)}
             />
             <ClipInspector clip={selectedClip} aspect={aspect} disabled={disabled || !project}
-              name={project?.name} total={total} tab={inspectorTab} onTab={setInspectorTab}
+              name={project?.name} total={total} playheadMs={playheadMs} tab={inspectorTab} onTab={setInspectorTab}
+              onKeyframe={toggleTransformKey} onSeek={movePlayhead}
               onAspect={(value) => edit(history, value)}
               onLayer={(layer) => {
                 if (!selectedClip) return;
@@ -532,7 +655,7 @@ export function App() {
             saveState={saveState} lane={lane} onLane={setLane} onTitle={() => insertTitle()}
             onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead}
             onDropMedia={addMedia} onUndo={() => edit(undo(history))} onRedo={() => edit(redo(history))}
-            onExport={startRender} />
+            onExport={startRender} range={exportRange} onRange={markRange} />
         </div> : view === "queue" ? <ExportQueue jobs={jobs} projects={projects} busy={disabled}
           onRun={() => void run(vi.working, async () => { await api.runRenderQueue(); setJobs(await api.renderQueue()); })}
           onRetry={retryRender} onCancel={cancelRender}
@@ -545,7 +668,7 @@ export function App() {
             {!folders.length && <p className="setting-empty">{vi.noFolders}</p>}
             {folders.map((folder) => <div className="setting-item" key={folder.id}>
               <div className="folder-row">
-                <span className="empty-icon"><Icon name="folder" /></span>
+                <span className="empty-icon"><Icon name={folder.fileOnly ? "library" : "folder"} /></span>
                 <div className="folder-copy">
                   <strong>{fileName(folder.root) || folder.root}</strong>
                   <p title={folder.root}>{folder.root} · {vi.mediaCount(folder.assetCount)}</p>

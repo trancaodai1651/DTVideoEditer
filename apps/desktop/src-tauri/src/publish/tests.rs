@@ -1168,6 +1168,7 @@ fn drafts_from_exports_wait_for_a_finished_render() {
         }],
         titles: vec![],
         aspect: Default::default(),
+        export_range: None,
     };
     let render = bench
         .store
