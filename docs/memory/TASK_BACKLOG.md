@@ -11,6 +11,7 @@
 | M1-F | P0 | Kế tiếp | M1-E | Mở rộng nhận dạng chữ, chuyển cảnh, chuyển động, nhạc và lời nói theo confidence. Cho phép xem và sửa đề xuất, giữ quyền với mẫu và giọng nói, đo chất lượng trên video tham chiếu có ground truth. |
 | M1-G | P1 | Xong | M1-C | Giao diện biên tập ba khung với timeline và các thư viện tích hợp. Các preset cập nhật clip hoặc tạo lớp chỉnh sửa được và đi vào MP4. |
 | M1-H | P1 | Chờ | M1-G | Transition giữa hai clip, keyframe, khớp preview với export, mask theo đối tượng, motion tracking và các tính năng AI nâng cao có model và điều kiện vận hành rõ ràng. |
+| M1-I | P1 | Xong | M1-G | Kéo media từ thư viện lên timeline, di chuyển clip giữa các tầng cùng loại, zoom timeline và preview, kéo vị trí/đổi cỡ/xoay hình trên preview và lưu qua undo/redo. |
 | M2-A | P1 | Chờ | M1-A, key khi test live | Gemini adapter thật, model/quota theo thời điểm cấu hình, OpenAI và Claude adapters qua cùng contract, keychain, consent khi gửi tài liệu, schema cảnh, outline/VO/shot list/on-screen text/caption/hashtags/title, sửa cảnh và version history. Chi phí/quota chỉ hiển thị nếu có dữ liệu. |
 | M2-B | P1 | Chờ | M2-A, quyền giọng mẫu khi cloning | Xác minh OmniVoice upstream và license, worker localhost có capability check, phát âm tiếng Việt, audio reference có xác nhận, preset theo khả năng, TTS queue/cache/regenerate đoạn, fallback opt-in, chèn asset vào timeline. |
 | M2-C | P2 | Chờ | M2-A | Tùy chọn tích hợp CLI/SDK khi user đã tự cài và đăng nhập, điều khoản đã kiểm tra. Test phân biệt quyền thuê bao và API, lỗi quota và fallback. |

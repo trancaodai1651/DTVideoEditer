@@ -8,6 +8,8 @@
 
 Phím tắt: `S` tách tại playhead, `Delete` gỡ clip, mũi tên dịch 100 ms (giữ Shift 1 giây), `Ctrl+Z` và `Ctrl+Y`.
 
+M1-I dùng pointer capture để kéo từ thẻ media tới timeline, xem trước vị trí đã hít mép và đổi tầng khi kéo clip. Thước và tên tầng giữ vị trí khi cuộn. Có thanh zoom, vừa khung và Ctrl/⌘ + cuộn. Preview lưu vị trí, tỷ lệ và góc xoay khi nhả chuột qua cùng snapshot dùng để xuất MP4.
+
 ## Render
 
 [render.rs](../../../apps/desktop/src-tauri/src/render.rs) dựng một lệnh FFmpeg từ snapshot và media đã qua kiểm tra grant.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  addCaptions, addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, place, redo, removeClip, snap, splitClip, subtitleCues, updateAppearance,
+  MAX_TIMELINE_MS, addCaptions, addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, offsetVisual, place, redo, removeClip, snap, splitClip, subtitleCues, updateAppearance,
   toSnapshot, totalMs, trimEnd, trimStart, undo,
 } from "../apps/desktop/src/timeline.ts";
 
@@ -76,6 +76,29 @@ test("moves clips to free space and snaps to edges", () => {
   assert.equal(snap(5950, [0, 6000], 80), 6000);
   assert.equal(snap(5800, [0, 6000], 80), 5800);
   assert.equal(snap(5800, [], 80), 5800);
+});
+
+test("moving between layers uses the destination lane and preserves the source range", () => {
+  const clips = addClip(addClip([], video), image, 1500, 1);
+  const [clip] = clips;
+  const moved = moveClip(clips, clip.key, 1000, 1);
+  assert.deepEqual([moved[0].layer, moved[0].positionMs], [1, 4500]);
+  assert.deepEqual([moved[0].startMs, moved[0].endMs], [clip.startMs, clip.endMs]);
+  assert.equal(moveClip(clips, clip.key, 0, -1), clips);
+  const atLimit = moveClip(clips, clip.key, MAX_TIMELINE_MS + 1000, 1);
+  assert.equal(clipFinish(atLimit[0]), MAX_TIMELINE_MS);
+});
+
+test("dragged overlays save position in the render snapshot and undo in one step", () => {
+  const clips = addTitle(addClip([], image), 0, 0);
+  const base = commit(newHistory(), clips);
+  const moved = offsetVisual(clips[0], 22.5, -140);
+  const history = commit(base, updateAppearance(clips, moved));
+  const snapshot = toSnapshot(history.present);
+  assert.deepEqual([snapshot.tracks[0].clips[0].look.x, snapshot.tracks[0].clips[0].look.y], [23, -100]);
+  assert.equal(undo(history).present, clips);
+  assert.equal(offsetVisual(moved, 0, -20), moved);
+  assert.equal(offsetVisual(clips[1], 0, -10).title.y, 56);
 });
 
 test("undo and redo walk committed edits", () => {

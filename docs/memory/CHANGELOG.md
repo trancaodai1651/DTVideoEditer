@@ -1,6 +1,11 @@
 # Changelog
 
-Snapshot: 2026-11-10/WORKBENCH-030
+Snapshot: 2026-11-11/EDITOR-031
+
+## 2026-11-11 · Editor 0.3.1
+
+- M1-I: kéo media từ thư viện bằng con trỏ, xem vị trí trước khi thả, kéo clip sang tầng cùng loại. Thêm thanh zoom, zoom theo vị trí chuột, vừa khung và nút hít mép.
+- Kéo chữ và hình trên preview. Video, ảnh và sticker có tay nắm đổi cỡ và xoay. Menu zoom preview tách khỏi tỷ lệ của bản xuất.
 
 ## 2026-11-10 · Editor 0.3.0
 

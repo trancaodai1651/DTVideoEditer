@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { fileName, mediaUrl } from "./desktop";
 import type { Asset, AssetPage, Folder, MediaKind, Project } from "./desktop";
 import { Icon } from "./Icon";
-import { MEDIA_DRAG_TYPE } from "./TimelineEditor";
+import type { PointerEvent, RefObject } from "react";
+import type { TimelineDrop } from "./TimelineEditor";
 import type { MediaRef } from "./timeline";
 import { duration, size, vi } from "./vi";
 
@@ -45,11 +46,30 @@ interface GalleryProps {
   onKind: (kind: MediaKind | null) => void;
   onImport: () => void;
   busy: boolean;
+  canAdd: boolean;
+  timeline: RefObject<TimelineDrop | null>;
+  onAppend: (media: MediaRef) => void;
 }
 
 export function Gallery({ data, folders, folderId, page, revision, selected, onFolder, onPage, onSelect,
-  query, onQuery, kind, audioOnly, onKind, onImport, busy }: GalleryProps) {
+  query, onQuery, kind, audioOnly, onKind, onImport, busy, canAdd, timeline, onAppend }: GalleryProps) {
+  const gesture = useRef<{ pointer: number; x: number; y: number; media: MediaRef; moved: boolean } | null>(null);
   const pages = data ? Math.ceil(data.total / data.pageSize) : 0;
+
+  function startDrag(event: PointerEvent<HTMLButtonElement>, asset: Asset) {
+    gesture.current = null;
+    if (!canAdd || event.button !== 0 || !event.isPrimary) return;
+    gesture.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, media: selectAsset(asset), moved: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveDrag(event: PointerEvent<HTMLButtonElement>, commit: boolean) {
+    const drag = gesture.current;
+    if (drag?.pointer !== event.pointerId) return;
+    drag.moved ||= Math.hypot(event.clientX - drag.x, event.clientY - drag.y) >= 5;
+    if (drag.moved) timeline.current?.media(drag.media, event.clientX, event.clientY, commit);
+  }
+
   return (
     <section className="panel gallery" aria-labelledby="gallery-heading">
       <h2 className="sr-only" id="gallery-heading">Thư viện media</h2>
@@ -75,17 +95,15 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
           {data.items.map((asset) => (
             <button type="button" key={asset.id} aria-pressed={selected === asset.id}
               className={`asset ${selected === asset.id ? "selected" : ""}`}
-              title={asset.relativePath} onClick={() => onSelect(selectAsset(asset))}
-              draggable onDragStart={(event) => {
-                const media: MediaRef = {
-                  assetId: asset.id, relativePath: asset.relativePath, kind: asset.kind, durationMs: asset.durationMs,
-                  hasThumbnail: asset.hasThumbnail, width: asset.width, height: asset.height,
-                };
-                event.dataTransfer.setData(MEDIA_DRAG_TYPE, JSON.stringify(media));
-                event.dataTransfer.effectAllowed = "copy";
-              }}>
+              title={asset.relativePath}
+              onClick={(event) => { if (event.detail === 0 || !gesture.current?.moved) onSelect(selectAsset(asset)); }}
+              onDoubleClick={() => { if (canAdd && !gesture.current?.moved) onAppend(selectAsset(asset)); }}
+              onPointerDown={(event) => startDrag(event, asset)} onPointerMove={(event) => moveDrag(event, false)}
+              onPointerUp={(event) => moveDrag(event, true)}
+              onLostPointerCapture={() => timeline.current?.clear()}
+              onPointerCancel={() => { gesture.current = null; timeline.current?.clear(); }}>
               <div className={`thumb ${asset.kind}`}>
-                {asset.hasThumbnail ? <img src={mediaUrl("thumbnail", asset.id, revision)} alt="" loading="lazy" /> : <Icon name={asset.kind} size={26} />}
+                {asset.hasThumbnail ? <img src={mediaUrl("thumbnail", asset.id, revision)} alt="" loading="lazy" draggable={false} /> : <Icon name={asset.kind} size={26} />}
                 {asset.durationMs !== null && <span>{duration(asset.durationMs)}</span>}
               </div>
               <span className="asset-name">{fileName(asset.relativePath)}</span>

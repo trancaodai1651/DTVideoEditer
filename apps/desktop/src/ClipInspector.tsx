@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, PointerEvent } from "react";
 import { fileName, mediaUrl } from "./desktop";
 import type { Aspect, ClipLook, TitleColor } from "./desktop";
-import { MAX_LAYERS, clipLength, clipsAt, defaultLook, layerOf, playbackRate } from "./timeline";
+import { MAX_LAYERS, clipLength, clipsAt, defaultLook, layerOf, offsetVisual, playbackRate } from "./timeline";
 import type { Clip } from "./timeline";
 import { timecode } from "./vi";
 
@@ -217,7 +217,12 @@ function useMediaClock(clip: Clip, at: number, playing: boolean, revision: numbe
   return player;
 }
 
-function VisualFrame({ clip, at, revision, playing }: { clip: Clip; at: number; revision: number; playing: boolean }) {
+type TransformMode = "move" | "scale" | "rotate";
+
+function VisualFrame({ clip, at, revision, playing, aspectRatio, editable, selected, onTransform }: {
+  clip: Clip; at: number; revision: number; playing: boolean; aspectRatio: number; editable: boolean; selected: boolean;
+  onTransform: (event: PointerEvent<HTMLElement>, clip: Clip, mode: TransformMode) => void;
+}) {
   const player = useMediaClock(clip, at, playing, revision);
   const src = mediaUrl("source", clip.assetId, revision);
   const look = { ...defaultLook, ...clip.look };
@@ -229,14 +234,30 @@ function VisualFrame({ clip, at, revision, playing }: { clip: Clip; at: number; 
   const effect = look.effect === "blur" ? " blur(3px)" : "";
   const color = look.temperature > 0 ? ` sepia(${look.temperature / 250})`
     : look.temperature < 0 ? ` sepia(${-look.temperature / 350}) hue-rotate(160deg)` : "";
+  const sourceRatio = clip.width && clip.height ? clip.width / clip.height : aspectRatio;
+  const bounds = {
+    left: `${50 + look.x + slideX}%`, top: `${50 + look.y + slideY}%`,
+    width: `${look.scale * Math.min(1, sourceRatio / aspectRatio)}%`,
+    height: `${look.scale * Math.min(1, aspectRatio / sourceRatio)}%`,
+    transform: `translate(-50%, -50%) rotate(${look.rotate}deg)`,
+  };
   const style = {
-    left: `${50 + look.x + slideX}%`, top: `${50 + look.y + slideY}%`, width: `${look.scale}%`, height: `${look.scale}%`,
     opacity, filter: `brightness(${1 + look.brightness / 100}) contrast(${look.contrast}%) saturate(${look.saturation}%)${color}${effect}`,
-    transform: `translate(-50%, -50%) rotate(${look.rotate}deg) scaleX(${look.flip ? -1 : 1})`,
+    transform: look.flip ? "scaleX(-1)" : undefined,
     clipPath: look.ellipse ? "ellipse(50% 50%)" : undefined,
   };
-  return clip.kind === "image" ? <img className="frame-layer" src={src} style={style} alt="" />
-    : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} playsInline preload="auto" />;
+  return <div className={`frame-object ${editable ? "editable" : ""} ${selected && editable ? "frame-selected" : ""}`}
+    style={bounds} title={editable ? fileName(clip.relativePath) : undefined}
+    onPointerDown={editable ? (event) => onTransform(event, clip, "move") : undefined}>
+    {clip.kind === "image" ? <img className="frame-layer" src={src} style={style} alt="" draggable={false} />
+      : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} playsInline preload="auto" />}
+    {editable && selected && <>
+      {["nw", "ne", "sw", "se"].map((corner) => <span className={`frame-handle ${corner}`} key={corner} aria-hidden="true"
+        title="Đổi cỡ" onPointerDown={(event) => onTransform(event, clip, "scale")} />)}
+      <span className="frame-handle rotate" aria-hidden="true" title="Xoay"
+        onPointerDown={(event) => onTransform(event, clip, "rotate")} />
+    </>}
+  </div>;
 }
 
 function AudioFrame({ clip, at, revision, playing }: { clip: Clip; at: number; revision: number; playing: boolean }) {
@@ -244,25 +265,95 @@ function AudioFrame({ clip, at, revision, playing }: { clip: Clip; at: number; r
   return <audio ref={(element) => { player.current = element; }} src={mediaUrl("source", clip.assetId, revision)} preload="auto" />;
 }
 
-export function CompositionFrame({ clips, aspect, at, revision, playing = false }: { clips: Clip[]; aspect: Aspect; at: number; revision: number; playing?: boolean }) {
-  const active = clipsAt(clips, at).filter((clip) => clip.available).sort((a, b) => layerOf(a) - layerOf(b));
+export function CompositionFrame({ clips, aspect, at, revision, playing, selectedKey, editable, onSelect, onTransform }: {
+  clips: Clip[]; aspect: Aspect; at: number; revision: number; playing: boolean; selectedKey: string | null; editable: boolean;
+  onSelect: (key: string | null) => void; onTransform: (clip: Clip) => void;
+}) {
+  const frame = useRef<HTMLDivElement>(null);
+  const gesture = useRef<{
+    clip: Clip; mode: TransformMode; pointer: number; x: number; y: number;
+    centerX: number; centerY: number; width: number; height: number;
+  } | null>(null);
+  const [draft, setDraft] = useState<Clip | null>(null);
+  const active = clipsAt(clips, at).filter((clip) => clip.available)
+    .map((clip) => draft?.key === clip.key ? draft : clip).sort((a, b) => layerOf(a) - layerOf(b));
   const source = aspect === "source" ? clips.reduce<Clip | undefined>((first, clip) =>
     clip.track === "video" && clip.width && clip.height && (!first || clip.positionMs < first.positionMs) ? clip : first, undefined) : undefined;
   const size = source?.width && source.height ? source.width / source.height : ratio[aspect];
-  return <div className={`composition ${aspect}`} style={{ aspectRatio: size, "--frame-ratio": size } as CSSProperties}
-    aria-label="Khung hình tại playhead">
+
+  function begin(event: PointerEvent<HTMLElement>, clip: Clip, mode: TransformMode) {
+    if (!frame.current || !editable || playing || event.button !== 0 || !event.isPrimary) return;
+    event.stopPropagation();
+    const bounds = frame.current.getBoundingClientRect();
+    const object = (event.currentTarget.closest(".frame-object") ?? event.currentTarget).getBoundingClientRect();
+    frame.current.setPointerCapture(event.pointerId);
+    gesture.current = {
+      clip, mode, pointer: event.pointerId, x: event.clientX, y: event.clientY,
+      centerX: object.left + object.width / 2, centerY: object.top + object.height / 2,
+      width: Math.max(1, bounds.width - (clip.title ? object.width : 0)),
+      height: Math.max(1, bounds.height - (clip.title ? object.height : 0)),
+    };
+    onSelect(clip.key);
+  }
+
+  function transform(event: PointerEvent<HTMLDivElement>, commit: boolean) {
+    const drag = gesture.current;
+    if (!drag || drag.pointer !== event.pointerId) return;
+    const { clip, mode, centerX, centerY } = drag;
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    let next = clip;
+    if (Math.hypot(dx, dy) >= 2) {
+      if (mode === "move") {
+        const units = clip.title ? 200 : 100;
+        next = offsetVisual(clip, units * dx / drag.width, units * dy / drag.height);
+      } else {
+        const look = { ...defaultLook, ...clip.look };
+        const originX = drag.x - centerX;
+        const originY = drag.y - centerY;
+        const x = event.clientX - centerX;
+        const y = event.clientY - centerY;
+        if (mode === "scale") {
+          const factor = Math.hypot(x, y) / Math.max(1, Math.hypot(originX, originY));
+          const scale = Math.min(200, Math.max(10, Math.round(look.scale * factor)));
+          if (scale !== look.scale) next = { ...clip, look: { ...look, scale } };
+        } else {
+          const degrees = Math.round((Math.atan2(y, x) - Math.atan2(originY, originX)) * 180 / Math.PI);
+          const rotate = (look.rotate + degrees + 540) % 360 - 180;
+          if (rotate !== look.rotate) next = { ...clip, look: { ...look, rotate } };
+        }
+      }
+    }
+    if (commit) {
+      cancel();
+      if (next !== clip) onTransform(next);
+    } else {
+      setDraft(next === clip ? null : next);
+    }
+  }
+
+  function cancel() {
+    gesture.current = null;
+    setDraft(null);
+  }
+
+  return <div className={`composition ${aspect}`} ref={frame} style={{ aspectRatio: size, "--frame-ratio": size } as CSSProperties}
+    aria-label="Khung hình tại playhead" onPointerMove={(event) => transform(event, false)}
+    onPointerUp={(event) => transform(event, true)} onPointerCancel={cancel} onLostPointerCapture={cancel}
+    onPointerDown={(event) => { if (editable && event.target === event.currentTarget) onSelect(null); }}>
     {active.filter((clip) => clip.track === "video").map((clip) =>
-      <VisualFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing} />)}
+      <VisualFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing}
+        aspectRatio={size} editable={editable && !playing} selected={clip.key === selectedKey} onTransform={begin} />)}
     {playing && active.filter((clip) => clip.track === "audio").map((clip) =>
       <AudioFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing} />)}
     {active.filter((clip) => clip.title).map((clip) => {
       const title = clip.title!;
       const x = (title.x + 100) / 2;
       const y = (title.y + 100) / 2;
-      return <span key={clip.key} className={`frame-title ${title.background ? "with-background" : ""}`} style={{
+      return <span key={clip.key} className={`frame-title ${title.background ? "with-background" : ""} ${editable && !playing ? "editable" : ""} ${clip.key === selectedKey && editable && !playing ? "frame-selected" : ""}`} style={{
         left: `${x}%`, top: `${y}%`, transform: `translate(-${x}%, -${y}%)`, fontSize: `${title.size}cqh`,
         color: title.color, textShadow: title.color === "black" ? "0 0 3px white" : undefined,
-      }}>{title.text}</span>;
+      }} onPointerDown={(event) => begin(event, clip, "move")}>{title.text}</span>;
     })}
   </div>;
 }

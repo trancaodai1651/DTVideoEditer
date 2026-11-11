@@ -9,7 +9,7 @@ import type { Selection } from "./MediaPanels";
 import { MAX_LAYERS, addCaptions, addClip, addTitle, changeLayer, clipFinish, commit, defaultLook, fromTimeline, layerOf, newHistory, playbackRate, redo, subtitleCues, toSnapshot, totalMs, trackOf, undo, updateAppearance } from "./timeline";
 import type { Clip, History, MediaRef } from "./timeline";
 import { TimelineEditor } from "./TimelineEditor";
-import type { Lane } from "./TimelineEditor";
+import type { Lane, TimelineDrop } from "./TimelineEditor";
 import { ClipInspector } from "./ClipInspector";
 import type { InspectorTab } from "./ClipInspector";
 import { EditorLibrary } from "./EditorLibrary";
@@ -39,6 +39,7 @@ function clipSelection(clip: Clip, playheadMs: number): Selection | null {
 }
 
 export function App() {
+  const timelineDrop = useRef<TimelineDrop>(null);
   const [view, setView] = useState<View>("library");
   const [tool, setTool] = useState<LibraryTab>("media");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("video");
@@ -500,7 +501,7 @@ export function App() {
                 selected={selection?.assetId} onSelect={(asset) => { setSelection(asset); setFrameMode(false); setPlaying(false); }}
                 query={query} onQuery={(value) => { setQuery(value); setPage(0); }}
                 kind={kind} audioOnly={tool === "audio"} onKind={(value) => { setKind(value); setPage(0); }}
-                onImport={pickFolder} busy={disabled}
+                onImport={pickFolder} busy={disabled} canAdd={!!project && !disabled} timeline={timelineDrop} onAppend={addMedia}
                 onPage={(index) => { setAssets(null); setPage(index); }}
                 onFolder={(id) => {
                   if (id === folderId) return;
@@ -514,6 +515,7 @@ export function App() {
               clips={clips} aspect={aspect} at={playheadMs} total={total} revision={libraryRevision} frameMode={frameMode} playing={playing}
               onMode={(mode) => { setFrameMode(mode); if (!mode) setPlaying(false); }}
               onPlay={togglePlayback} onSeek={movePlayhead} onAspect={(value) => edit(history, value)} disabled={disabled || !project}
+              selectedKey={selectedKey} onSelect={selectClip} onTransform={changeClip}
             />
             <ClipInspector clip={selectedClip} aspect={aspect} disabled={disabled || !project}
               name={project?.name} total={total} tab={inspectorTab} onTab={setInspectorTab}
@@ -525,7 +527,7 @@ export function App() {
               }}
               onClip={changeClip} />
           </div>
-          <TimelineEditor key={projectId} project={project} clips={clips} selectedKey={selectedKey} playheadMs={playheadMs} revision={libraryRevision}
+          <TimelineEditor ref={timelineDrop} key={projectId} project={project} clips={clips} selectedKey={selectedKey} playheadMs={playheadMs} revision={libraryRevision}
             busy={disabled} canUndo={history.past.length > 0} canRedo={history.future.length > 0}
             saveState={saveState} lane={lane} onLane={setLane} onTitle={() => insertTitle()}
             onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead}
