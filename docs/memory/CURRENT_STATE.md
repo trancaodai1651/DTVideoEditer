@@ -2,7 +2,7 @@
 
 Snapshot: 2026-11-11/EDITOR-031
 
-Next task: M1-F
+Next task: M1-H
 
 ## Đã triển khai
 
@@ -21,4 +21,4 @@ Next task: M1-F
 
 ## Tiếp theo
 
-M1-F mở rộng phân tích tham chiếu. M5-B còn kiểm thử cài đặt và phát media trên macOS, ký phát hành và notarization. M4-B còn live test và OAuth. [Backlog](TASK_BACKLOG.md)
+M1-H ưu tiên thao tác timeline và công cụ biên tập nâng cao theo phản hồi ngày 11/11/2026. M1-F mở rộng phân tích tham chiếu. M5-B còn kiểm thử trên máy macOS và ký phát hành. [Backlog](TASK_BACKLOG.md)
