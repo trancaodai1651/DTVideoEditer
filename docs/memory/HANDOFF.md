@@ -19,15 +19,24 @@ Phiên khảo sát dùng Computer Use trên CapCut Windows 9.7.1.4203, draft t�
 **Đã kiểm chứng**
 
 - Hộp thoại native trên Windows nhập cùng lượt một MP4 và một WAV có tên tiếng Việt. Thư viện báo nhập 2 tệp, ảnh PNG cùng thư mục không được nhập. Thử với bản dev dùng ID app và SQLite riêng.
+- Kéo MP4 và WAV từ thư viện vào Video 1 tại 0 giây và Âm thanh 1 tại 1 giây. Quan sát waveform, thuộc tính dB/fade riêng và xem preview ở 2 giây. Đặt In bằng nút và chạy hàng đợi từ giao diện. FFprobe đọc MP4 dài 3,967 giây, H.264 640×360 và AAC cùng bắt đầu tại timestamp 0.
 - Lint, TypeScript, Vite build, 19 test Node, 21 test Rust, 5 test FFmpeg, kiểm tra định dạng Rust và hai checker bộ nhớ. Một test keychain cần OS thật vẫn được bỏ qua mặc định.
 - Fixture FFmpeg kiểm tra PNG waveform và cache, màu pha ở dissolve, màu đen tại ranh giới fade, pixel sticker có transform động, MP4 chứa audio và chỉ dài 1,1 giây theo In–Out.
 
 **Còn mở**
 
 - Kiểm tra thả tệp từ Explorer/Finder và cài đặt/chạy trực tiếp trên macOS. UI và codec có thể khác nhau giữa WebView2 và WKWebView.
+- Phím tắt timeline nhận phím khi focus ở vùng timeline. Click thước di chuyển playhead nhưng chưa đưa focus vào vùng nhận phím. Có thể dùng nút In/Out trên toolbar, hoặc đưa focus vào một nút hay clip trong timeline trước khi dùng phím.
 - M1-H3 tiếp theo cần filmstrip nhiều khung, khóa/ẩn/tắt tiếng theo tầng, meter và tách audio. Tiếp tục M1-H6 với compound, multicam, speed curve, tracking, rich text, adjustment layer/LUT và preset xuất. M1-F cần tái dựng đề xuất chữ, hiệu ứng, chuyển động và audio từ video tham chiếu. Các mục Pro/cloud vẫn ở M1-J.
 
-**Git và bộ cài** Bản 0.4.0 dùng tag `v0.4.0`. Workflow nhận tag và tạo NSIS Windows x64 cùng DMG Universal arm64/x86_64. Kiểm tra bằng `lipo` và `hdiutil` trên runner. [Workflow](../../.github/workflows/installers.yml)
+**Git và bộ cài** Commit đã kiểm chứng là `8186f8f6a71ad37975219acca1c5ba930ad634bf`, tag `v0.4.0`. CI Windows và macOS đều đạt. Hai job đóng gói thành công. Log macOS xác nhận `x86_64 arm64` và `hdiutil` xác nhận DMG hợp lệ. Bản Windows cũng được build thành công tại máy. Windows chưa ký, DMG dùng chữ ký ad hoc. Cả hai cần FFmpeg/FFprobe trên PATH. [CI](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43000397010) · [Build bộ cài](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43000397175) · [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.4.0)
+
+Hai tệp dưới đây nằm trong `apps/desktop/src-tauri/target/verified-installers/v0.4.0`. Đã so SHA-256 của từng archive với metadata GitHub trước khi giải nén.
+
+| Bộ cài | SHA-256 của tệp |
+| --- | --- |
+| `AI Video Studio_0.4.0_x64-setup.exe` | `2fd8af1d3a7be96dc620a85aa6d6acb55156176a53f9418338491c1c4ef5f2df` |
+| `AI Video Studio_0.4.0_universal.dmg` | `99ce52b34ea164c47ffb852adfc25e62aeb1dc02537397014c66dc4b6cbc699f` |
 
 ## Kiểm chứng bản 0.3.1
 

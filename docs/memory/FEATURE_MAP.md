@@ -3,10 +3,10 @@
 | Module | Source hoặc tài liệu | Trạng thái |
 | --- | --- | --- |
 | Desktop và Settings | [App](../../apps/desktop/src/App.tsx) · [IPC](../../apps/desktop/src/desktop.ts) · [Tiếng Việt](../../apps/desktop/src/vi.ts) | Có navigation, form dự án, quản lý thư mục và kiểm tra công cụ |
-| Media library | [Scanner](../../apps/desktop/src-tauri/src/library.rs) · [FFmpeg](../../apps/desktop/src-tauri/src/probe.rs) · [Gallery](../../apps/desktop/src/MediaPanels.tsx) | Chọn thư mục, scan giới hạn, cache metadata, JPEG, phân trang |
-| Preview | [Protocol](../../apps/desktop/src-tauri/src/preview.rs) | Nguồn theo asset ID, byte range, audio/video/ảnh tùy codec WebView |
-| Project và timeline | [Store](../../apps/desktop/src-tauri/src/store.rs) · [Snapshot](../../apps/desktop/src-tauri/src/timeline.rs) · [Editor](../../apps/desktop/src/TimelineEditor.tsx) · [Phép sửa](../../apps/desktop/src/timeline.ts) · [Migration 002](../../apps/desktop/src-tauri/migrations/002_timeline_edit_points.sql) | Edit points theo mili giây, kéo thả, trim, split, undo/redo, tự lưu |
-| Render và hàng đợi | [Renderer](../../apps/desktop/src-tauri/src/render.rs) · [Hàng đợi](../../apps/desktop/src/ExportQueue.tsx) | Ghép lớp, chữ, màu, MP4 H.264/AAC, hàng đợi FIFO, hủy/thử lại và phát tệp đã xuất |
+| Media library | [Scanner](../../apps/desktop/src-tauri/src/library.rs) · [FFmpeg](../../apps/desktop/src-tauri/src/probe.rs) · [Gallery](../../apps/desktop/src/MediaPanels.tsx) | Chọn thư mục, chọn nhiều tệp và native drop, cache metadata/JPEG/waveform, phân trang |
+| Preview | [Protocol](../../apps/desktop/src-tauri/src/preview.rs) | Nguồn và waveform theo asset ID, byte range, audio/video/ảnh tùy codec WebView |
+| Project và timeline | [Store](../../apps/desktop/src-tauri/src/store.rs) · [Snapshot](../../apps/desktop/src-tauri/src/timeline.rs) · [Editor](../../apps/desktop/src/TimelineEditor.tsx) · [Phép sửa](../../apps/desktop/src/timeline.ts) | Nhiều tầng, kéo thả, trim và split, dồn clip/liên kết, đa chọn/nhóm, undo/redo, tự lưu |
+| Render và hàng đợi | [Renderer](../../apps/desktop/src-tauri/src/render.rs) · [Hàng đợi](../../apps/desktop/src/ExportQueue.tsx) | Ghép lớp, chữ, màu, keyframe, hai chuyển cảnh, MP4 H.264/AAC, xuất In–Out, FIFO, hủy/thử lại và phát tệp đã xuất |
 | Kho mẫu | [Giao diện](../../apps/desktop/src/TemplateLibrary.tsx) · [Phân tích](../../apps/desktop/src-tauri/src/templates.rs) | Mẫu dựng sẵn và mẫu local theo điểm cắt, gán media theo cảnh |
 | Không gian biên tập | [Thư viện](../../apps/desktop/src/EditorLibrary.tsx) · [Player](../../apps/desktop/src/EditorPlayer.tsx) · [Inspector](../../apps/desktop/src/ClipInspector.tsx) | Preset và tài nguyên gốc, chỉnh clip, phát timeline |
 | Phụ đề | [SRT và Whisper](../../apps/desktop/src-tauri/src/captions.rs) | Chữ có thể sửa, nhập/xuất SRT UTF-8, nhận dạng cục bộ |

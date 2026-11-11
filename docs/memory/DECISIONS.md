@@ -23,3 +23,7 @@ Frontend giữ trạng thái sửa và lịch sử undo/redo, gửi nguyên snap
 ## ADR-006 · 2026-11-10 · Publishing bằng token trong keychain và duyệt native
 
 Kết nối bằng access token do người dùng tự lấy từ app của họ, vì OAuth cần app secret và redirect đã đăng ký mà dự án chưa có. Token nằm trong keychain qua crate `keyring`, HTTP dùng `reqwest` blocking với TLS của hệ điều hành để không phải build thư viện mã hóa. Mỗi lần đăng, sửa, xóa phải qua hộp thoại native. M4-B và M4-C được làm trước M4-A theo yêu cầu của chủ dự án.
+
+## ADR-007 · 2026-11-11 · Cấp quyền từng tệp từ picker và native drop
+
+M1-H1 mở rộng ADR-002. Picker tệp và sự kiện thả từ hệ điều hành lưu canonical path với phạm vi đúng một tệp. Dùng bảng grant hiện tại để tái sử dụng thu hồi, ID nguồn và quan hệ SQLite. Cấp quyền thư mục vẫn cần hộp thoại chọn thư mục. Frontend nhận tọa độ thả và asset ID để quyết định chèn clip vào dự án đang mở. Preview, waveform, render, nhận dạng, phân tích mẫu và publishing dùng chung kiểm tra phạm vi nguồn. [Quyền media](SECURITY.md)
