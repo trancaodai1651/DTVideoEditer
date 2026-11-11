@@ -1,6 +1,11 @@
 # Changelog
 
-Snapshot: 2026-11-11/EDITOR-031
+Snapshot: 2026-11-11/CAPCUT-AUDIT
+
+## 2026-11-11 · Khảo sát CapCut Desktop
+
+- M1-J ghi các thao tác quan sát, ca đã thử trên draft Windows riêng, điều kiện Free/Pro và phím tắt. Các tiêu chí được liên kết tới những phần cần bổ sung trong DT_Edit. [Bộ nhớ khảo sát](CAPCUT_DESKTOP_AUDIT.md)
+- Tách M1-H thành nhập file, thao tác timeline, waveform/audio, keyframe, transition và các quy trình dựng nâng cao.
 
 ## 2026-11-11 · Editor 0.3.1
 

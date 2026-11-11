@@ -1,6 +1,14 @@
 # Bàn giao
 
-Snapshot: 2026-11-11/EDITOR-031
+Snapshot: 2026-11-11/CAPCUT-AUDIT
+
+## Điểm vào cho Claude Code hoặc Codex
+
+Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit tiến tới các thao tác dựng thực tế của CapCut Desktop và dùng chung bộ nhớ để chuyển agent. Bắt đầu M1-H1. Đọc [quyền media](SECURITY.md) trước khi sửa picker, quyền tệp hoặc native drop. Ca CC-06 là chuẩn cho M1-H2. Các dòng Đã thấy hoặc Cần thử trong khảo sát chưa phải hành vi đã xác minh.
+
+Phiên khảo sát dùng Computer Use trên CapCut Windows 9.7.1.4203, draft tổng hợp **1111 (1)**. Đã thử import nhiều tệp, split theo frame, trim với magnet/linkage, chọn phải, group/compound, keyframe, Black Fade, kéo chữ, mask hình chữ nhật, SRT tiếng Việt, fade và kéo clip WAV, lớp hiệu ứng riêng, zoom vừa khung, xuất MP4 toàn timeline và xuất riêng range In–Out. Người dùng hiện chưa có quyền CapCut Pro. Các ca Pro/cloud và một số thao tác trên fixture khác vẫn chờ kiểm chứng. Mốc source trước khảo sát là `16c13bc`. Phiên khảo sát cập nhật tài liệu, DT_Edit hiện tại là 0.3.1.
+
+## Kiểm chứng bản 0.3.1
 
 **Mục tiêu** M1-I trong 0.3.1 cải thiện kéo thả, thu phóng timeline và chỉnh trực tiếp trên preview. M1-G đưa bố cục và kho công cụ vào 0.3.0 sau khi xem CapCut 9.7.1.
 
@@ -19,4 +27,4 @@ Snapshot: 2026-11-11/EDITOR-031
 
 **Git** Nền trước phiên là `b9e92f1`. Commit `6bbb387` và tag `v0.3.1` đã push. [Workflow bộ cài 0.3.1](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/42975842217).
 
-**Task tiếp theo** M1-H tiếp tục timeline, bắt đầu từ kéo tệp trực tiếp, đa chọn và ripple edit. M1-F theo dõi nhận dạng chữ, chuyển động, chuyển cảnh và âm thanh từ video tham chiếu. [Backlog](TASK_BACKLOG.md) · [Editor](modules/editor.md)
+**Task tiếp theo** M1-H1 bổ sung picker nhiều tệp và kéo tệp trực tiếp. M1-H2 tiếp theo cho đa chọn và ripple. M1-J theo dõi phần khảo sát còn mở. M1-F tiếp tục nhận dạng video tham chiếu. [Backlog](TASK_BACKLOG.md) · [Editor](modules/editor.md)

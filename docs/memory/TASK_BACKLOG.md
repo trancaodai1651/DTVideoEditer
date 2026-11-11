@@ -10,8 +10,15 @@
 | M1-E | P0 | Xong | M1-C | Mẫu sẵn và mẫu cục bộ từ video, dò nhịp cắt/tỷ lệ, gán nguồn và các lớp âm thanh, tạo dự án chỉnh sửa được. |
 | M1-F | P0 | Chờ | M1-E | Mở rộng nhận dạng chữ, chuyển cảnh, chuyển động, nhạc và lời nói theo confidence. Cho phép xem và sửa đề xuất, giữ quyền với mẫu và giọng nói, đo chất lượng trên video tham chiếu có ground truth. |
 | M1-G | P1 | Xong | M1-C | Giao diện biên tập ba khung với timeline và các thư viện tích hợp. Các preset cập nhật clip hoặc tạo lớp chỉnh sửa được và đi vào MP4. |
-| M1-H | P1 | Kế tiếp | M1-I | Kéo tệp từ Explorer/Finder qua cấp quyền theo tệp, đa chọn clip, ripple edit, waveform, transition giữa hai clip và keyframe. Khớp preview với export, mask theo đối tượng, motion tracking và AI nâng cao. |
+| M1-H | P1 | Đang làm | M1-I | Nhóm triển khai theo các ca nghiệm thu trong [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md). |
+| M1-H1 | P0 | Kế tiếp | M1-I | Picker nhiều tệp và OS drop Explorer/Finder. Đọc đúng tệp chọn, giữ nguồn tại chỗ, drop vào track đặt đúng mốc. Test quyền, trùng, revoke, restart và hai hệ điều hành. |
+| M1-H2 | P0 | Chờ | M1-I | Main track magnet, snapping và linkage độc lập. Ripple trim có và không kéo overlay, đa chọn, group, range, marker và hotkeys. Dùng CC-05 đến CC-11 làm ca so sánh. |
+| M1-H3 | P1 | Chờ | M1-H1 | Filmstrip nhiều mốc, waveform, gain dB, fade in/out, mute/lock/visibility và tách audio theo nguồn. |
+| M1-H4 | P1 | Chờ | M1-I | Keyframe theo tham số, nội suy, easing, marker, undo, trim/split. So preview và pixel trong export. |
+| M1-H5 | P1 | Chờ | M1-H2 | Transition giữa clip kề, thời lượng có giới hạn, xử lý gap và undo. Kiểm tra hai input trong preview và MP4. |
+| M1-H6 | P1 | Chờ | M1-H2, M1-H4 | Compound, multicam, speed curve, mask/tracking, rich text, adjustment layer/LUT, effect layer, export range/preset và AI theo quyền. |
 | M1-I | P1 | Xong | M1-G | Kéo media từ thư viện lên timeline, di chuyển clip giữa các tầng cùng loại, zoom timeline và preview, kéo vị trí/đổi cỡ/xoay hình trên preview và lưu qua undo/redo. |
+| M1-J | P1 | Đang làm | M1-I | Kiểm kê thao tác CapCut Desktop có ca tái lập và ghi phạm vi theo bản, tài khoản, nền tảng. Đã có khảo sát Windows khi chưa đăng nhập. Còn ca Pro, cloud, macOS và các dòng ghi Cần thử. |
 | M2-A | P1 | Chờ | M1-A, key khi test live | Gemini adapter thật, model/quota theo thời điểm cấu hình, OpenAI và Claude adapters qua cùng contract, keychain, consent khi gửi tài liệu, schema cảnh, outline/VO/shot list/on-screen text/caption/hashtags/title, sửa cảnh và version history. Chi phí/quota chỉ hiển thị nếu có dữ liệu. |
 | M2-B | P1 | Chờ | M2-A, quyền giọng mẫu khi cloning | Xác minh OmniVoice upstream và license, worker localhost có capability check, phát âm tiếng Việt, audio reference có xác nhận, preset theo khả năng, TTS queue/cache/regenerate đoạn, fallback opt-in, chèn asset vào timeline. |
 | M2-C | P2 | Chờ | M2-A | Tùy chọn tích hợp CLI/SDK khi user đã tự cài và đăng nhập, điều khoản đã kiểm tra. Test phân biệt quyền thuê bao và API, lỗi quota và fallback. |

@@ -9,6 +9,7 @@ Desktop editor local-first dành cho Windows và macOS. Thư viện media và d�
 | Cài đặt và demo | [README](../../README.md) |
 | Trạng thái | [CURRENT_STATE](CURRENT_STATE.md) |
 | Bàn giao | [HANDOFF](HANDOFF.md) |
+| Khảo sát CapCut và tiêu chí so sánh editor | [CAPCUT_DESKTOP_AUDIT](CAPCUT_DESKTOP_AUDIT.md) |
 | Task và acceptance | [TASK_BACKLOG](TASK_BACKLOG.md) |
 | Tính năng theo source | [FEATURE_MAP](FEATURE_MAP.md) |
 | Kiến trúc và hướng mở rộng | [ARCHITECTURE](ARCHITECTURE.md) |

@@ -1,8 +1,8 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-11/EDITOR-031
+Snapshot: 2026-11-11/CAPCUT-AUDIT
 
-Next task: M1-H
+Next task: M1-H1
 
 ## Đã triển khai
 
@@ -17,8 +17,9 @@ Next task: M1-H
 ## Mức kiểm chứng
 
 - Kiểm chứng bản 0.3.1 và trạng thái artifact ở [HANDOFF](HANDOFF.md).
+- M1-J đã khảo sát CapCut Desktop 9.7.1.4203 bằng Computer Use trên Windows. Có bản đồ 29 nhóm thao tác, bảng phím tắt và kết quả tái lập cho ripple/linkage, keyframe, transition, compound, audio fade, effect layer, mask, SRT và export. [Bộ nhớ khảo sát](CAPCUT_DESKTOP_AUDIT.md)
 - Chưa có lần gọi API mạng xã hội thật nào. Các adapter được kiểm tra bằng máy chủ giả lập theo tài liệu chính thức ngày 10/11/2026.
 
 ## Tiếp theo
 
-M1-H ưu tiên thao tác timeline và công cụ biên tập nâng cao theo phản hồi ngày 11/11/2026. M1-F mở rộng phân tích tham chiếu. M5-B còn kiểm thử trên máy macOS và ký phát hành. [Backlog](TASK_BACKLOG.md)
+M1-H1 bổ sung picker nhiều tệp và kéo từ Explorer/Finder. M1-H2 tiếp tục các chế độ timeline đã đo trên CapCut. M1-J còn các ca Pro, cloud và các thao tác chưa chạy trong bảng khảo sát. M1-F mở rộng phân tích tham chiếu. [Backlog](TASK_BACKLOG.md)
