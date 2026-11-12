@@ -189,11 +189,15 @@ pub struct Shot {
     start_ms: i64,
     end_ms: i64,
     score: u16,
+    /// Most interesting moment of the window (motion plus loudness), for trimming.
+    peak_ms: i64,
 }
 
 const SHOT_STEP_MS: i64 = 250;
-const SHOT_PIXELS: usize = 64 * 36 * 3;
-const SHOT_WINDOW_MS: i64 = 5000;
+const SHOT_WIDTH: usize = 64;
+const SHOT_HEIGHT: usize = 36;
+const SHOT_PIXELS: usize = SHOT_WIDTH * SHOT_HEIGHT * 3;
+const SHOT_WINDOW_MS: i64 = 4000;
 const SHOT_CHUNK_MS: i64 = 120_000;
 
 #[derive(Debug, Serialize)]
@@ -204,70 +208,168 @@ pub struct ShotAnalysis {
     pub hardware_chunks: usize,
 }
 
-fn shots_from_frames(frames: &[u8], scanned_ms: i64, levels: &[u8]) -> Vec<Shot> {
-    let mut shots = Vec::new();
-    let mut start = 0;
-    let mut motion = 0.0;
-    let mut exposure = 0.0;
-    let mut count = 0;
-    let mut previous: Option<&[u8]> = None;
-    for (index, frame) in frames.chunks_exact(SHOT_PIXELS).enumerate() {
-        let at = index as i64 * SHOT_STEP_MS;
-        let delta = previous.map_or(0.0, |last| {
-            last.iter()
-                .zip(frame)
-                .map(|(a, b)| usize::from(a.abs_diff(*b)))
-                .sum::<usize>() as f64
-                / (SHOT_PIXELS * 255) as f64
-        });
-        if at - start >= SHOT_WINDOW_MS || (delta > 0.24 && at - start >= 750) {
-            shots.push(scored_shot(start, at, motion, exposure, count, levels));
-            start = at;
-            motion = 0.0;
-            exposure = 0.0;
-            count = 0;
-        } else if count > 0 {
-            motion += delta.min(0.24);
+/// Per-frame measurements on the 64x36 thumbnail.
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameStats {
+    /// Mean absolute change from the previous frame, 0-1.
+    delta: f64,
+    /// Useful exposure, 0 for black/blown frames up to 1 for mid tones.
+    exposure: f64,
+    /// Mean luma gradient, a blur/detail measure in 0-255 units.
+    sharpness: f64,
+    /// Hasler-Suesstrunk colourfulness.
+    colour: f64,
+}
+
+fn frame_stats(frame: &[u8], previous: Option<&[u8]>) -> FrameStats {
+    let delta = previous.map_or(0.0, |last| {
+        last.iter()
+            .zip(frame)
+            .map(|(a, b)| usize::from(a.abs_diff(*b)))
+            .sum::<usize>() as f64
+            / (SHOT_PIXELS * 255) as f64
+    });
+    let pixels = SHOT_WIDTH * SHOT_HEIGHT;
+    let mut luma = Vec::with_capacity(pixels);
+    let (mut rg_sum, mut yb_sum, mut rg_sq, mut yb_sq) = (0.0, 0.0, 0.0, 0.0);
+    for pixel in frame.chunks_exact(3) {
+        let (r, g, b) = (
+            f64::from(pixel[0]),
+            f64::from(pixel[1]),
+            f64::from(pixel[2]),
+        );
+        luma.push(0.299 * r + 0.587 * g + 0.114 * b);
+        let rg = r - g;
+        let yb = 0.5 * (r + g) - b;
+        rg_sum += rg;
+        yb_sum += yb;
+        rg_sq += rg * rg;
+        yb_sq += yb * yb;
+    }
+    let count = pixels as f64;
+    let (rg_mean, yb_mean) = (rg_sum / count, yb_sum / count);
+    let rg_var = (rg_sq / count - rg_mean * rg_mean).max(0.0);
+    let yb_var = (yb_sq / count - yb_mean * yb_mean).max(0.0);
+    let colour = (rg_var + yb_var).sqrt() + 0.3 * (rg_mean.powi(2) + yb_mean.powi(2)).sqrt();
+    let mean = luma.iter().sum::<f64>() / count;
+    let mut gradient = 0.0;
+    for y in 0..SHOT_HEIGHT - 1 {
+        for x in 0..SHOT_WIDTH - 1 {
+            let at = y * SHOT_WIDTH + x;
+            gradient += (luma[at + 1] - luma[at]).abs() + (luma[at + SHOT_WIDTH] - luma[at]).abs();
         }
-        let mean = frame.iter().map(|value| usize::from(*value)).sum::<usize>() as f64
-            / SHOT_PIXELS as f64;
-        exposure += ((mean.min(255.0 - mean) - 12.0) / 48.0).clamp(0.0, 1.0);
-        count += 1;
+    }
+    FrameStats {
+        delta,
+        exposure: ((mean.min(255.0 - mean) - 12.0) / 48.0).clamp(0.0, 1.0),
+        sharpness: gradient / ((SHOT_WIDTH - 1) * (SHOT_HEIGHT - 1)) as f64,
+        colour,
+    }
+}
+
+/// A cut is a frame change well above the clip's own motion level, so busy
+/// handheld footage is not chopped while calm footage still splits on edits.
+fn cut_threshold(stats: &[FrameStats]) -> f64 {
+    let deltas: Vec<f64> = stats.iter().skip(1).map(|item| item.delta).collect();
+    if deltas.is_empty() {
+        return 0.24;
+    }
+    let mean = deltas.iter().sum::<f64>() / deltas.len() as f64;
+    let spread = (deltas
+        .iter()
+        .map(|value| (value - mean).powi(2))
+        .sum::<f64>()
+        / deltas.len() as f64)
+        .sqrt();
+    (mean + 3.0 * spread).clamp(0.12, 0.3)
+}
+
+fn level_at(levels: &[u8], at: i64) -> f64 {
+    levels
+        .get((at / LEVEL_STEP_MS) as usize)
+        .map_or(0.0, |value| f64::from(*value) / 255.0)
+}
+
+fn shots_from_frames(frames: &[u8], scanned_ms: i64, levels: &[u8]) -> Vec<Shot> {
+    let mut stats = Vec::with_capacity(frames.len() / SHOT_PIXELS);
+    let mut previous: Option<&[u8]> = None;
+    for frame in frames.chunks_exact(SHOT_PIXELS) {
+        stats.push(frame_stats(frame, previous));
         previous = Some(frame);
     }
-    if count > 0 {
-        if scanned_ms - start >= crate::timeline::MIN_CLIP_MS {
-            shots.push(scored_shot(
-                start, scanned_ms, motion, exposure, count, levels,
-            ));
-        } else if let Some(last) = shots.last_mut() {
-            last.end_ms = scanned_ms;
+    let threshold = cut_threshold(&stats);
+    let mut shots = Vec::new();
+    let mut first = 0usize;
+    for index in 1..=stats.len() {
+        let at = index as i64 * SHOT_STEP_MS;
+        let start = first as i64 * SHOT_STEP_MS;
+        let cut = stats
+            .get(index)
+            .is_some_and(|item| item.delta > threshold && at - start >= 750);
+        if index == stats.len() || cut || at - start >= SHOT_WINDOW_MS {
+            let end = if index == stats.len() { scanned_ms } else { at };
+            if end - start >= crate::timeline::MIN_CLIP_MS || shots.is_empty() {
+                shots.push(scored_shot(start, end, &stats[first..index], levels));
+            } else if let Some(last) = shots.last_mut() {
+                last.end_ms = end;
+            }
+            first = index;
         }
     }
     shots
 }
 
-fn scored_shot(
-    start: i64,
-    end: i64,
-    motion: f64,
-    exposure: f64,
-    count: u32,
-    levels: &[u8],
-) -> Shot {
+fn scored_shot(start: i64, end: i64, frames: &[FrameStats], levels: &[u8]) -> Shot {
+    let count = frames.len().max(1) as f64;
+    // The first frame's delta belongs to the cut into this window.
+    let moving: Vec<f64> = frames.iter().skip(1).map(|item| item.delta).collect();
+    let motion = moving.iter().sum::<f64>() / moving.len().max(1) as f64;
+    // Some motion is lively; heavy whole-frame change is camera shake or noise.
+    let shake = ((motion - 0.16) / 0.12).clamp(0.0, 1.0);
+    let motion_score = (motion / 0.1).min(1.0) * (1.0 - 0.6 * shake);
+    let exposure = frames.iter().map(|item| item.exposure).sum::<f64>() / count;
+    let sharpness = (frames.iter().map(|item| item.sharpness).sum::<f64>() / count / 16.0).min(1.0);
+    let colour = (frames.iter().map(|item| item.colour).sum::<f64>() / count / 55.0).min(1.0);
     let first = (start / LEVEL_STEP_MS) as usize;
     let last = ((end / LEVEL_STEP_MS) as usize).min(levels.len());
     let audio = levels.get(first..last).unwrap_or_default();
     let energy = audio.iter().map(|value| f64::from(*value)).sum::<f64>()
         / (audio.len().max(1) * 255) as f64;
-    let score = (630.0 * (motion / f64::from(count) / 0.14).min(1.0)
-        + 220.0 * exposure / f64::from(count)
-        + 150.0 * energy)
-        .round();
+    let peak = audio
+        .iter()
+        .copied()
+        .max()
+        .map_or(0.0, |value| f64::from(value) / 255.0);
+    let accent = ((peak - energy).max(0.0) / 0.35).min(1.0);
+    // Whole-window darkness or blur makes a poor highlight regardless of motion.
+    let quality = (0.35 + 0.65 * exposure) * (0.5 + 0.5 * sharpness);
+    let score = (quality
+        * (380.0 * motion_score
+            + 150.0 * sharpness
+            + 110.0 * colour
+            + 140.0 * exposure
+            + 110.0 * energy
+            + 110.0 * accent))
+        .round()
+        .clamp(0.0, 1000.0);
+    let peak_index = frames
+        .iter()
+        .enumerate()
+        .skip(usize::from(frames.len() > 1))
+        .map(|(index, item)| {
+            let at = start + index as i64 * SHOT_STEP_MS;
+            (
+                index,
+                4.0 * item.delta.min(0.25) + level_at(levels, at) + 0.3 * item.exposure,
+            )
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map_or(0, |(index, _)| index);
     Shot {
         start_ms: start,
         end_ms: end,
         score: score as u16,
+        peak_ms: (start + peak_index as i64 * SHOT_STEP_MS).min(end),
     }
 }
 
@@ -343,6 +445,7 @@ pub fn analyze_shots(
             for shot in &mut shots {
                 shot.start_ms += at;
                 shot.end_ms += at;
+                shot.peak_ms += at;
             }
             analysis.scanned_ms += covered;
             analysis.shots.extend(shots);
@@ -778,6 +881,32 @@ mod tests {
             .flat_map(|i| if i % 2 == 0 { 3277i16 } else { -3277 }.to_le_bytes())
             .collect();
         assert_eq!(level_bytes(&quiet)[0], 170);
+    }
+
+    #[test]
+    fn shot_scoring_prefers_sharp_moving_footage_and_splits_on_edits() {
+        // 16 dull flat frames (4 s), then a hard cut to 16 frames of a moving,
+        // colourful checkerboard.
+        let mut frames = Vec::new();
+        for _ in 0..16 {
+            frames.extend(std::iter::repeat_n(20u8, SHOT_PIXELS));
+        }
+        for step in 0..16usize {
+            for y in 0..SHOT_HEIGHT {
+                for x in 0..SHOT_WIDTH {
+                    let on = ((x + step * 3) / 4 + y / 4) % 2 == 0;
+                    frames.extend(if on { [230, 60, 40] } else { [40, 90, 210] });
+                }
+            }
+        }
+        let mut levels = vec![20u8; 160];
+        levels[110] = 240;
+        let shots = shots_from_frames(&frames, 8000, &levels);
+        assert!(shots.iter().any(|shot| shot.start_ms == 4000), "{shots:?}");
+        let dull = shots.iter().find(|shot| shot.end_ms <= 4000).unwrap();
+        let lively = shots.iter().find(|shot| shot.start_ms >= 4000).unwrap();
+        assert!(lively.score > dull.score * 3, "{shots:?}");
+        assert!((4000..=8000).contains(&lively.peak_ms));
     }
 
     #[test]

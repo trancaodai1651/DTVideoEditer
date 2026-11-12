@@ -32,6 +32,10 @@ Tách âm thanh, tắt clip, compound, multicam và speed curve là trường t�
 
 M1-H1 mở rộng ADR-002. Picker tệp và sự kiện thả từ hệ điều hành lưu canonical path với phạm vi đúng một tệp. Dùng bảng grant hiện tại để tái sử dụng thu hồi, ID nguồn và quan hệ SQLite. Cấp quyền thư mục vẫn cần hộp thoại chọn thư mục. Frontend nhận tọa độ thả và asset ID để quyết định chèn clip vào dự án đang mở. Preview, waveform, render, nhận dạng, phân tích mẫu và publishing dùng chung kiểm tra phạm vi nguồn. [Quyền media](SECURITY.md)
 
+## ADR-010 · 2026-11-12 · Mô hình Whisper đi kèm, proxy thủ công, highlight và màu 0.9.0
+
+Bộ cài kèm `ggml-small-q5_1.bin` (~190 MB): mô hình đa ngôn ngữ đủ tốt cho tiếng Việt mà vẫn nhỏ hơn `small` đầy đủ; tệp được ghim theo revision Hugging Face và SHA-256. Proxy bỏ cơ chế tự động vì người dùng muốn quyết định lúc nào mã hóa; cache cũ vẫn được dùng lại. Bánh xe màu và đường cong RGB được quy về đường cong từng kênh 17 điểm để preview SVG và FFmpeg `curves` khớp chính xác; HSL theo dải màu không tách kênh được nên chỉ xuất qua `huesaturation`. Highlight không giới hạn chọn theo ngưỡng tương đối trong chính tư liệu thay vì một số giây cố định.
+
 ## ADR-009 · 2026-11-12 · Màu, lớp điều chỉnh, giọng đọc và dịch
 
 Đường cong tông được dựng từ năm thanh ánh sáng bằng một công thức chung; preview dùng bảng `feComponentTransfer` 9 điểm, FFmpeg dùng `curves` với cùng 9 điểm, nên hai bên khớp tông. Tint, hue, vibrance dùng `colorbalance`, `hue`, `vibrance` khi xuất và ma trận/CSS gần đúng khi xem trước. LUT chỉ áp khi xuất vì WebView không có lut3d. Lớp điều chỉnh là danh sách riêng trong snapshot (như chữ), áp filter có `enable='between(t,..)'` lên ảnh ghép trước lớp chữ. Freeze dùng ngữ nghĩa ảnh tĩnh (`startMs = 0`, `endMs` là thời lượng) cộng `freezeAtMs`. Đồng bộ multicam dùng tương quan onset năng lượng 10 ms thay vì so dạng sóng, vì hai micro khác nhau vẫn trùng điểm bắt đầu âm. Lồng tiếng dùng giọng có sẵn của hệ điều hành để không cần mô hình hay mạng; dịch dùng Claude API qua HTTP thô vì Rust không có SDK chính thức.

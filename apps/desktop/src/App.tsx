@@ -33,8 +33,6 @@ const viewName: Record<View, string> = {
 type Notice = { text: string; error: boolean };
 const EMPTY_PAGE: AssetPage = { items: [], total: 0, pageSize: 48 };
 const isActive = (job: RenderJob) => job.status === "queued" || job.status === "running";
-const needsProxy = (media: { kind: string; width?: number | null; height?: number | null }) =>
-  media.kind === "video" && ((media.width ?? 0) >= 2560 || (media.height ?? 0) >= 1440);
 
 /** The preview target for a clip, seeked to the source frame under the playhead. */
 function clipSelection(clip: Clip, playheadMs: number): Selection | null {
@@ -99,7 +97,7 @@ export function App() {
   const [review, setReview] = useState<{ id: number; projectId: number; history: History; aspect: Aspect; lanes: LaneControl[]; revision: number } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [libraryRevision, setLibraryRevision] = useState(0);
-  const [proxyEnabled, setProxyEnabled] = useState(() => storedNumber("dt-edit-proxy", 1, 0, 1) === 1);
+  const [proxyEnabled, setProxyEnabled] = useState(() => storedNumber("dt-edit-proxy-use", 0, 0, 1) === 1);
   const [proxyResults, setProxyResults] = useState<Record<number, { revision: number; ready: boolean }>>({});
   const [proxyBuilding, setProxyBuilding] = useState(false);
   const proxyWorking = useRef(false);
@@ -124,21 +122,26 @@ export function App() {
   const activeVideos = frameMode ? clips.filter((clip) => clip.kind === "video" && clip.track === "video" && clip.available
     && !clip.look?.disabled && !clipLane(laneControls, clip)?.hidden && clip.positionMs <= playheadMs && clipFinish(clip) > playheadMs)
     : selection ? [selection] : [];
-  const nextProxy = activeVideos.find((clip) => needsProxy(clip) && proxyResults[clip.assetId]?.revision !== libraryRevision)?.assetId;
+  // Proxies are only created when the user asks; existing ones are reused while "Proxy" is on.
+  const nextProxy = activeVideos.find((clip) => proxyResults[clip.assetId]?.revision !== libraryRevision)?.assetId;
   const proxyTarget = frameMode ? (selectedClip?.kind === "video" ? selectedClip.assetId : activeVideos[0]?.assetId)
     : selection?.kind === "video" ? selection.assetId : undefined;
 
   function toggleProxy() {
     const enabled = !proxyEnabled;
     setProxyEnabled(enabled);
-    try { localStorage.setItem("dt-edit-proxy", enabled ? "1" : "0"); } catch { /* session preference still applies */ }
+    try { localStorage.setItem("dt-edit-proxy-use", enabled ? "1" : "0"); } catch { /* session preference still applies */ }
+    if (enabled && proxyTarget !== undefined && !proxyResults[proxyTarget]?.ready) requestProxy(proxyTarget, true, true);
   }
 
-  function requestProxy(assetId: number, manual = false) {
+  function requestProxy(assetId: number, manual = false, enabling = false) {
     if (!desktop || proxyWorking.current) return;
     proxyWorking.current = true;
     setProxyBuilding(true);
-    if (manual && !proxyEnabled) toggleProxy();
+    if (manual && !proxyEnabled && !enabling) {
+      setProxyEnabled(true);
+      try { localStorage.setItem("dt-edit-proxy-use", "1"); } catch { /* session preference still applies */ }
+    }
     void api.prepareProxy(assetId).then(() => {
       setProxyResults((items) => ({ ...items, [assetId]: { revision: libraryRevision, ready: true } }));
       if (manual) setNotice({ text: "Proxy 720p đã sẵn sàng trong trình phát.", error: false });
@@ -151,9 +154,13 @@ export function App() {
     });
   }
 
-  const autoProxy = useEffectEvent((id: number) => requestProxy(id));
+  const checkProxy = useEffectEvent((id: number) => {
+    const revision = libraryRevision;
+    void api.proxyStatus(id).then((ready) => setProxyResults((items) => ({ ...items, [id]: { revision, ready } })))
+      .catch(() => setProxyResults((items) => ({ ...items, [id]: { revision, ready: false } })));
+  });
   useEffect(() => {
-    if (proxyEnabled && nextProxy !== undefined && !proxyBuilding) autoProxy(nextProxy);
+    if (desktop && proxyEnabled && nextProxy !== undefined && !proxyBuilding) checkProxy(nextProxy);
   }, [proxyEnabled, nextProxy, proxyBuilding]);
   const total = totalMs(clips);
   const marks = rangeMarks?.projectId === projectId ? rangeMarks : null;
@@ -306,7 +313,7 @@ export function App() {
   const montageAudio = clips.filter((clip) => clip.track === "audio" && clip.available && !clip.look?.disabled
     && !clipLane(laneControls, clip)?.muted && (clip.kind === "audio" || (clip.kind === "video" && clip.look?.audioLink)));
 
-  function buildMontage(style: MontageStyle, seconds: number, sounds: Clip[]) {
+  function buildMontage(style: MontageStyle, seconds: number | null, sounds: Clip[]) {
     if (editsDisabled || !project || !montageInputs.length) return;
     if (montageInputs.length > 96) { notify("Chia tư liệu thành các timeline có tối đa 96 clip hình để dựng tự động.", true); return; }
     const inputs = [...montageInputs].sort((a, b) => a.positionMs - b.positionMs || layerOf(a) - layerOf(b));
@@ -341,7 +348,7 @@ export function App() {
         }
         soundtrack.push({ clip, levels });
       }
-      const snapshot = montageSnapshot(sources, aspect, seconds * 1000, style, soundtrack);
+      const snapshot = montageSnapshot(sources, aspect, seconds === null ? null : seconds * 1000, style, soundtrack);
       const count = snapshot.tracks[0].clips.length;
       if (!count) throw new Error("Không có cảnh đủ dài để dựng.");
       const used = new Set(snapshot.tracks[0].clips.map((clip) => clip.assetId)).size;
@@ -871,11 +878,11 @@ export function App() {
     void run("Đang xuất phụ đề…", async () => { if (await api.exportSrt(captions)) success("Đã xuất phụ đề SRT."); });
   }
 
-  function transcribe(language: string) {
+  function transcribe(language: string, chooseModel = false) {
     if (!selectedClip || !["video", "audio"].includes(selectedClip.kind)) return;
     void run("Đang nhận dạng giọng nói trên máy…", async () => {
       const { assetId, startMs, endMs, positionMs, look } = selectedClip;
-      const cues = await api.transcribe({ assetId, startMs, endMs, speed: look?.speed ?? 100 }, language);
+      const cues = await api.transcribe({ assetId, startMs, endMs, speed: look?.speed ?? 100 }, language, chooseModel);
       if (cues) loadCues(cues, positionMs);
     });
   }

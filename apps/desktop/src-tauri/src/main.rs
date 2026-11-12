@@ -342,24 +342,35 @@ async fn transcribe_clip(
     app: AppHandle,
     clip: captions::SpeechClip,
     language: String,
+    choose_model: Option<bool>,
 ) -> CommandResult<Option<Vec<captions::Cue>>> {
     blocking(move || {
+        let resources = app.path().resource_dir().ok();
+        let bundled = if choose_model == Some(true) {
+            None
+        } else {
+            captions::bundled_model(resources.as_deref())
+        };
         let window = app
             .get_webview_window("main")
             .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
-        let Some(selected) = app
-            .dialog()
-            .file()
-            .set_parent(&window)
-            .set_title("Chọn mô hình Whisper GGML")
-            .add_filter("Mô hình Whisper", &["bin"])
-            .blocking_pick_file()
-        else {
-            return Ok(None);
+        let path = if let Some(path) = bundled {
+            path
+        } else {
+            let Some(selected) = app
+                .dialog()
+                .file()
+                .set_parent(&window)
+                .set_title("Chọn mô hình Whisper GGML")
+                .add_filter("Mô hình Whisper", &["bin"])
+                .blocking_pick_file()
+            else {
+                return Ok(None);
+            };
+            selected
+                .into_path()
+                .map_err(|_| StudioError::Input("Chỉ hỗ trợ mô hình trên máy."))?
         };
-        let path = selected
-            .into_path()
-            .map_err(|_| StudioError::Input("Chỉ hỗ trợ mô hình trên máy."))?;
         let state = app.state::<AppState>();
         let _scan = state
             .scan
@@ -484,6 +495,11 @@ async fn prepare_proxy(app: AppHandle, asset_id: i64) -> CommandResult<()> {
         proxy::build(&state.store, &state.proxy_dir, asset_id)
     })
     .await
+}
+
+#[tauri::command]
+fn proxy_status(state: State<AppState>, asset_id: i64) -> bool {
+    proxy::ready(&state.store, &state.proxy_dir, asset_id).is_some()
 }
 
 const RENDER_BUSY: StudioError = StudioError::Input("Đang xuất một video khác.");
@@ -1225,6 +1241,7 @@ fn main() {
             save_project_file,
             open_project_file,
             prepare_proxy,
+            proxy_status,
             create_edited_project,
             start_render,
             retry_render,

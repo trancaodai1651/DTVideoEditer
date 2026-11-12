@@ -165,6 +165,17 @@ pub fn write(path: &Path, mut cues: Vec<Cue>) -> Result<()> {
     Ok(())
 }
 
+/// File name of the GGML model shipped in the installer's resources.
+pub const BUNDLED_MODEL: &str = "ggml-small-q5_1.bin";
+
+/// The Whisper model packaged with the app, when this build includes it.
+pub fn bundled_model(resources: Option<&Path>) -> Option<std::path::PathBuf> {
+    let path = resources?.join("whisper").join(BUNDLED_MODEL);
+    fs::metadata(&path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 1024)
+        .then_some(path)
+}
+
 pub fn transcribe(
     store: &Store,
     clip: &SpeechClip,
@@ -207,7 +218,11 @@ pub fn transcribe(
     }
     let work = tempfile::tempdir()?;
     // A fixed, relative filename keeps user paths out of the FFmpeg filter syntax.
-    fs::copy(model, work.path().join("model.bin"))?;
+    let staged = work.path().join("model.bin");
+    // A hard link avoids copying a large bundled model; other volumes fall back to a copy.
+    if fs::hard_link(&model, &staged).is_err() {
+        fs::copy(&model, &staged)?;
+    }
     let filter = format!(
         "atempo={:.2},whisper=model=model.bin:language={language}:queue=12:use_gpu=0:destination=captions.srt:format=srt:max_len=80",
         f64::from(clip.speed) / 100.0
@@ -258,5 +273,18 @@ mod tests {
         assert_eq!(read(&path).unwrap(), cues);
         assert!(write(&path, cues).is_err());
         assert!(parse("1\n00:60:01,000 --> 00:00:10,000\nSai").is_err());
+    }
+
+    #[test]
+    fn bundled_model_is_found_only_inside_resources() {
+        let folder = tempfile::tempdir().unwrap();
+        assert!(bundled_model(None).is_none());
+        assert!(bundled_model(Some(folder.path())).is_none());
+        fs::create_dir(folder.path().join("whisper")).unwrap();
+        let model = folder.path().join("whisper").join(BUNDLED_MODEL);
+        fs::write(&model, b"tiny").unwrap();
+        assert!(bundled_model(Some(folder.path())).is_none());
+        fs::write(&model, vec![1u8; 4096]).unwrap();
+        assert_eq!(bundled_model(Some(folder.path())), Some(model));
     }
 }

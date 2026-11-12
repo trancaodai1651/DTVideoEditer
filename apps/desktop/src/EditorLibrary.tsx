@@ -163,7 +163,7 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
   onAdd: (asset: Asset, sticker: boolean) => void;
   onImportSrt: () => void;
   onExportSrt: () => void;
-  onTranscribe: (language: string) => void;
+  onTranscribe: (language: string, chooseModel: boolean) => void;
   canJoin: boolean;
   join?: ClipTransition;
   onJoin: (kind: TransitionKind | null, durationMs: number) => void;
@@ -229,11 +229,12 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
           <button type="button" className="button secondary compact" disabled={busy || !hasCaptions} onClick={onExportSrt}>Xuất SRT</button>
         </div>
         <div className="tool-detail"><h3>Nhận dạng lời nói trên máy</h3>
-          <p>Chọn clip có tiếng trên timeline và mô hình Whisper GGML. Cần FFmpeg có filter whisper.</p>
+          <p>Chọn clip có tiếng trên timeline. Bộ cài đã kèm mô hình Whisper small đa ngôn ngữ, cần FFmpeg có filter whisper.</p>
           <label className="edit-field">Ngôn ngữ<select value={language} onChange={(event) => setLanguage(event.target.value)}>
             <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="auto">Tự nhận diện</option>
           </select></label>
-          <button type="button" className="button primary" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language)}>Chọn mô hình và tạo phụ đề</button>
+          <button type="button" className="button primary" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, false)}>Tạo phụ đề</button>
+          <button type="button" className="button secondary compact" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, true)}>Dùng mô hình GGML khác…</button>
         </div>
       </div>}
       {tab === "templates" && templates}

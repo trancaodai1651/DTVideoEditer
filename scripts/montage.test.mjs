@@ -55,5 +55,36 @@ test("multiple soundtrack clips retain overlap, offsets and layers while the mix
   ]);
   assert.equal(timeline.tracks[0].clips[1].positionMs, 2200);
   assert.deepEqual(timeline.tracks[1].clips.map(({ positionMs, endMs, layer }) => [positionMs, endMs, layer]),
-    [[0, 3300, 0], [1000, 3500, 1], [3400, 1100, 0]]);
+    [[0, 3300, 0], [1000, 3500, 1], [3400, 2000, 0]]);
+});
+
+test("automatic highlight has no length cap, trims around peaks and merges neighbouring standout windows", () => {
+  const shots = [];
+  for (let index = 0; index < 60; index += 1) {
+    const startMs = index * 4000;
+    shots.push({ startMs, endMs: startMs + 4000, score: index % 3 === 0 ? 900 : 100, peakMs: startMs + 3000 });
+  }
+  shots[1].score = 880;
+  const source = { clip: clip(1, "video", 0, 240_000), shots };
+  const timeline = montageSnapshot([source, { clip: clip(2, "image", 0, 3000), shots: [] }], "source", null, "dynamic");
+  const video = timeline.tracks[0].clips;
+  const total = video.reduce((sum, item) => sum + item.endMs - item.startMs, 0);
+  assert.ok(video.length >= 20, `${video.length} pieces`);
+  assert.ok(total > 50_000, `${total} ms`);
+  assert.deepEqual([video[0].startMs, video[0].endMs], [500, 6750]);
+  const single = video.find((item) => item.assetId === 1 && item.startMs >= 12_000);
+  assert.deepEqual([single.startMs, single.endMs], [13_500, 16_000]);
+  assert.equal(video[video.length - 1].assetId, 2);
+});
+
+test("rhythm cut follows the full soundtrack length and walks through footage before repeating", () => {
+  const timeline = montageSnapshot([visual(1, 0, 6000, 800), {
+    clip: clip(2, "video", 0, 20_000), shots: [0, 5000, 10_000, 15_000].map((startMs) => ({ startMs, endMs: startMs + 5000, score: 500 })),
+  }], "source", 30_000, "soft", [{ clip: clip(3, "audio", 0, 200_000), levels: [] }]);
+  const video = timeline.tracks[0].clips;
+  assert.equal(video.reduce((sum, item) => sum + item.endMs - item.startMs, 0), 200_000);
+  assert.equal(timeline.tracks[1].clips[0].endMs, 200_000);
+  const firstTen = video.slice(0, 10).map(({ assetId, startMs }) => `${assetId}:${startMs}`);
+  for (let index = 1; index < firstTen.length; index += 1) assert.notEqual(firstTen[index], firstTen[index - 1]);
+  assert.ok(new Set(video.filter(({ assetId }) => assetId === 2).slice(0, 4).map(({ startMs }) => Math.floor(startMs / 5000))).size >= 4);
 });

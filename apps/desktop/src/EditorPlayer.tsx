@@ -120,7 +120,7 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
         <button type="button" aria-pressed={!frameMode} onClick={() => { onCloseReview(); onMode(false); }}>Nguồn</button>
         <button type="button" aria-pressed={frameMode && !reviewUrl} onClick={() => { onCloseReview(); onMode(true); }}>Bản dựng</button>
         <button type="button" aria-pressed={!!reviewUrl} disabled={disabled || total < 100} onClick={onReview} title="Dùng bộ máy xuất để xem tối đa 20 giây từ playhead">Xem bản xuất</button>
-        <button type="button" aria-pressed={proxyEnabled} onClick={onToggleProxy} title="Tự tạo proxy 720p cho video nặng đang xem">{proxyBuilding ? "Đang tạo proxy…" : proxyCurrent && proxyEnabled ? "Proxy 720p" : "Proxy"}</button>
+        <button type="button" aria-pressed={proxyEnabled} onClick={onToggleProxy} title="Chỉ tạo proxy 720p khi bạn bật, cho video đang xem">{proxyBuilding ? "Đang tạo proxy…" : proxyCurrent && proxyEnabled ? "Proxy 720p" : "Proxy"}</button>
       </div>
     </div>
     {reviewUrl ? <div className="studio-stage rendered-review" ref={stage}>

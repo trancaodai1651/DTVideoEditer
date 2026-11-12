@@ -128,6 +128,15 @@ pub struct Look {
     pub hue: i16,
     #[serde(skip_serializing_if = "is_zero_i16")]
     pub vibrance: i16,
+    /// Lift/gamma/gain colour wheels, applied per channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wheels: Option<ColorWheels>,
+    /// User red/green/blue curves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rgb_curves: Option<RgbCurves>,
+    /// Hue/saturation/lightness for six colour ranges.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hsl: Option<HslBands>,
     /// A .cube LUT stored in the luts table.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lut: Option<i64>,
@@ -140,6 +149,123 @@ pub struct Look {
 
 fn is_zero_i16(value: &i16) -> bool {
     *value == 0
+}
+
+/// One colour wheel: a hue direction, how far to push it, and a brightness offset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ColorWheel {
+    /// Degrees, 0 red, 120 green, 240 blue.
+    pub hue: u16,
+    /// 0–100.
+    pub amount: u8,
+    /// −100–100.
+    pub luma: i8,
+}
+
+impl ColorWheel {
+    fn active(wheel: Option<&Self>) -> bool {
+        wheel.is_some_and(|wheel| wheel.amount != 0 || wheel.luma != 0)
+    }
+
+    fn valid(&self) -> bool {
+        self.hue < 360 && self.amount <= 100 && (-100..=100).contains(&self.luma)
+    }
+
+    /// Push on one channel (0 red, 1 green, 2 blue); hue alone averages to zero.
+    fn offset(wheel: Option<&Self>, channel: usize) -> f64 {
+        wheel.map_or(0.0, |wheel| {
+            let angle = (f64::from(wheel.hue) - 120.0 * channel as f64).to_radians();
+            f64::from(wheel.amount) / 100.0 * angle.cos() + f64::from(wheel.luma) / 100.0
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ColorWheels {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lift: Option<ColorWheel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gamma: Option<ColorWheel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gain: Option<ColorWheel>,
+}
+
+/// Five points per channel at input 0, ¼, ½, ¾ and 1, outputs in thousandths.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct RgbCurves {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r: Option<[u16; 5]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub g: Option<[u16; 5]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b: Option<[u16; 5]>,
+}
+
+const IDENTITY_CURVE: [u16; 5] = [0, 250, 500, 750, 1000];
+
+/// Hue shift (degrees, ±60), saturation and lightness (±100) for one colour range.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct HslBand {
+    pub hue: i16,
+    pub saturation: i16,
+    pub lightness: i16,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct HslBands {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub red: Option<HslBand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yellow: Option<HslBand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub green: Option<HslBand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cyan: Option<HslBand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blue: Option<HslBand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magenta: Option<HslBand>,
+}
+
+impl HslBands {
+    /// Bands that change anything, with FFmpeg huesaturation's colour flag.
+    pub fn active(&self) -> Vec<(&'static str, HslBand)> {
+        [
+            ("r", self.red),
+            ("y", self.yellow),
+            ("g", self.green),
+            ("c", self.cyan),
+            ("b", self.blue),
+            ("m", self.magenta),
+        ]
+        .into_iter()
+        .filter_map(|(flag, band)| band.map(|band| (flag, band)))
+        .filter(|(_, band)| band.hue != 0 || band.saturation != 0 || band.lightness != 0)
+        .collect()
+    }
+
+    fn valid(&self) -> bool {
+        [
+            self.red,
+            self.yellow,
+            self.green,
+            self.cyan,
+            self.blue,
+            self.magenta,
+        ]
+        .iter()
+        .flatten()
+        .all(|band| {
+            (-60..=60).contains(&band.hue)
+                && (-100..=100).contains(&band.saturation)
+                && (-100..=100).contains(&band.lightness)
+        })
+    }
 }
 
 pub const MAX_REVERSE_MS: i64 = 60_000;
@@ -175,7 +301,58 @@ impl Look {
         Some(points)
     }
 
+    /// Seventeen points per red, green and blue channel from the colour wheels
+    /// (lift, gamma, gain) followed by the user RGB curves. The preview's SVG
+    /// filter uses the same formula.
+    pub fn channel_points(&self) -> Option<[[f64; 17]; 3]> {
+        let wheels = self.wheels.unwrap_or_default();
+        let curves = self.rgb_curves.unwrap_or_default();
+        let custom =
+            |points: Option<[u16; 5]>| points.is_some_and(|points| points != IDENTITY_CURVE);
+        if !ColorWheel::active(wheels.lift.as_ref())
+            && !ColorWheel::active(wheels.gamma.as_ref())
+            && !ColorWheel::active(wheels.gain.as_ref())
+            && !custom(curves.r)
+            && !custom(curves.g)
+            && !custom(curves.b)
+        {
+            return None;
+        }
+        let mut result = [[0.0; 17]; 3];
+        for (channel, out) in result.iter_mut().enumerate() {
+            let lift = 0.25 * ColorWheel::offset(wheels.lift.as_ref(), channel);
+            let gamma = 2f64.powf(ColorWheel::offset(wheels.gamma.as_ref(), channel));
+            let gain = 1.0 + 0.5 * ColorWheel::offset(wheels.gain.as_ref(), channel);
+            let points = [curves.r, curves.g, curves.b][channel].unwrap_or(IDENTITY_CURVE);
+            for (index, point) in out.iter_mut().enumerate() {
+                let x = index as f64 / 16.0;
+                let base = (lift + (1.0 - lift) * x).max(0.0);
+                let graded = (gain * base.powf(1.0 / gamma)).clamp(0.0, 1.0);
+                let at = graded * 4.0;
+                let k = (at.floor() as usize).min(3);
+                let (low, high) = (f64::from(points[k]), f64::from(points[k + 1]));
+                let y = (low + (high - low) * (at - k as f64)) / 1000.0;
+                *point = (y.clamp(0.0, 1.0) * 10_000.0).round() / 10_000.0;
+            }
+        }
+        Some(result)
+    }
+
     fn valid_color(&self) -> bool {
+        let wheels = self.wheels.unwrap_or_default();
+        let curves = self.rgb_curves.unwrap_or_default();
+        if ![wheels.lift, wheels.gamma, wheels.gain]
+            .iter()
+            .flatten()
+            .all(ColorWheel::valid)
+            || ![curves.r, curves.g, curves.b]
+                .iter()
+                .flatten()
+                .all(|points| points.iter().all(|value| *value <= 1000))
+            || !self.hsl.is_none_or(|hsl| hsl.valid())
+        {
+            return false;
+        }
         [
             self.exposure,
             self.highlights,
@@ -334,6 +511,9 @@ impl Default for Look {
             tint: 0,
             hue: 0,
             vibrance: 0,
+            wheels: None,
+            rgb_curves: None,
+            hsl: None,
             lut: None,
             freeze_at_ms: None,
             reverse: false,
@@ -890,6 +1070,51 @@ mod tests {
             layer: 0,
             look: Look::default(),
         }
+    }
+
+    #[test]
+    fn channel_points_match_the_preview() {
+        // Same look and values as scripts/color-grading.test.mjs.
+        let wheel = |hue, amount, luma| Some(ColorWheel { hue, amount, luma });
+        let look: Look = serde_json::from_str(
+            r#"{"wheels":{"lift":{"hue":220,"amount":40,"luma":0},"gamma":{"hue":0,"amount":0,"luma":20},"gain":{"hue":40,"amount":30,"luma":-10}},"rgbCurves":{"g":[0,200,500,800,1000]}}"#,
+        )
+        .unwrap();
+        assert_eq!(look.wheels.unwrap().gain, wheel(40, 30, -10));
+        let [r, g, b] = look.channel_points().unwrap();
+        assert_eq!(
+            r,
+            [
+                0.0, 0.0, 0.0893, 0.1745, 0.2538, 0.3294, 0.4026, 0.4738, 0.5434, 0.6117, 0.6789,
+                0.7452, 0.8105, 0.8751, 0.939, 1.0, 1.0
+            ]
+        );
+        assert_eq!(
+            g,
+            [
+                0.0, 0.0537, 0.1141, 0.1699, 0.2344, 0.3113, 0.3861, 0.4592, 0.5309, 0.6014,
+                0.6709, 0.7394, 0.8048, 0.8494, 0.8936, 0.9374, 0.9808
+            ]
+        );
+        assert_eq!(
+            b,
+            [
+                0.1033, 0.1557, 0.2055, 0.2537, 0.3004, 0.3461, 0.391, 0.4351, 0.4785, 0.5213,
+                0.5637, 0.6055, 0.6469, 0.688, 0.7287, 0.769, 0.809
+            ]
+        );
+        assert!(look.valid_color());
+        let mut wrong = look.clone();
+        wrong.hsl = Some(HslBands {
+            red: Some(HslBand {
+                hue: 90,
+                saturation: 0,
+                lightness: 0,
+            }),
+            ..HslBands::default()
+        });
+        assert!(!wrong.valid_color());
+        assert_eq!(Look::default().channel_points(), None);
     }
 
     #[test]

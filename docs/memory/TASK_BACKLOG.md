@@ -6,7 +6,7 @@
 | M1-A | P0 | Xong | M0 | Chọn thư mục native, đọc FFprobe, tạo thumbnail FFmpeg, index SQLite, gallery và preview hoạt động với fixture, clip có thể mở lại, thu hồi kiểm tra qua native smoke. |
 | M1-B | P0 | Xong | M1-A | Snapshot timeline có version, start/end/position theo mili giây, drag/drop, trim/split và undo/redo. Project mở lại giữ edit points. Render MP4 H.264/AAC từ timeline thật, xem tiến độ, hủy và thử lại, fixture đo độ dài bằng FFprobe. |
 | M1-C | P1 | Đang làm | M1-B | Nhiều tầng video/ảnh/âm thanh/chữ, màu, transform, fade/volume, 9:16/16:9/1:1 và hàng đợi. Tiếp theo là crop, rotate, speed, nhiều chuyển cảnh, preset chất lượng và phát timeline theo thời gian thực. |
-| M1-D | P1 | Đang làm | M1-B | Có phụ đề thủ công, SRT, Whisper, preset chữ và waveform. Còn thumbnail theo từng thời điểm và thao tác bàn phím nâng cao. |
+| M1-D | P1 | Đang làm | M1-B | Có phụ đề thủ công, SRT, Whisper với mô hình small đi kèm bộ cài (0.9.0), preset chữ và waveform. Còn thumbnail theo từng thời điểm và thao tác bàn phím nâng cao. |
 | M1-E | P0 | Xong | M1-C | Mẫu sẵn và mẫu cục bộ từ video, dò nhịp cắt/tỷ lệ, gán nguồn và các lớp âm thanh, tạo dự án chỉnh sửa được. |
 | M1-F | P0 | Chờ | M1-E | Mở rộng nhận dạng chữ, chuyển cảnh, chuyển động, nhạc và lời nói theo confidence. Cho phép xem và sửa đề xuất, giữ quyền với mẫu và giọng nói, đo chất lượng trên video tham chiếu có ground truth. |
 | M1-G | P1 | Xong | M1-C | Giao diện biên tập ba khung với timeline và các thư viện tích hợp. Các preset cập nhật clip hoặc tạo lớp chỉnh sửa được và đi vào MP4. |
@@ -16,12 +16,12 @@
 | M1-H3 | P1 | Đang kiểm chứng | M1-H1 | Có waveform, filmstrip, gain dB, fade in/out, khóa/ẩn/tắt tiếng, tay nắm fade, meter theo mức RMS cache và tách/khôi phục audio liên kết bằng `audioLink`. Còn thử trong cửa sổ thật và meter theo kênh trái/phải. |
 | M1-H4 | P1 | Đang làm | M1-I | Có một bộ keyframe transform cho vị trí, scale, xoay và opacity, easing tuyến tính hoặc smooth, diamond và phép sửa split/trim. Còn keyframe riêng từng tham số và đồ thị easing. |
 | M1-H5 | P1 | Đang làm | M1-H2 | Hai chuyển cảnh hòa trộn và qua đen giữa clip kề nhau, giới hạn thời lượng và khôi phục sau undo. Fixture FFmpeg kiểm tra cả hai. Còn xác minh độ khớp preview trên macOS và mở rộng preset. |
-| M1-H6 | P1 | Đang làm | M1-H2, M1-H4 | Có xuất In–Out, compound và timeline con, multicam đồng bộ tiếng, speed curve, tracking, chữ phong phú, lớp điều chỉnh, LUT, freeze và reverse. Có chế độ **Xem bản xuất** chính xác cho LUT/màu/reverse. Còn mask theo tracking, HSL từng màu, bánh xe màu, LUT trong preview tương tác và preset xuất. |
+| M1-H6 | P1 | Đang làm | M1-H2, M1-H4 | Có xuất In–Out, compound và timeline con, multicam đồng bộ tiếng, speed curve, tracking, chữ phong phú, lớp điều chỉnh, LUT, freeze và reverse. Có chế độ **Xem bản xuất** chính xác cho LUT/màu/reverse. 0.9.0 thêm bánh xe Lift/Gamma/Gain, đường cong R/G/B và HSL sáu dải. Còn mask theo tracking, HSL và LUT trong preview tương tác, preset xuất. |
 | M1-H7 | P0 | Đang kiểm chứng | M1-H1, M1-I | Sửa lỗi báo từ 0.4.0. Kéo từ thư viện và Explorer đã thử trên Windows production QA. Còn kiểm thử Finder và nhiều mức DPI. |
 | M1-H8 | P1 | Đang làm | M1-H2, M1-H3, M1-J | Đã có menu clip/tầng/timeline, kéo vách chia, chọn bằng khung, copy/paste thuộc tính, thay clip, freeze/reverse, menu thẻ media và trình phát, lọc theo loại và sidebar Âm thanh/Chữ. Đã thử cửa sổ Tauri 1280×720 và trên màn hình 2560×1440. Còn preset và điều khiển trong khảo sát và thao tác editor trên macOS. |
 | M1-I | P1 | Xong | M1-G | Kéo media từ thư viện lên timeline, di chuyển clip giữa các tầng cùng loại, zoom timeline và preview, kéo vị trí/đổi cỡ/xoay hình trên preview và lưu qua undo/redo. |
 | M1-J | P1 | Đang làm | M1-I | Kiểm kê thao tác CapCut Desktop có ca tái lập và ghi phạm vi theo bản, tài khoản, nền tảng. Đã có khảo sát Windows khi chưa đăng nhập. Còn ca Pro, cloud, macOS và các dòng ghi Cần thử. |
-| M1-K | P0 | Đang kiểm chứng | M1-B, M1-C | 0.8.0 giữ nhiều nguồn và nguồn phân tích lỗi, quét đủ đoạn timeline qua GPU/CPU, dựng theo một hoặc nhiều clip âm thanh. Đo highlight theo cảnh đánh dấu và thử trên tệp camera, nhạc, lời thoại thực. |
+| M1-K | P0 | Đang kiểm chứng | M1-B, M1-C | 0.8.0 giữ nhiều nguồn và nguồn phân tích lỗi, quét đủ đoạn timeline qua GPU/CPU, dựng theo một hoặc nhiều clip âm thanh. 0.9.0 chấm độ nét/màu/rung/đỉnh âm, ngưỡng cắt thích ứng, highlight mặc định không giới hạn và bản theo âm thanh dài đúng timeline âm thanh. Đo highlight theo cảnh đánh dấu và thử trên tệp camera, nhạc, lời thoại thực. |
 | M1-L | P1 | Đang kiểm chứng | M1-B | Lưu/mở `.dtedit` ở vị trí chọn, có timeline, LUT và tham chiếu nguồn qua grant. Còn gán lại nguồn đã di chuyển và liên kết tệp cho tự lưu trực tiếp. |
 | M2-A | P1 | Chờ | M1-A, key khi test live | Gemini adapter thật, model/quota theo thời điểm cấu hình, OpenAI và Claude adapters qua cùng contract, keychain, consent khi gửi tài liệu, schema cảnh, outline/VO/shot list/on-screen text/caption/hashtags/title, sửa cảnh và version history. Chi phí/quota chỉ hiển thị nếu có dữ liệu. |
 | M2-B | P1 | Đang làm | M2-A, quyền giọng mẫu khi cloning | Xác minh OmniVoice upstream và license, worker localhost có capability check, phát âm tiếng Việt, audio reference có xác nhận, preset theo khả năng, TTS queue/cache/regenerate đoạn, fallback opt-in, chèn asset vào timeline. |
@@ -33,8 +33,8 @@
 | M4-A | P1 | Chờ | M1-B | Export package + cover/caption/hashtag theo platform với hướng dẫn đăng thủ công, validation per-target và lỗi có thể xử lý. |
 | M4-B | P1 | Đang làm | M4-A, OAuth/app review | Kết nối Facebook Pages, Instagram Professional, Threads, TikTok bằng API chính thức. Lưu credential an toàn, scope/account type/review status, refresh/revoke và live test ở môi trường được cấp quyền. |
 | M4-C | P1 | Đang làm | M4-B | Campaign có caption/hashtag/privacy/format/cover/title/CTA/lịch theo target. Approval trước upload, state machine, retry/backoff/idempotency, URL bài đăng và audit. Lịch local khi app mở, worker opt-in khi app đóng. |
-| M5-A | P2 | Đang làm | M1–M4 | Proxy 720p có sẵn từ 0.8.0. Còn đo hiệu năng dự án lớn, keyframes, HEVC/hardware tùy khả năng, quản lý cache, phục hồi queue, backup và rà soát accessibility. |
-| M5-B | P1 | Đang làm | M5-A, ký phát hành | Build/test Windows 10/11 và macOS Universal, xác minh cả hai kiến trúc, ký/notarize, cập nhật và rà soát phân phối FFmpeg. |
+| M5-A | P2 | Đang làm | M1–M4 | Proxy 720p có sẵn từ 0.8.0, từ 0.9.0 chỉ tạo khi người dùng bật. Còn đo hiệu năng dự án lớn, keyframes, HEVC/hardware tùy khả năng, quản lý cache, phục hồi queue, backup và rà soát accessibility. |
+| M5-B | P1 | Đang làm | M5-A, ký phát hành | Build/test Windows 10/11 và macOS Universal, xác minh cả hai kiến trúc, ký/notarize, cập nhật và rà soát phân phối FFmpeg. Bộ cài kèm runtime rembg và mô hình Whisper small (0.9.0). |
 
 ## Tiến độ các mục đang làm
 

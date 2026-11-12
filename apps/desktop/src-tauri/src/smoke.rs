@@ -1782,3 +1782,174 @@ fn real_ffmpeg_grades_freezes_reverses_and_syncs_audio() {
     let spread = grey.iter().max().unwrap() - grey.iter().min().unwrap();
     assert!(spread < 25, "the adjustment layer removes colour: {grey:?}");
 }
+
+#[test]
+#[ignore = "requires FFmpeg and FFprobe installed on PATH"]
+fn real_ffmpeg_applies_color_wheels_rgb_curves_and_hsl() {
+    use crate::timeline::{ColorWheel, ColorWheels, HslBand, HslBands, RgbCurves};
+
+    let dir = tempfile::tempdir().unwrap();
+    let ffmpeg = find_tool("ffmpeg").expect("ffmpeg on PATH");
+    let ffprobe = find_tool("ffprobe").expect("ffprobe on PATH");
+    // Mid grey above, saturated red below.
+    let source = dir.path().join("swatch.mp4");
+    let status = Command::new(&ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=0x808080:s=320x180:r=30:d=1[g];color=red:s=320x180:r=30:d=1[r];[g][r]vstack[v0];[v0]scale=320:180",
+        ])
+        .args([
+            "-c:v", "libx264", "-pix_fmt", "yuv444p", "-crf", "6", "-t", "1",
+        ])
+        .arg(&source)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let store = Store::open(&dir.path().join("test.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: ffprobe,
+        ffmpeg: None,
+    };
+    let asset = crate::library::import_files(&store, &[source], &probe)
+        .unwrap()
+        .assets[0]
+        .id;
+    let mut warm = clip(asset, 0, 1000, 0);
+    warm.look.wheels = Some(ColorWheels {
+        gain: Some(ColorWheel {
+            hue: 0,
+            amount: 60,
+            luma: 0,
+        }),
+        ..ColorWheels::default()
+    });
+    let mut curved = clip(asset, 0, 1000, 1000);
+    curved.look.rgb_curves = Some(RgbCurves {
+        b: Some([0, 450, 900, 1000, 1000]),
+        ..RgbCurves::default()
+    });
+    let mut muted = clip(asset, 0, 1000, 2000);
+    muted.look.hsl = Some(HslBands {
+        red: Some(HslBand {
+            hue: 0,
+            saturation: -100,
+            lightness: 0,
+        }),
+        ..HslBands::default()
+    });
+    let edits = snapshot(vec![warm, curved, muted], vec![]);
+    let project = store.create_project("Bánh xe màu").unwrap();
+    store.save_timeline(project.id, &edits).unwrap();
+    let saved = store.snapshot(project.id).unwrap();
+    assert!(saved.tracks[0].clips[2].look.hsl.is_some());
+    let output = dunce::canonicalize(dir.path()).unwrap().join("wheels.mp4");
+    let job = store
+        .create_render_job(project.id, &saved, output.to_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        execute(&store, job.id, &AtomicBool::new(false)).unwrap(),
+        Outcome::Done
+    );
+    let frame = |seconds: &str| {
+        let result = Command::new(&ffmpeg)
+            .args(["-v", "error", "-ss", seconds, "-i"])
+            .arg(&output)
+            .args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ])
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        result.stdout
+    };
+    let width = 320;
+    let height = result_height(&frame("0.5"), width);
+    let at = |bytes: &[u8], y: usize| -> [i32; 3] {
+        let start = (y * width + width / 2) * 3;
+        [0, 1, 2].map(|channel| i32::from(bytes[start + channel]))
+    };
+    let (top, bottom) = (height / 4, height * 3 / 4);
+    let warm = at(&frame("0.5"), top);
+    assert!(warm[0] > warm[2] + 30, "gain wheel warms grey: {warm:?}");
+    let curved = at(&frame("1.5"), top);
+    assert!(
+        curved[2] > curved[0] + 50,
+        "blue curve lifts grey's blue: {curved:?}"
+    );
+    let muted = frame("2.5");
+    let red = at(&muted, bottom);
+    assert!(
+        red[0] - red[1] < 80,
+        "HSL removes saturation from red: {red:?}"
+    );
+    let grey = at(&muted, top);
+    assert!(
+        (grey[0] - grey[2]).abs() < 20,
+        "and leaves grey alone: {grey:?}"
+    );
+}
+
+fn result_height(frame: &[u8], width: usize) -> usize {
+    frame.len() / (width * 3)
+}
+
+#[test]
+#[cfg(windows)]
+#[ignore = "needs DT_EDIT_WHISPER_MODEL (ggml-small-q5_1.bin), FFmpeg with whisper and Windows speech"]
+fn real_whisper_transcribes_with_the_bundled_model_layout() {
+    let Some(model) = std::env::var_os("DT_EDIT_WHISPER_MODEL") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    // Lay the model out the way the installer does: <resources>/whisper/<name>.
+    let resources = dir.path().join("resources");
+    fs::create_dir_all(resources.join("whisper")).unwrap();
+    let bundled = resources
+        .join("whisper")
+        .join(crate::captions::BUNDLED_MODEL);
+    if fs::hard_link(&model, &bundled).is_err() {
+        fs::copy(&model, &bundled).unwrap();
+    }
+    let model = crate::captions::bundled_model(Some(&resources)).expect("bundled model");
+    let voices = crate::voice::voices().unwrap();
+    let english = voices
+        .iter()
+        .find(|voice| voice.language.starts_with("en"))
+        .map_or("", |voice| voice.name.as_str());
+    let speech = crate::voice::speak(
+        dir.path(),
+        "Hello everyone. Today we are testing automatic captions.",
+        english,
+        0,
+    )
+    .unwrap();
+    let store = Store::open(&dir.path().join("test.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: find_tool("ffprobe").expect("ffprobe on PATH"),
+        ffmpeg: None,
+    };
+    let asset = &crate::library::import_files(&store, &[speech], &probe)
+        .unwrap()
+        .assets[0];
+    let clip: crate::captions::SpeechClip = serde_json::from_value(serde_json::json!({
+        "assetId": asset.id, "startMs": 0, "endMs": asset.duration_ms.unwrap(), "speed": 100
+    }))
+    .unwrap();
+    let cues = crate::captions::transcribe(&store, &clip, "en", &model).unwrap();
+    let text = cues
+        .iter()
+        .map(|cue| cue.text.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(text.contains("caption"), "{text}");
+}

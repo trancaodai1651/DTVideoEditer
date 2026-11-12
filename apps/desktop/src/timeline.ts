@@ -1,4 +1,4 @@
-import type { Aspect, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, SpeedPoint, Timeline, TimelineSnapshot, TitleStyle, TrackPoint, Track, TransformKey, TransitionKind } from "./desktop";
+import type { Aspect, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, SpeedPoint, Timeline, TimelineSnapshot, TitleStyle, TrackPoint, Track, TransformKey, TransitionKind, ColorWheel } from "./desktop";
 
 // Limits mirror src-tauri/src/timeline.rs, which is the authority on save.
 export const TIMELINE_VERSION = 3;
@@ -935,6 +935,37 @@ export function tonePoints(look: Partial<ClipLook> | undefined): number[] | null
     y += shadows * 0.2 * bump(x, 0.25) + highlights * 0.2 * bump(x, 0.75);
     y += blacks * 0.15 * (1 - x) ** 4 + whites * 0.15 * x ** 4;
     return Math.round(Math.min(1, Math.max(0, y)) * 10_000) / 10_000;
+  });
+}
+
+const IDENTITY_CURVE = [0, 250, 500, 750, 1000];
+
+/**
+ * Seventeen points per red, green and blue channel: colour wheels (lift, gamma,
+ * gain) then the user RGB curves. Same formula as `Look::channel_points` in timeline.rs.
+ */
+export function channelPoints(look: Partial<ClipLook> | undefined): number[][] | null {
+  const wheels = look?.wheels ?? {};
+  const curves = look?.rgbCurves ?? {};
+  const active = (wheel?: ColorWheel) => !!wheel && (wheel.amount !== 0 || wheel.luma !== 0);
+  const custom = (points?: number[]) => !!points && points.some((value, index) => value !== IDENTITY_CURVE[index]);
+  if (!active(wheels.lift) && !active(wheels.gamma) && !active(wheels.gain) && !custom(curves.r) && !custom(curves.g) && !custom(curves.b)) return null;
+  const offset = (wheel: ColorWheel | undefined, channel: number) => !wheel ? 0
+    : wheel.amount / 100 * Math.cos((wheel.hue - 120 * channel) * Math.PI / 180) + wheel.luma / 100;
+  return [curves.r, curves.g, curves.b].map((custom, channel) => {
+    const lift = 0.25 * offset(wheels.lift, channel);
+    const gamma = 2 ** offset(wheels.gamma, channel);
+    const gain = 1 + 0.5 * offset(wheels.gain, channel);
+    const points = custom ?? IDENTITY_CURVE;
+    return Array.from({ length: 17 }, (_, index) => {
+      const x = index / 16;
+      const base = Math.max(0, lift + (1 - lift) * x);
+      const graded = Math.min(1, Math.max(0, gain * base ** (1 / gamma)));
+      const at = graded * 4;
+      const k = Math.min(3, Math.floor(at));
+      const y = (points[k] + (points[k + 1] - points[k]) * (at - k)) / 1000;
+      return Math.round(Math.min(1, Math.max(0, y)) * 10_000) / 10_000;
+    });
   });
 }
 

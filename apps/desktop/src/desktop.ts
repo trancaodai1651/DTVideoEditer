@@ -121,12 +121,27 @@ export interface ClipLook {
   tint?: number;
   hue?: number;
   vibrance?: number;
+  /** Lift/gamma/gain colour wheels. */
+  wheels?: ColorWheels;
+  /** Red/green/blue curves: five outputs (0–1000) at inputs 0, ¼, ½, ¾, 1. */
+  rgbCurves?: RgbCurves;
+  /** Hue (±60°), saturation and lightness (±100) per colour range. */
+  hsl?: HslBands;
   /** Id of an imported .cube LUT. */
   lut?: number;
   /** Shows the source frame at this time for the clip's whole length. */
   freezeAtMs?: number;
   reverse?: boolean;
 }
+/** Hue in degrees (0 red, 120 green, 240 blue), amount 0–100, luma −100–100. */
+export interface ColorWheel { hue: number; amount: number; luma: number }
+export interface ColorWheels { lift?: ColorWheel; gamma?: ColorWheel; gain?: ColorWheel }
+export type CurvePoints = [number, number, number, number, number];
+export interface RgbCurves { r?: CurvePoints; g?: CurvePoints; b?: CurvePoints }
+export const HSL_COLORS = ["red", "yellow", "green", "cyan", "blue", "magenta"] as const;
+export type HslColor = typeof HSL_COLORS[number];
+export interface HslBand { hue: number; saturation: number; lightness: number }
+export type HslBands = Partial<Record<HslColor, HslBand>>;
 export type TitleFont = "sans" | "bold" | "serif" | "mono" | "display";
 export interface LutEntry { id: number; name: string }
 export interface Voice { name: string; language: string }
@@ -173,7 +188,7 @@ export interface TitleStyle {
   lineSpacing?: number;
 }
 export interface Cue { startMs: number; endMs: number; text: string }
-export interface Shot { startMs: number; endMs: number; score: number }
+export interface Shot { startMs: number; endMs: number; score: number; peakMs?: number }
 interface ShotAnalysis { shots: Shot[]; scannedMs: number; hardwareChunks: number }
 export interface CatalogItem { title: string; group: "music" | "sound" | "sticker"; asset: Asset }
 export interface TitleEdit extends TitleStyle {
@@ -334,8 +349,8 @@ export const api = {
   catalog: () => invoke<CatalogItem[]>("list_studio_catalog"),
   importSrt: () => invoke<Cue[] | null>("import_srt"),
   exportSrt: (cues: Cue[]) => invoke<boolean>("export_srt", { cues }),
-  transcribe: (clip: { assetId: number; startMs: number; endMs: number; speed: number }, language: string) =>
-    invoke<Cue[] | null>("transcribe_clip", { clip, language }),
+  transcribe: (clip: { assetId: number; startMs: number; endMs: number; speed: number }, language: string, chooseModel = false) =>
+    invoke<Cue[] | null>("transcribe_clip", { clip, language, chooseModel }),
   projects: () => invoke<Project[]>("list_projects"),
   createProject: (name: string) => invoke<Project>("create_project", { name }),
   saveProjectFile: (projectId: number) => invoke<string | null>("save_project_file", { projectId }),
@@ -359,6 +374,8 @@ export const api = {
   analyzeShots: (assetId: number, startMs: number, endMs: number) => invoke<ShotAnalysis>("analyze_shots", { assetId, startMs, endMs }),
   renderReview: (projectId: number, startMs: number) => invoke<number>("render_review", { projectId, startMs }),
   prepareProxy: (assetId: number) => invoke<void>("prepare_proxy", { assetId }),
+  /** Whether a proxy was already created for this asset; never starts encoding. */
+  proxyStatus: (assetId: number) => invoke<boolean>("proxy_status", { assetId }),
   avatarKeyStatus: () => invoke<boolean>("avatar_key_status"),
   setAvatarKey: (key: string) => invoke<void>("set_avatar_key", { key }),
   createAvatarVideo: (avatar: string, voice: string, script: string) => invoke<string | null>("create_avatar_video", { avatar, voice, script }),

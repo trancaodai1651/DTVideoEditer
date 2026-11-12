@@ -36,6 +36,8 @@ jobs:
         run: /usr/bin/arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
       - name: Package offline background removal
         run: python scripts/package-rembg.py
+      - name: Package Whisper caption model
+        run: python scripts/package-whisper.py
       - run: rustup toolchain install stable --profile minimal
       - if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin

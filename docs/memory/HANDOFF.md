@@ -1,12 +1,40 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-081
+Snapshot: 2026-11-12/EDITOR-090
 
 ## Điểm vào cho Claude Code hoặc Codex
 
 Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [module editor](modules/editor.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có giao diện, thao tác và chức năng tương đương CapCut Desktop, và đã cho phép push lên `origin`, chạy GitHub Actions và build bộ cài. DT_Edit dùng bố cục và luồng thao tác tương tự nhưng giao diện, tên và tài nguyên là của riêng dự án, không sao chép thương hiệu hay asset CapCut. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker, native drop hoặc phân tích media.
 
-Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu, thử các ca còn mở trong [backlog](TASK_BACKLOG.md) và mục bên dưới trên Windows/macOS.
+Task tiếp theo là **M1-H8**. Trước hết QA tay bản 0.9.0 theo mục **Ca tiếp theo** bên dưới, rồi đối chiếu preset và thao tác còn thiếu trong [backlog](TASK_BACKLOG.md) trên Windows/macOS.
+
+## Bản 0.9.0
+
+Người dùng yêu cầu: kèm mô hình Whisper trong bộ cài; chỉ proxy khi người dùng muốn; highlight phân tích sâu hơn, mặc định không giới hạn thời lượng; dựng theo âm thanh dài theo timeline âm thanh thay vì số giây chọn tay; chỉnh màu đầy đủ hơn.
+
+| Task | Thay đổi | Source |
+| --- | --- | --- |
+| M1-D | `scripts/package-whisper.py` tải `ggml-small-q5_1.bin` (190.085.487 byte) từ Hugging Face `ggerganov/whisper.cpp` revision `5359861c739e955e79d9a303bcbc70fb988958b1`, kiểm tra SHA-256 `ae85e4a9…11bb` rồi gộp resource `whisper/ggml-small-q5_1.bin` vào `target/rembg.bundle.json`. Workflow chạy sau bước rembg. `transcribe_clip` nhận `chooseModel`: mặc định dùng `captions::bundled_model(resource_dir)`; không có mô hình đi kèm (bản dev) thì mở hộp thoại như cũ. | [captions.rs](../../apps/desktop/src-tauri/src/captions.rs) · [main.rs](../../apps/desktop/src-tauri/src/main.rs) · [package-whisper.py](../../scripts/package-whisper.py) |
+| M5-A | Bỏ tự tạo proxy cho nguồn ≥2560×1440. Preference `dt-edit-proxy-use` mặc định 0 (khóa cũ `dt-edit-proxy` bị bỏ qua). Bật **Proxy** sẽ tạo proxy cho video đang xem; menu **Tạo proxy cho video đang chọn** vẫn có. Khi Proxy bật, app chỉ hỏi `proxy_status` để dùng lại proxy đã có trong cache. | [App.tsx](../../apps/desktop/src/App.tsx) · [proxy.rs](../../apps/desktop/src-tauri/src/proxy.rs) |
+| M1-K | Rust: mỗi khung 64×36 đo chuyển động, phơi sáng, độ nét, độ màu; ngưỡng cắt = trung bình + 3σ của độ thay đổi khung (0,12–0,30); cửa sổ tối đa 4 giây; điểm = chất lượng (sáng × nét) × (chuyển động có phạt rung, nét, màu, phơi sáng, năng lượng, đỉnh âm), trả `peakMs`. TS: `montageSnapshot(…, requestedMs: number \| null, …)`. `null` = highlight tự động: giữ cửa sổ thuộc top 33% và ≥60% điểm cao nhất, cộng cảnh tốt nhất mỗi nguồn, gộp cửa sổ kề nhau (≤2,5× đích), cắt quanh đỉnh (Nhẹ 4 s, Năng động 2,5 s), tối đa 600 đoạn. Có âm thanh: độ dài = timeline âm thanh, tối đa 600 đoạn, phạt đoạn đã dùng để đi hết tư liệu, lần lặp lấy vị trí khác trong đoạn. | [analysis.rs](../../apps/desktop/src-tauri/src/analysis.rs) · [montage.ts](../../apps/desktop/src/montage.ts) · [MontagePanel](../../apps/desktop/src/MontagePanel.tsx) |
+| M1-H6 | `Look` thêm `wheels` (lift/gamma/gain: hue 0–359, amount 0–100, luma ±100), `rgbCurves` (r/g/b 5 điểm 0–1000) và `hsl` (6 dải: hue ±60°, saturation/lightness ±100). `channel_points` = `channelPoints`: offset kênh = amount·cos(hue − 120°·kênh) + luma; lift 0,25·o, gamma 2^o, gain 1 + 0,5·o, rồi đường cong người dùng; FFmpeg `curves=r=…:g=…:b=…:master=…`, preview hai `feComponentTransfer`. HSL xuất bằng `huesaturation=…:colors=r/y/g/c/b/m` (lightness/200 → intensity), chỉ xem chính xác qua **Xem bản xuất**. | [ColorPanel](../../apps/desktop/src/ColorPanel.tsx) · [timeline.rs](../../apps/desktop/src-tauri/src/timeline.rs) · [render.rs](../../apps/desktop/src-tauri/src/render.rs) |
+
+**Kiểm chứng**
+
+- 42 test Node (thêm [color-grading.test.mjs](../../scripts/color-grading.test.mjs) và hai ca montage: highlight 240 giây không giới hạn ra hơn 50 giây/20 đoạn, nhạc 200 giây cho đúng 200 giây hình và không lặp liền nhau), lint, TypeScript đạt.
+- `pnpm test:native` 37 đạt: `shot_scoring_prefers_sharp_moving_footage_and_splits_on_edits`, `channel_points_match_the_preview` (17×3 giá trị giống hệt TS), `bundled_model_is_found_only_inside_resources`.
+- `pnpm test:media` 10 đạt, gồm `real_ffmpeg_applies_color_wheels_rgb_curves_and_hsl` (gain ấm làm xám ngả đỏ, đường cong lam nâng kênh B, HSL đỏ −100 làm mất màu đỏ nhưng giữ xám).
+- `real_whisper_transcribes_with_the_bundled_model_layout`: giọng System.Speech tiếng Anh → mô hình small đặt trong `resources/whisper/` → phụ đề chứa "caption", 7,5 giây. Chạy lại: đặt `DT_EDIT_WHISPER_MODEL` tới tệp `.bin` rồi `cargo test real_whisper -- --ignored` trong `apps/desktop/src-tauri`.
+
+**Ca tiếp theo**
+
+- QA tay trong Tauri: phụ đề bấm **Tạo phụ đề** không mở hộp thoại; Proxy tắt ở hồ sơ mới và với hồ sơ 0.8.1; highlight không giới hạn với video camera thật nhiều phút; dựng theo bài nhạc 3–5 phút; kéo bánh xe màu, điểm đường cong và HSL rồi **Xem bản xuất**.
+- Highlight vẫn dựa trên tín hiệu cục bộ (không nhận khuôn mặt/vật thể). Nếu cần sâu hơn nữa: nhận diện khuôn mặt hoặc lời thoại (Whisper) để chấm cảnh, thuộc M1-F.
+- HSL chưa có trong preview tương tác (cần WebGL). FFmpeg trên máy người dùng phải có filter `whisper` và `huesaturation`; FFmpeg vẫn không đi kèm bộ cài (M5-B).
+
+**Phát hành**
+
+RELEASE_090_PLACEHOLDER
 
 ## Bản 0.8.1
 

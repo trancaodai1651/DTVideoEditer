@@ -1,6 +1,6 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-12/EDITOR-081
+Snapshot: 2026-11-12/EDITOR-090
 
 Next task: M1-H8
 
@@ -16,9 +16,12 @@ Next task: M1-H8
 - M5-B một phần: quy trình NSIS Windows x64 và DMG Universal arm64/x86_64.
 - Bản 0.7.0 (M1-K, M1-H6, M1-H8, M2-A/M1-J): dựng highlight hoặc dựng theo một clip âm thanh từ timeline, mở thành dự án mới có thể sửa; **Xem bản xuất** bằng FFmpeg; lọc loại media và menu chuột phải của thẻ/trình phát; xóa nền AI cục bộ và tạo avatar HeyGen. Cơ sở dữ liệu schema 10, timeline version 3. [Editor và render](modules/editor.md)
 - Bản 0.8.1 (M1-K, M1-L, M5-A/M5-B): quét toàn bộ khoảng video được dùng trên timeline, giữ nhiều nguồn trong highlight, dựng theo một hoặc nhiều âm thanh, proxy 720p mặc định bật, tệp `.dtedit` lưu ở nơi được chọn và runtime xóa nền đi kèm bộ cài. [Bàn giao](HANDOFF.md)
+- Bản 0.9.0 (M1-D, M1-K, M1-H6, M5-A/M5-B): bộ cài kèm mô hình Whisper `ggml-small-q5_1.bin` nên tạo phụ đề không cần chọn mô hình; proxy chỉ tạo khi người dùng bật/bấm tạo; highlight phân tích độ nét, màu, rung máy, điểm cắt thích ứng và đỉnh âm, mặc định không giới hạn thời lượng; dựng theo âm thanh dài đúng timeline âm thanh và đi qua hết tư liệu trước khi lặp; chỉnh màu thêm bánh xe Lift/Gamma/Gain, đường cong R/G/B kéo điểm và HSL sáu dải. [Bàn giao](HANDOFF.md)
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token trong keychain, nháp, duyệt native, đăng, danh sách, sửa và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng
+
+- 0.9.0: 42 test Node, 37 test Rust, 10 test FFmpeg thật và test Whisper thật (giọng Windows → mô hình small trong bố cục `resources/whisper/`) đạt. Test FFmpeg mới đo pixel cho bánh xe màu, đường cong lam và HSL đỏ. Đường cong kênh khớp tuyệt đối giữa TS và Rust. Chưa QA bằng tay trong cửa sổ Tauri. [Bàn giao](HANDOFF.md)
 
 - 0.8.1: Tauri Windows thử highlight một/hai video, dựng theo hai WAV, lưu/mở `.dtedit` và proxy tự tạo. Test Windows tạo proxy 1280×720 giữ thời lượng/AAC của video 4K, đọc range 206 và từ chối sau thu hồi. Test quét tới cảnh cuối nguồn 125 giây, mở `.dtedit` với asset ID khác và chạy xóa nền bằng archive đóng gói. [Bàn giao](HANDOFF.md)
 - 0.7.0 trên Windows 11: cửa sổ Tauri 1280×720 và trên màn hình 2560×1440, kéo MP4/PNG/WAV, tạo cả highlight và bản theo WAV, phát preview FFmpeg và xóa nền PNG. Test rembg thật xuất ProRes có alpha và AAC. CI macOS kiểm tra DMG hai kiến trúc và khởi động app trên ARM64. Live test Claude/HeyGen cần key. [Bàn giao](HANDOFF.md)
@@ -31,4 +34,4 @@ Next task: M1-H8
 
 ## Tiếp theo
 
-M1-H8: tiếp tục preset và các ca giao diện còn mở trong [bàn giao](HANDOFF.md). M1-H6 còn preset xuất, HSL từng màu, bánh xe màu, mask theo tracking và LUT trong preview tương tác. M2-A/M1-J còn live test Claude/HeyGen. M1-F mở rộng phân tích video mẫu. [Backlog](TASK_BACKLOG.md)
+M1-H8: tiếp tục preset và các ca giao diện còn mở trong [bàn giao](HANDOFF.md). QA tay bản 0.9.0 trong Tauri (phụ đề không hỏi mô hình, Proxy tắt mặc định, highlight không giới hạn, dựng theo nhạc dài, bánh xe/HSL/đường cong). M1-H6 còn preset xuất, mask theo tracking, HSL và LUT trong preview tương tác. M2-A/M1-J còn live test Claude/HeyGen. M1-F mở rộng phân tích video mẫu. [Backlog](TASK_BACKLOG.md)

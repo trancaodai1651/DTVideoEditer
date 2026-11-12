@@ -1,6 +1,13 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-081
+Snapshot: 2026-11-12/EDITOR-090
+
+## 2026-11-12 · Editor 0.9.0
+
+- M1-D: bộ cài kèm `ggml-small-q5_1.bin` (whisper.cpp revision `5359861c`, SHA-256 đối chiếu khi build qua `scripts/package-whisper.py`). **Tạo phụ đề** dùng mô hình này không mở hộp thoại; **Dùng mô hình GGML khác…** vẫn cho chọn tệp. FFmpeg nhận mô hình qua hard link trong thư mục tạm.
+- M5-A: Proxy tắt mặc định (preference mới `dt-edit-proxy-use`), không tự tạo cho video nặng. Bật nút **Proxy** hoặc chọn **Tạo proxy** mới mã hóa; proxy đã có trong cache được dùng lại qua lệnh `proxy_status` chỉ đọc.
+- M1-K: chấm cảnh theo chuyển động có phạt rung, độ nét (gradient luma), độ màu, phơi sáng, năng lượng và đỉnh âm; ngưỡng cắt cảnh thích ứng theo từng clip; cửa sổ 4 giây và `peakMs` để cắt quanh khoảnh khắc mạnh nhất. Highlight mặc định không giới hạn thời lượng (giữ mọi cảnh nổi bật, gộp cửa sổ kề nhau), có ô **Giới hạn thời lượng tối đa** tới 600 giây. Dựng theo âm thanh dài đúng timeline âm thanh, tối đa 600 đoạn, luân phiên đoạn chưa dùng trước khi lặp.
+- M1-H6: chỉnh màu có tab **Bánh xe** (Lift/Gamma/Gain + độ sáng), **HSL** sáu dải (đỏ, vàng, xanh lá, lục lam, xanh dương, tím hồng) và đường cong R/G/B 5 điểm. Bánh xe và đường cong kênh dùng chung công thức 17 điểm giữa SVG preview và FFmpeg `curves`; HSL dùng `huesaturation` khi xuất. Timeline vẫn v3, schema SQLite 10.
 
 ## 2026-11-12 · Editor 0.8.1
 

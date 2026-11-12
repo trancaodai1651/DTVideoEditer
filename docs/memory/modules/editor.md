@@ -47,6 +47,8 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 
 0.8.1 quét toàn khoảng đã chọn theo các khối 120 giây. Mỗi lần đọc thử GPU rồi CPU và trả độ phủ phân tích cho UI. Highlight giữ ít nhất một đoạn mỗi nguồn nếu ngân sách đủ. Dựng theo nhiều âm thanh tổng hợp RMS trên timeline với offset, giữ lớp và điểm cắt tiếng trong dự án mới. Proxy chỉ dùng ở trình phát tương tác. [Bàn giao](../HANDOFF.md)
 
+0.9.0: `shots_from_frames` đo thêm độ nét, độ màu và rung máy, cắt cảnh theo ngưỡng thích ứng và trả `peakMs`. `montageSnapshot` nhận `requestedMs = null` cho highlight không giới hạn (lọc cửa sổ nổi bật, gộp cửa sổ kề nhau, cắt quanh đỉnh); khi có âm thanh, độ dài luôn theo timeline âm thanh và đoạn đã dùng bị phạt để đi hết tư liệu. Proxy chỉ tạo khi người dùng bật.
+
 ## Render
 
 [render.rs](../../../apps/desktop/src-tauri/src/render.rs) dựng một lệnh FFmpeg từ snapshot và media đã qua kiểm tra grant.
@@ -56,7 +58,7 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 - Đầu ra H.264 (CRF 20, veryfast) và AAC 192 kb/s, `+faststart`.
 - FFmpeg ghi vào tệp tạm riêng trong thư mục đích và hoàn tất bằng thao tác chống ghi đè. Hủy hoặc lỗi dọn tệp tạm.
 
-Clip tắt bị bỏ khỏi graph. Freeze đọc một khung tại `freezeAtMs` rồi giữ bằng `tpad`; reverse dùng `trim,reverse` cho hình và `areverse` cho tiếng; màu dùng `colorbalance`, `hue`, `vibrance`, `curves`, `lut3d`; lớp điều chỉnh thêm chuỗi filter có `enable` sau các tầng hình. Chữ dùng `font-<kiểu>.ttf`, `text_align`, `shadow*`, `box*`, `line_spacing` và `alpha` cho hiện/ẩn dần. Clip video đã tách âm thanh không thêm nhánh audio. Speed curve dùng `setpts` theo từng đoạn và `asplit` → `atrim` → `atempo` → `concat` cho tiếng. `atempo` được nối khi tốc độ dưới 0,5×.
+Clip tắt bị bỏ khỏi graph. Freeze đọc một khung tại `freezeAtMs` rồi giữ bằng `tpad`; reverse dùng `trim,reverse` cho hình và `areverse` cho tiếng; màu dùng `colorbalance`, `hue`, `vibrance`, `huesaturation` (HSL từng dải), `curves` (kênh R/G/B từ bánh xe và đường cong rồi master), `lut3d`; lớp điều chỉnh thêm chuỗi filter có `enable` sau các tầng hình. Chữ dùng `font-<kiểu>.ttf`, `text_align`, `shadow*`, `box*`, `line_spacing` và `alpha` cho hiện/ẩn dần. Clip video đã tách âm thanh không thêm nhánh audio. Speed curve dùng `setpts` theo từng đoạn và `asplit` → `atrim` → `atempo` → `concat` cho tiếng. `atempo` được nối khi tốc độ dưới 0,5×.
 
 `render_jobs` lưu snapshot, In–Out nếu được đặt, đích đã chọn trong hộp thoại native, tiến độ và lỗi. [ExportQueue](../../../apps/desktop/src/ExportQueue.tsx) chạy FIFO giữa các dự án. Lượt chờ giữ qua restart. Lượt bị gián đoạn được đánh dấu lỗi. Thử lại giữ snapshot và đích đã lưu.
 
@@ -66,10 +68,10 @@ Clip tắt bị bỏ khỏi graph. Freeze đọc một khung tại `freezeAtMs` 
 
 ## Tài nguyên và phụ đề
 
-[EditorLibrary](../../../apps/desktop/src/EditorLibrary.tsx) tổ chức các thư viện và preset. [catalog.rs](../../../apps/desktop/src-tauri/src/catalog.rs) đăng ký 2 bản nhạc, 3 SFX và 6 sticker gốc vào thư viện local. [captions.rs](../../../apps/desktop/src-tauri/src/captions.rs) xử lý SRT UTF-8 và FFmpeg `whisper` với mô hình GGML người dùng chọn. Caption là lớp chữ có thể sửa trong snapshot và có thể xuất lại SRT.
+[EditorLibrary](../../../apps/desktop/src/EditorLibrary.tsx) tổ chức các thư viện và preset. [catalog.rs](../../../apps/desktop/src-tauri/src/catalog.rs) đăng ký 2 bản nhạc, 3 SFX và 6 sticker gốc vào thư viện local. [captions.rs](../../../apps/desktop/src-tauri/src/captions.rs) xử lý SRT UTF-8 và FFmpeg `whisper` với mô hình `ggml-small-q5_1.bin` đi kèm bộ cài (hoặc mô hình GGML người dùng chọn). Caption là lớp chữ có thể sửa trong snapshot và có thể xuất lại SRT.
 
 ## Giới hạn hiện tại
 
-Preview tương tác phụ thuộc codec WebView và giới hạn gain dương của volume WebView. Dùng **Xem bản xuất** để kiểm tra LUT, tint/vibrance/hue và phát clip đảo ngược theo đúng file MP4. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. Tracking tỷ lệ/xoay cần vật thể có chi tiết ở hai nửa vùng chọn. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
+Preview tương tác phụ thuộc codec WebView và giới hạn gain dương của volume WebView. Dùng **Xem bản xuất** để kiểm tra LUT, HSL, tint/vibrance/hue và phát clip đảo ngược theo đúng file MP4. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. Tracking tỷ lệ/xoay cần vật thể có chi tiết ở hai nửa vùng chọn. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
 
 Kiểm tra bằng `pnpm test`, `pnpm test:native` và `pnpm test:media`.

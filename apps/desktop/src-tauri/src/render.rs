@@ -242,13 +242,36 @@ fn color_filters(look: &Look, enable: &str) -> String {
             f64::from(look.vibrance) / 100.0
         ));
     }
-    if let Some(points) = look.tone_points() {
-        let curve: Vec<String> = points
+    for (flag, band) in look.hsl.map(|hsl| hsl.active()).unwrap_or_default() {
+        filters.push_str(&format!(
+            ",huesaturation=hue={}:saturation={:.2}:intensity={:.2}:colors={flag}{enable}",
+            band.hue,
+            f64::from(band.saturation) / 100.0,
+            f64::from(band.lightness) / 200.0
+        ));
+    }
+    // Per-channel curves (colour wheels and RGB curves) run first; FFmpeg
+    // applies the master curve as a second pass, like the preview's SVG filter.
+    let mut curves = Vec::new();
+    let points = |values: &[f64]| {
+        let last = (values.len() - 1) as f64;
+        values
             .iter()
             .enumerate()
-            .map(|(index, y)| format!("{}/{y:.4}", index as f64 / 8.0))
-            .collect();
-        filters.push_str(&format!(",curves=master='{}'{enable}", curve.join(" ")));
+            .map(|(index, y)| format!("{}/{y:.4}", index as f64 / last))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if let Some(channels) = look.channel_points() {
+        for (name, values) in ["r", "g", "b"].iter().zip(channels) {
+            curves.push(format!("{name}='{}'", points(&values)));
+        }
+    }
+    if let Some(master) = look.tone_points() {
+        curves.push(format!("master='{}'", points(&master)));
+    }
+    if !curves.is_empty() {
+        filters.push_str(&format!(",curves={}{enable}", curves.join(":")));
     }
     if let Some(id) = look.lut {
         filters.push_str(&format!(",lut3d=file=lut-{id}.cube{enable}"));

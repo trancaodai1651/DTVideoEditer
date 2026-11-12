@@ -439,6 +439,20 @@ textarea { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); borde
 .tone-curve line { stroke: #30343b; stroke-width: .4; }
 .tone-curve polyline { fill: none; stroke: var(--accent); stroke-width: 1.4; }
 .tone-curve .tone-identity { stroke: #4a4f58; stroke-dasharray: 2 2; stroke-width: .6; }
+.tone-curve .curve-point { stroke: #111; stroke-width: .8; cursor: ns-resize; touch-action: none; }
+.color-wheels { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.color-wheel { display: grid; gap: 4px; justify-items: center; font-size: 11px; color: var(--soft); }
+.color-wheel svg { width: 100%; max-width: 120px; aspect-ratio: 1; cursor: crosshair; touch-action: none; border-radius: 50%; }
+.color-wheel .wheel-ring { fill: none; stroke: #222; stroke-width: 1; }
+.color-wheel .wheel-axis { stroke: #3a3f47; stroke-width: .5; }
+.color-wheel .wheel-dot { fill: #fff; stroke: #111; stroke-width: 1; }
+.color-wheel svg { background: conic-gradient(from 90deg, #e5484d, #d6409f, #3e63dd, #05a2c2, #30a46c, #f5c518, #e5484d); }
+.color-wheel .color-slider { width: 100%; grid-template-columns: 48px 1fr 28px; }
+.hsl-swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.hsl-swatches button { width: 24px; height: 24px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; }
+.hsl-swatches button[aria-checked="true"] { border-color: #fff; }
+.hsl-swatches button.edited { box-shadow: 0 0 0 2px var(--accent); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .color-filter-defs { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
 input[type="color"] { min-height: 30px; padding: 2px; }
 
