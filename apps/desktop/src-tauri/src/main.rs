@@ -3,6 +3,7 @@
 mod analysis;
 mod captions;
 mod catalog;
+mod generative;
 mod library;
 mod model;
 mod preview;
@@ -48,6 +49,8 @@ struct AppState {
     data_dir: PathBuf,
     scan: Mutex<()>,
     render: Mutex<Option<ActiveRender>>,
+    review: Mutex<Option<preview::RenderedReview>>,
+    review_generation: Mutex<()>,
     publisher: Publisher,
 }
 
@@ -596,6 +599,38 @@ async fn audio_levels(app: AppHandle, asset_id: i64) -> CommandResult<Vec<u8>> {
 }
 
 #[tauri::command]
+async fn analyze_shots(
+    app: AppHandle,
+    asset_id: i64,
+    start_ms: i64,
+    end_ms: i64,
+) -> CommandResult<Vec<analysis::Shot>> {
+    blocking(move || {
+        analysis::analyze_shots(&app.state::<AppState>().store, asset_id, start_ms, end_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn render_review(app: AppHandle, project_id: i64, start_ms: i64) -> CommandResult<i64> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let _active = state
+            .review_generation
+            .try_lock()
+            .map_err(|_| StudioError::Input("Đang tạo bản xem trước."))?;
+        let review = preview::render_review(&state.store, project_id, start_ms)?;
+        let id = review.id;
+        *state
+            .review
+            .lock()
+            .map_err(|_| StudioError::Input("Không lưu được bản xem trước."))? = Some(review);
+        Ok(id)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn detect_scenes(
     app: AppHandle,
     asset_id: i64,
@@ -644,6 +679,79 @@ fn ai_key_status(state: State<AppState>) -> bool {
 #[tauri::command]
 fn set_ai_key(state: State<AppState>, key: String) -> CommandResult<()> {
     command(voice::set_ai_key(state.publisher.secrets.as_ref(), &key))
+}
+
+#[tauri::command]
+fn avatar_key_status(state: State<AppState>) -> bool {
+    generative::has_avatar_key(state.publisher.secrets.as_ref())
+}
+
+#[tauri::command]
+fn set_avatar_key(state: State<AppState>, key: String) -> CommandResult<()> {
+    command(generative::set_avatar_key(
+        state.publisher.secrets.as_ref(),
+        &key,
+    ))
+}
+
+#[tauri::command]
+async fn create_avatar_video(
+    app: AppHandle,
+    avatar: String,
+    voice: String,
+    script: String,
+) -> CommandResult<Option<String>> {
+    blocking(move || {
+        if !confirm(&app, "Tạo video avatar HeyGen", format!("Gửi {} ký tự lời thoại cùng Avatar Look ID và Voice ID đến HeyGen. Yêu cầu có thể dùng tín dụng API của tài khoản.", script.chars().count()), "Gửi và tạo video")? {
+            return Ok(None);
+        }
+        generative::create_avatar(app.state::<AppState>().publisher.secrets.as_ref(), &avatar, &voice, &script).map(Some)
+    }).await
+}
+
+#[tauri::command]
+async fn get_avatar_video(
+    app: AppHandle,
+    id: String,
+) -> CommandResult<generative::AvatarResult<library::ImportedFiles>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let result = generative::get_avatar(
+            state.publisher.secrets.as_ref(),
+            &state.data_dir.join("avatars"),
+            &id,
+        )?;
+        let media = result
+            .media
+            .map(|path| import_local_files(&app, &[path]))
+            .transpose()?;
+        Ok(generative::AvatarResult {
+            status: result.status,
+            media,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_media_background(
+    app: AppHandle,
+    asset_id: i64,
+    start_ms: i64,
+    end_ms: i64,
+) -> CommandResult<library::ImportedFiles> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let path = generative::remove_background(
+            &state.store,
+            &state.data_dir.join("cutouts"),
+            asset_id,
+            start_ms,
+            end_ms,
+        )?;
+        import_local_files(&app, &[path])
+    })
+    .await
 }
 
 /// Sends caption lines to Claude only after the user agrees in a native dialog.
@@ -977,6 +1085,8 @@ fn main() {
                 data_dir,
                 scan: Mutex::new(()),
                 render: Mutex::new(None),
+                review: Mutex::new(None),
+                review_generation: Mutex::new(()),
                 publisher: Publisher::new()?,
             });
             Ok(())
@@ -989,7 +1099,16 @@ fn main() {
             let app = context.app_handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let state = app.state::<AppState>();
-                responder.respond(preview::serve(&state.store, request));
+                if request.uri().path().starts_with("/review-") {
+                    let review = state.review.lock().ok();
+                    responder.respond(preview::serve_with_review(
+                        &state.store,
+                        request,
+                        review.as_deref().and_then(Option::as_ref),
+                    ));
+                } else {
+                    responder.respond(preview::serve_with_review(&state.store, request, None));
+                }
             });
         })
         .invoke_handler(tauri::generate_handler![
@@ -1018,6 +1137,8 @@ fn main() {
             list_editor_templates,
             analyze_reference,
             audio_levels,
+            analyze_shots,
+            render_review,
             detect_scenes,
             track_motion,
             audio_offset,
@@ -1025,6 +1146,11 @@ fn main() {
             speak_text,
             ai_key_status,
             set_ai_key,
+            avatar_key_status,
+            set_avatar_key,
+            create_avatar_video,
+            get_avatar_video,
+            remove_media_background,
             translate_captions,
             import_lut,
             list_luts,

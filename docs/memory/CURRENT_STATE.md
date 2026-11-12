@@ -1,6 +1,6 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-12/EDITOR-060
+Snapshot: 2026-11-12/EDITOR-070
 
 Next task: M1-H8
 
@@ -14,9 +14,12 @@ Next task: M1-H8
 - Bản 0.5.0 (M1-H3, M1-H6, M1-H8 một phần): menu chuột phải trên clip, tầng và timeline; chọn bằng khung; tách/khôi phục âm thanh; tắt/bật clip; compound thu gọn được; multicam đổi góc bằng phím 1–9; tốc độ 0,1–10× và speed curve có đồ thị; tay nắm fade audio; meter âm lượng; bám theo chuyển động; dò cảnh, xóa khoảng lặng, marker theo nhịp; tab Thông minh; đổi chiều rộng ba cột; phím `V`, `Q`, `W`, `Ctrl+R`, `Shift+B`, `Ctrl+Shift+S`, `Alt+G`, `Ctrl+D`. [Editor và render](modules/editor.md)
 - Bản 0.6.0 (M1-H6, M1-H8, M2-B một phần): chỉnh màu đầy đủ (phơi sáng, vùng sáng/tối, điểm trắng/đen, nhiệt độ, sắc độ, tông, bão hòa, rực màu, đường cong tông, LUT .cube), lớp điều chỉnh, chữ phong phú (5 phông, màu tùy chọn, viền, nền, căn lề, bóng, hiện/ẩn dần, giãn dòng), sao chép/dán thuộc tính, thay clip, khung hình tĩnh, đảo ngược, timeline con cho compound, multicam đồng bộ theo âm thanh, tracking theo vị trí/tỷ lệ/góc xoay, lồng tiếng bằng giọng của hệ điều hành và dịch phụ đề bằng Claude API có hỏi xác nhận. [Editor và render](modules/editor.md)
 - M5-B một phần: quy trình NSIS Windows x64 và DMG Universal arm64/x86_64.
+- Bản 0.7.0 (M1-K, M1-H6, M1-H8, M2-A/M1-J): dựng highlight hoặc dựng theo một clip âm thanh từ timeline, mở thành dự án mới có thể sửa; **Xem bản xuất** bằng FFmpeg; lọc loại media và menu chuột phải của thẻ/trình phát; xóa nền AI cục bộ và tạo avatar HeyGen. Cơ sở dữ liệu schema 10, timeline version 3. [Editor và render](modules/editor.md)
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token trong keychain, nháp, duyệt native, đăng, danh sách, sửa và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng
+
+- 0.7.0 trên Windows 11: kéo MP4/PNG/WAV từ thư viện trong cửa sổ Tauri 1280×720, tạo highlight có ba đoạn, phát bản xem trước kết xuất. Test FFmpeg xác nhận đọc byte-range từ preview MP4 có LUT. Test U²-Net thật cho PNG RGBA và MOV ProRes 4444 có alpha và tiếng AAC. [Bàn giao](HANDOFF.md)
 
 - 0.6.0: 33 test Node, 32 test Rust, 7 test FFmpeg thật và test giọng đọc Windows thật đạt. Test FFmpeg mới đo độ lệch âm thanh 700 ms giữa hai góc, kiểm tra điểm ảnh cho reverse, freeze, LUT đảo màu, hue, lớp điều chỉnh khử màu, và xuất chữ nhiều thuộc tính. Giao diện đã thao tác trong trình duyệt với IPC giả lập. Chưa thử trong cửa sổ Tauri thật và chưa gọi Claude API thật. [Bàn giao](HANDOFF.md)
 
@@ -26,4 +29,4 @@ Next task: M1-H8
 
 ## Tiếp theo
 
-M1-H8: thử 0.5.0 và 0.6.0 trong cửa sổ thật theo các ca trong bàn giao và đối chiếu bố cục ở 1280×720 và 2560×1440. M1-H6 còn preset xuất, HSL theo từng màu, bánh xe màu, mask theo tracking và xem trước LUT. Xóa nền AI và avatar AI chưa có. M1-F mở rộng phân tích video mẫu. [Backlog](TASK_BACKLOG.md)
+M1-H8: tiếp tục preset và các ca giao diện còn mở trong [bàn giao](HANDOFF.md). M1-H6 còn preset xuất, HSL từng màu, bánh xe màu, mask theo tracking và LUT trong preview tương tác. M2-A/M1-J còn live test Claude/HeyGen. M1-F mở rộng phân tích video mẫu. [Backlog](TASK_BACKLOG.md)

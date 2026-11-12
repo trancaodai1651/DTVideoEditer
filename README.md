@@ -47,6 +47,13 @@ Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Có thể
 - **Menu chuột phải trên clip** có sao chép/dán thuộc tính (`Ctrl+Shift+C/V`), thay bằng media đang chọn trong thư viện, khung hình tĩnh, đảo ngược, mở timeline con của compound và tạo multicam đồng bộ theo âm thanh.
 - **Lồng tiếng và dịch** trong tab Thông minh: tạo lời đọc bằng giọng của Windows/macOS; dịch toàn bộ phụ đề bằng Claude API (dán Anthropic API key một lần, ứng dụng hỏi xác nhận trước mỗi lần gửi chữ).
 
+## Dựng tự động và công cụ AI
+
+- **Thông minh → Dựng tự động từ timeline** có hai chế độ. **Chọn cảnh highlight** ưu tiên đoạn video có tín hiệu chuyển động, ánh sáng và âm thanh nổi bật. **Dựng theo một clip âm thanh** căn các đoạn video/ảnh theo clip âm thanh đã chọn. Cả hai tạo dự án mới có chuyển cảnh và keyframe ảnh để sửa tiếp.
+- **Xem bản xuất** trong trình phát dùng FFmpeg để xem tối đa 20 giây từ playhead, gồm LUT, chỉnh màu và video đảo ngược.
+- **Nâng cao → Xóa nền AI** cần Python 3.11–3.13, `rembg` trong PATH và FFmpeg cho video. Cài bằng `python -m pip install "rembg[cpu,cli]"`, sau đó mở lại ứng dụng. CLI tải mô hình U²-Net nhỏ ở lần đầu. Dùng với ảnh hoặc video đã trim 0,5–8 giây. Với video alpha, dùng **Xem bản xuất** nếu trình phát tương tác thiếu codec. [rembg](https://github.com/danielgatis/rembg)
+- **Thông minh → Avatar AI** cần HeyGen API key, Avatar ID và Voice ID. Tạo job từ kịch bản, kiểm tra trạng thái rồi nhập MP4. [HeyGen API](https://developers.heygen.com/reference/create-video)
+
 ## Đăng bài lên mạng xã hội
 
 Mở **Đăng bài**, chọn nền tảng và dán access token lấy từ app nhà phát triển của bạn. Ứng dụng xác minh token với nền tảng, lưu token vào keychain của hệ điều hành và chỉ giữ tên tài khoản trong cơ sở dữ liệu.

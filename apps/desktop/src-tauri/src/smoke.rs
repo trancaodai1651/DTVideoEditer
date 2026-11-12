@@ -43,6 +43,78 @@ fn snapshot(video: Vec<ClipEdit>, audio: Vec<ClipEdit>) -> TimelineSnapshot {
     }
 }
 
+#[test]
+#[ignore = "requires FFmpeg, rembg and DT_EDIT_REMBG_FIXTURE pointing to a portrait PNG"]
+fn real_rembg_segments_photo_and_short_video() {
+    let fixture = std::env::var_os("DT_EDIT_REMBG_FIXTURE").unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let image = temp.path().join("portrait.png");
+    fs::copy(fixture, &image).unwrap();
+    let video = temp.path().join("portrait.mp4");
+    let generated = Command::new(find_tool("ffmpeg").unwrap())
+        .args(["-v", "error", "-loop", "1", "-i"])
+        .arg(&image)
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440",
+            "-t",
+            "0.65",
+            "-vf",
+            "scale=320:320",
+            "-c:v",
+            "libx264",
+            "-threads",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+        ])
+        .arg(&video)
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{:?}", generated.stderr);
+    let store = Store::open(&temp.path().join("index.db")).unwrap();
+    let probe = Ffprobe {
+        binary: find_tool("ffprobe").unwrap(),
+        ffmpeg: None,
+    };
+    let assets = crate::library::import_files(&store, &[image, video], &probe).unwrap();
+    assert_eq!(assets.assets.len(), 2);
+    for asset in assets.assets {
+        let output = crate::generative::remove_background(
+            &store,
+            &temp.path().join("derived"),
+            asset.id,
+            0,
+            500,
+        )
+        .unwrap();
+        let info = Command::new(find_tool("ffprobe").unwrap())
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_name,pix_fmt",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(output)
+            .output()
+            .unwrap();
+        assert!(info.status.success());
+        let info = String::from_utf8(info.stdout).unwrap();
+        if asset.kind == "image" {
+            assert!(info.contains("png,rgba"), "{info}");
+        } else {
+            assert!(info.contains("prores,yuva"), "{info}");
+            assert!(info.contains("aac"), "{info}");
+        }
+    }
+}
+
 struct CountingProbe(Cell<usize>);
 
 impl MediaProbe for CountingProbe {
@@ -1401,6 +1473,11 @@ fn real_ffmpeg_grades_freezes_reverses_and_syncs_audio() {
             .id
     };
     let (colours, take_a, take_b) = (id("colours.mp4"), id("take-a.mp4"), id("take-b.mp4"));
+    let shots = crate::analysis::analyze_shots(&store, colours, 250, 2000).unwrap();
+    let shots = serde_json::to_value(shots).unwrap();
+    assert_eq!(shots[0]["startMs"], 250);
+    assert_eq!(shots[0]["endMs"], 1000);
+    assert_eq!(shots[1]["startMs"], 1000);
 
     let offset = audio_offset(&store, take_a, 0, take_b, 0).unwrap();
     assert!((offset - 700).abs() <= 20, "offset {offset}");
@@ -1510,6 +1587,18 @@ fn real_ffmpeg_grades_freezes_reverses_and_syncs_audio() {
     }
     let cyan = pixel(&frame("3.4"));
     assert!(near(cyan, [0, 255, 255]), "LUT inverts red: {cyan:?}");
+    let review = crate::preview::render_review(&store, project.id, 3000).unwrap();
+    let response = crate::preview::serve_with_review(
+        &store,
+        Request::builder()
+            .uri(format!("/review-{}", review.id))
+            .header(header::RANGE, "bytes=0-511")
+            .body(Vec::new())
+            .unwrap(),
+        Some(&review),
+    );
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(&response.body()[4..8], b"ftyp");
     let shifted = pixel(&frame("4.2"));
     assert!(
         shifted[1] > 150 && shifted[0] < 120,

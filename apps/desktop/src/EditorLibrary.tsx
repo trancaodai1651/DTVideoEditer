@@ -137,7 +137,7 @@ function VoiceAndTranslate({ busy, hasProject, hasCaptionLines, onSpeak, onTrans
   </>;
 }
 
-export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarget, onSmartTool, tab, onTab, media, templates, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
+export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarget, onSmartTool, tab, onTab, media, templates, montage, avatar, onRemoveBackground, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
   tab: LibraryTab;
   onTab: (tab: LibraryTab) => void;
   smartTarget: SmartTarget | null;
@@ -147,6 +147,9 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
   onSmartTool: (tool: "scenes" | "silence" | "beats" | "track" | "speed" | "detach", key: string) => void;
   media: ReactNode;
   templates: ReactNode;
+  montage: ReactNode;
+  avatar: ReactNode;
+  onRemoveBackground: () => void;
   catalog: CatalogItem[] | null;
   catalogFailed: boolean;
   onRetryCatalog: () => void;
@@ -166,6 +169,7 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
   onJoin: (kind: TransitionKind | null, durationMs: number) => void;
 }) {
   const [audioGroup, setAudioGroup] = useState<"music" | "sound" | "local">("music");
+  const [textGroup, setTextGroup] = useState<"basic" | "presets">("basic");
   const [previewSound, setPreviewSound] = useState<number | null>(null);
   const [language, setLanguage] = useState("vi");
   const [joinDuration, setJoinDuration] = useState(500);
@@ -177,12 +181,18 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
       {tabs.map(({ id, label, icon }) => <button type="button" key={id} aria-pressed={tab === id}
         onClick={() => { setPreviewSound(null); onTab(id); }}><Icon name={icon} size={19} />{label}</button>)}
     </nav>
-    <div className="library-body" aria-label={selected.label}>
-      {tab === "audio" && <div className="library-filters">
+    <div className="library-layout">
+      {tab === "audio" && <nav className="library-sidebar" aria-label="Nhóm âm thanh">
         {([["music", "Nhạc nền"], ["sound", "Hiệu ứng âm thanh"], ["local", "Tệp của tôi"]] as const).map(([id, label]) =>
-          <button type="button" key={id} className="button secondary compact" aria-pressed={audioGroup === id}
+          <button type="button" key={id} aria-pressed={audioGroup === id}
             onClick={() => { setPreviewSound(null); setAudioGroup(id); }}>{label}</button>)}
-      </div>}
+      </nav>}
+      {tab === "text" && <nav className="library-sidebar" aria-label="Nhóm chữ">
+        <button type="button" aria-pressed={textGroup === "basic"} onClick={() => setTextGroup("basic")}>Chữ cơ bản</button>
+        <button type="button" aria-pressed={textGroup === "presets"} onClick={() => setTextGroup("presets")}>Mẫu chữ</button>
+        <button type="button" onClick={() => onTab("captions")}>Phụ đề</button>
+      </nav>}
+      <div className="library-body" aria-label={selected.label}>
       {(tab === "media" || tab === "audio" && audioGroup === "local") && media}
       {hasStock && <div className="library-section">
         <h2>{tab === "stickers" ? "Sticker DT_Edit" : audioGroup === "music" ? "Nhạc nền DT_Edit" : "Hiệu ứng âm thanh"}</h2>
@@ -204,8 +214,8 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
           </article>)}
         </div>
       </div>}
-      {tab === "text" && <div className="library-section"><h2>Mẫu chữ</h2><p>Chèn tại playhead rồi chỉnh nội dung trong Thuộc tính.</p>
-        <div className="preset-grid">{titles.map((item) => <button type="button" key={item.label} className="studio-card preset-card"
+      {tab === "text" && <div className="library-section"><h2>{textGroup === "basic" ? "Chữ cơ bản" : "Mẫu chữ"}</h2><p>Chèn tại playhead rồi chỉnh nội dung trong Thuộc tính.</p>
+        <div className="preset-grid">{(textGroup === "basic" ? titles.slice(0, 1) : titles.slice(1)).map((item) => <button type="button" key={item.label} className="studio-card preset-card"
           disabled={busy || !hasProject} onClick={() => onTitle(item.title)}>
           <div className="title-art" style={{ color: item.title.color === "yellow" ? "#ffd369" : undefined }}>Aa</div>
           <strong>{item.label}</strong><small>{item.description}</small>
@@ -229,7 +239,7 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
       {tab === "templates" && templates}
       {tab === "smart" && <div className="library-section smart-tools">
         <h2>Công cụ thông minh</h2>
-        <p>Chạy trên máy bằng FFmpeg với clip đang chọn. Không gửi media ra ngoài.</p>
+        {montage}
         {!smartTarget && <p className="inspector-help">Chọn một clip trên timeline để bật các công cụ.</p>}
         <div className="preset-grid">
           {([
@@ -250,9 +260,11 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
           </button>
         </div>
         <VoiceAndTranslate busy={busy} hasProject={hasProject} hasCaptionLines={hasCaptionLines} onSpeak={onSpeak} onTranslate={onTranslate} />
-        <div className="tool-detail"><h3>Chưa có trong bản này</h3>
-          <p>Xóa nền bằng AI và avatar AI cần mô hình phân đoạn hoặc dịch vụ tạo người ảo mà ứng dụng chưa tích hợp. Với nền xanh, dùng Xóa nền xanh lá trong tab Nâng cao.</p>
+        <div className="tool-detail"><h3>Xóa nền AI</h3>
+          <p>Dùng rembg và U²-Net trên máy. Hỗ trợ ảnh và đoạn video đã trim từ 0,5 đến 8 giây.</p>
+          <button type="button" className="button secondary" disabled={busy || smartTarget?.track !== "video"} onClick={onRemoveBackground}>Xóa nền clip đang chọn</button>
         </div>
+        {avatar}
       </div>}
       {tab === "transitions" && <div className="library-section">
         <h2>Điểm nối hai clip</h2>
@@ -281,6 +293,7 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
             <strong>{preset.label}</strong><small>{preset.detail}</small>
           </button>)}</div>
         </div>}
+      </div>
     </div>
   </section>;
 }

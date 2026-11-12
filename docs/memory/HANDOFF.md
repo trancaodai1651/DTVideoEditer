@@ -1,12 +1,39 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-060
+Snapshot: 2026-11-12/EDITOR-070
 
 ## Điểm vào cho Claude Code hoặc Codex
 
 Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [module editor](modules/editor.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có giao diện, thao tác và chức năng tương đương CapCut Desktop, và đã cho phép push lên `origin`, chạy GitHub Actions và build bộ cài. DT_Edit dùng bố cục và luồng thao tác tương tự nhưng giao diện, tên và tài nguyên là của riêng dự án, không sao chép thương hiệu hay asset CapCut. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker, native drop hoặc phân tích media.
 
-Task tiếp theo là **M1-H8**: chạy các ca dưới đây trong cửa sổ Tauri thật, sửa lỗi phát hiện, rồi làm phần còn lại của M1-H8 và M1-H6 theo backlog.
+Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu, thử các ca còn mở trong [backlog](TASK_BACKLOG.md) và mục bên dưới trên Windows/macOS.
+
+## Bản 0.7.0
+
+| Task | Cách dùng và giới hạn |
+| --- | --- |
+| M1-K | Kéo nguồn lên timeline → **Thông minh** → **Dựng tự động từ timeline**. **Chọn cảnh highlight** ưu tiên cảnh có điểm cao, giữ thứ tự nguồn, chọn thêm ảnh. **Dựng theo một clip âm thanh** căn điểm cắt gần đỉnh RMS, chia đều khi không có nhịp rõ, giữ một lớp tiếng đã chọn và tắt tiếng nguồn video. Tối đa 96 clip đầu vào và 120 giây đầu ra. Cảnh được đánh giá từ tín hiệu hình/tiếng cục bộ. Dự án mới giữ các clip, chuyển cảnh, màu và keyframe ảnh ở dạng sửa được. |
+| M1-H6 | Trình phát → **Xem bản xuất**. FFmpeg dùng project đã lưu và render tối đa 20 giây từ playhead. Nhấn **Bản dựng** để tiếp tục kéo/chỉnh. Chế độ chỉnh trực tiếp còn xấp xỉ ở tint/vibrance/hue, và reverse dùng tua frame. |
+| M1-H8 | Media có bộ lọc Tất cả/Video/Ảnh/Âm thanh. Sidebar Âm thanh mở nhạc nền, hiệu ứng âm thanh và tệp đã nhập. Sidebar Chữ mở chữ cơ bản, mẫu chữ và phụ đề. Menu chuột phải ở thẻ media mở nguồn, thêm clip và lọc theo loại. Menu trình phát mở nguồn/bản dựng/bản xuất, vừa khung và toàn màn hình. |
+| M1-J/M2-A | **Thuộc tính → Nâng cao → Xóa nền AI** chạy `rembg` trên PATH với mô hình U²-Net nhỏ. Ảnh ra PNG alpha. Video trim 0,5–8 giây ra ProRes 4444 alpha, 12 fps, cạnh tối đa 640 px, giữ tiếng AAC nếu có. Có thể dùng **Xem bản xuất** nếu WebView không phát được ProRes. Nguồn gốc giữ nguyên và thao tác thay clip hoàn tác được. **Thông minh → Avatar AI** cần HeyGen API key, Avatar ID và Voice ID. Sau khi đồng ý gửi kịch bản, lưu mã job để kiểm tra rồi nhập MP4 khi hoàn tất. |
+
+Source chính: [montage.ts](../../apps/desktop/src/montage.ts), [MontagePanel](../../apps/desktop/src/MontagePanel.tsx), [analysis.rs](../../apps/desktop/src-tauri/src/analysis.rs), [preview.rs](../../apps/desktop/src-tauri/src/preview.rs), [generative.rs](../../apps/desktop/src-tauri/src/generative.rs), [AvatarPanel](../../apps/desktop/src/AvatarPanel.tsx), [installer workflow](../../.github/workflows/installers.yml). Schema SQLite 10, timeline JSON v3.
+
+**Kiểm chứng**
+
+- Windows Tauri production QA 1280×720 dùng kho dữ liệu riêng: nhập MP4/PNG/WAV bằng picker, kéo từng tệp từ thư viện xuống timeline, dựng highlight ba đoạn có chuyển cảnh và phát bản xem trước MP4.
+- Test Node đo vị trí cắt theo audio đã trim và cách chia nguồn khi nhạc ngắn. Test FFmpeg đo cảnh tại mốc 1000 ms trong nguồn đã trim, kiểm tra LUT/hue/reverse qua pixel khi xuất và xác nhận preview dùng MP4 byte-range.
+- Test `real_rembg_segments_photo_and_short_video` chạy rembg 2.0.87 và mô hình `u2netp` thật. FFprobe đọc PNG `rgba` và MOV ProRes có alpha và AAC. Lệnh chạy lại: đặt `DT_EDIT_REMBG_FIXTURE` trỏ tới PNG chân dung và chạy `cargo test real_rembg_segments_photo_and_short_video -- --ignored` trong `apps/desktop/src-tauri` với rembg và FFmpeg trên PATH.
+
+**Ca tiếp theo**
+
+- Live test Claude và HeyGen cần key nhập trực tiếp trong ứng dụng. Kiểm tra dịch giữ thời điểm phụ đề, phản hồi khi hết quota, vòng đời job HeyGen và tải MP4. Hai key nằm trong keychain, tránh ghi vào bàn giao.
+- Thử thao tác Finder, export, voice `say` và cửa sổ macOS. Kiểm tra layout tại 2560×1440, presets và các thao tác còn thiếu trong M1-H8.
+- Thử montage với nguồn dài hơn và bộ video có cảnh nổi bật được đánh dấu sẵn để đo chất lượng. Phân tích chữ, câu thoại, chuyển động và các lớp âm thanh từ video mẫu thuộc M1-F.
+
+**Phát hành**
+
+- Tag `v0.7.0` chạy GitHub Actions để build NSIS x64 và DMG Universal. [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.7.0)
 
 ## Bản 0.6.0
 

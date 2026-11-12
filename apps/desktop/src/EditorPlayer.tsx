@@ -5,9 +5,14 @@ import { aspectNames, CompositionFrame } from "./ClipInspector";
 import type { Aspect, LaneControl, TrackRegion } from "./desktop";
 import type { Clip } from "./timeline";
 import { frameTimecode } from "./vi";
+import { ContextMenu } from "./ContextMenu";
+import type { MenuState } from "./ContextMenu";
 
 export function EditorPlayer({ source, clips, laneControls, aspect, at, total, revision, frameMode, playing, onMode, onPlay, onSeek, onAspect,
-  disabled, selectedKey, onSelect, onTransform, meterDb, tracking, trackingSource, onTrackRegion, onCancelTracking }: {
+  disabled, selectedKey, onSelect, onTransform, meterDb, tracking, trackingSource, onTrackRegion, onCancelTracking, reviewUrl, onReview, onCloseReview }: {
+  reviewUrl?: string;
+  onReview: () => void;
+  onCloseReview: () => void;
   meterDb: number | null;
   tracking: boolean;
   trackingSource?: string;
@@ -33,6 +38,7 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(100);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [peak, setPeak] = useState<{ db: number; at: number } | null>(null);
   const [band, setBand] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const bandStart = useRef<{ x: number; y: number } | null>(null);
@@ -86,14 +92,30 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
     view.scrollLeft = (view.scrollWidth - view.clientWidth) / 2;
     view.scrollTop = (view.scrollHeight - view.clientHeight) / 2;
   }, [zoom, frameMode]);
-  return <section className="studio-pane player-pane" aria-label="Trình phát">
+  function fullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else void stage.current?.requestFullscreen().catch(() => undefined);
+  }
+  return <section className="studio-pane player-pane" aria-label="Trình phát" onContextMenu={(event) => {
+    event.preventDefault();
+    setMenu({ x: event.clientX, y: event.clientY, label: "Trình phát", items: [
+      { label: "Xem nguồn", checked: !frameMode, action: () => { onCloseReview(); onMode(false); } },
+      { label: "Xem timeline", checked: frameMode && !reviewUrl, action: () => { onCloseReview(); onMode(true); } },
+      { label: "Xem màu và hiệu ứng khi xuất", disabled: disabled || total < 100, action: onReview },
+      "separator", { label: "Vừa khung", disabled: !!reviewUrl || !frameMode, action: () => setZoom(100) },
+      { label: "Toàn màn hình", action: fullscreen },
+    ] });
+  }}>
     <div className="pane-heading"><h2>Trình phát</h2>
       <div className="player-modes">
-        <button type="button" aria-pressed={!frameMode} onClick={() => onMode(false)}>Nguồn</button>
-        <button type="button" aria-pressed={frameMode} onClick={() => onMode(true)}>Bản dựng</button>
+        <button type="button" aria-pressed={!frameMode} onClick={() => { onCloseReview(); onMode(false); }}>Nguồn</button>
+        <button type="button" aria-pressed={frameMode && !reviewUrl} onClick={() => { onCloseReview(); onMode(true); }}>Bản dựng</button>
+        <button type="button" aria-pressed={!!reviewUrl} disabled={disabled || total < 100} onClick={onReview} title="Dùng bộ máy xuất để xem tối đa 20 giây từ playhead">Xem bản xuất</button>
       </div>
     </div>
-    {frameMode ? <div className="studio-stage" ref={stage} style={{ "--viewer-zoom": zoom / 100 } as CSSProperties}>
+    {reviewUrl ? <div className="studio-stage rendered-review" ref={stage}>
+      <video key={reviewUrl} aria-label="Bản xem trước kết xuất" src={reviewUrl} controls playsInline autoPlay preload="metadata" />
+    </div> : frameMode ? <div className="studio-stage" ref={stage} style={{ "--viewer-zoom": zoom / 100 } as CSSProperties}>
       <div className="studio-stage-inner">
         {clips.length ? <CompositionFrame clips={clips} laneControls={laneControls} aspect={aspect} at={Math.min(at, Math.max(0, total - 1))} revision={revision} playing={playing}
           selectedKey={selectedKey} editable={!disabled} onSelect={onSelect} onTransform={onTransform} />
@@ -105,7 +127,7 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
         {band && <span className="track-band" style={{ left: band.x, top: band.y, width: band.width, height: band.height }} />}
       </div>}
     </div> : <div className="source-pane" ref={stage}>{source}</div>}
-    <div className="player-footer">
+    {!reviewUrl && <div className="player-footer">
       <span className="audio-meter" role="meter" aria-label="Mức âm thanh tại playhead" aria-valuemin={-60} aria-valuemax={0}
         aria-valuenow={meterDb === null ? -60 : Math.round(meterDb)} title={meterDb === null ? "Không có tiếng" : `${meterDb.toFixed(1)} dBFS`}
         style={{ "--level": meter, "--peak": peakLevel } as CSSProperties}><span /><i /></span>
@@ -120,10 +142,8 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
       <select aria-label="Tỷ lệ bản dựng" value={aspect} disabled={disabled} onChange={(event) => onAspect(event.target.value as Aspect)}>
         {Object.entries(aspectNames).map(([id, label]) => <option value={id} key={id}>{label}</option>)}
       </select>
-      <button type="button" className="icon-button" aria-label="Toàn màn hình" onClick={() => {
-        if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
-        else void stage.current?.requestFullscreen().catch(() => undefined);
-      }}><Icon name="expand" size={16} /></button>
-    </div>
+      <button type="button" className="icon-button" aria-label="Toàn màn hình" onClick={fullscreen}><Icon name="expand" size={16} /></button>
+    </div>}
+    {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
   </section>;
 }

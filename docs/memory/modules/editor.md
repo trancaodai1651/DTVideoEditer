@@ -38,6 +38,13 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 - **Tracking** trả cả tỷ lệ và góc xoay; keyframe nhân tỷ lệ gốc và cộng góc gốc.
 - **Tab Thông minh** thêm Lồng tiếng (giọng hệ điều hành, tốc độ −10…10, nhập WAV vào tầng âm thanh trống) và Dịch phụ đề bằng Claude (key lưu keychain, hỏi xác nhận).
 
+## Dựng tự động, xem bản xuất và AI (0.7.0)
+
+- [MontagePanel](../../../apps/desktop/src/MontagePanel.tsx) dùng clip hình đang hiện trên timeline. [analysis.rs](../../../apps/desktop/src-tauri/src/analysis.rs) lấy mẫu RGB qua FFmpeg trong đoạn trim và chấm cảnh dựa trên độ thay đổi hình, độ sáng và mức âm thanh. [montage.ts](../../../apps/desktop/src/montage.ts) ưu tiên cảnh tốt nhất từ mỗi nguồn trước, sau đó xếp lại theo thứ tự timeline.
+- Chế độ dựng theo âm thanh lấy onset từ mức RMS mỗi 50 ms của clip âm thanh đã chọn, tính theo offset của đoạn trim, rồi phân phối clip theo thứ tự. Ảnh có keyframe phóng nhẹ; chuyển cảnh hòa trộn hoặc qua đen và chỉnh màu của phong cách Năng động được lưu thành thuộc tính clip. Dựng tối đa 120 giây và tạo dự án riêng bằng `create_edited_project`.
+- **Xem bản xuất** gọi `render_review` trong [preview.rs](../../../apps/desktop/src-tauri/src/preview.rs) với vị trí playhead. Backend dùng cùng kế hoạch và graph FFmpeg như khi xuất. MP4 tạm tối đa 20 giây đi qua protocol media theo byte range. Sửa timeline, tỷ lệ, tầng hoặc thu hồi media làm mất hiệu lực phiên xem.
+- [generative.rs](../../../apps/desktop/src-tauri/src/generative.rs) dùng `rembg i` cho ảnh và `rembg p` cho lô khung video. Đầu ra là PNG hoặc MOV có alpha. [AvatarPanel](../../../apps/desktop/src/AvatarPanel.tsx) tạo job HeyGen và nhập MP4 sau khi job hoàn thành.
+
 ## Render
 
 [render.rs](../../../apps/desktop/src-tauri/src/render.rs) dựng một lệnh FFmpeg từ snapshot và media đã qua kiểm tra grant.
@@ -61,6 +68,6 @@ Clip tắt bị bỏ khỏi graph. Freeze đọc một khung tại `freezeAtMs` 
 
 ## Giới hạn hiện tại
 
-Preview phụ thuộc codec WebView. Một số xử lý hình và tiếng nâng cao chỉ áp dụng đầy đủ khi xuất MP4. Gain dương bị giới hạn bởi volume WebView. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. LUT chưa hiện trong preview. Tint/vibrance/hue trong preview là gần đúng. Tracking tỷ lệ/xoay cần vật thể có chi tiết ở hai nửa vùng chọn. Reverse xem trước bằng tua từng khung nên giật hơn bản xuất. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
+Preview tương tác phụ thuộc codec WebView và giới hạn gain dương của volume WebView. Dùng **Xem bản xuất** để kiểm tra LUT, tint/vibrance/hue và phát clip đảo ngược theo đúng file MP4. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. Tracking tỷ lệ/xoay cần vật thể có chi tiết ở hai nửa vùng chọn. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
 
 Kiểm tra bằng `pnpm test`, `pnpm test:native` và `pnpm test:media`.

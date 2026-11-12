@@ -1,13 +1,13 @@
 import { useCallback, useDeferredValue, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent } from "react";
-import { api, desktop, fileName } from "./desktop";
+import { api, desktop, fileName, mediaUrl } from "./desktop";
 import type { LutEntry, TrackRegion } from "./desktop";
 import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, LaneControl, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
 import { Icon } from "./Icon";
 import { Gallery, Preview, selectAsset } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
 import type { Selection } from "./MediaPanels";
-import { alignByAudio, createMulticam } from "./timeline";
+import { alignByAudio, createMulticam, replaceClip } from "./timeline";
 import { detachAudio, restoreAudio, clipBeatMarkers, clipLevelAt, followTrack, removeSilences, sourcePosition, splitAtSourceTimes } from "./timeline";
 import { MAX_LAYERS, addCaptions, addClip, addDroppedMedia, addTitle, changeLayer, changesLockedLane, clipFinish, clipLane, commit, defaultLook, fromTimeline, laneControl, layerOf, lookAt, newHistory, playbackRate, previousVisual, redo, setTransformKey, setTransition, subtitleCues, toSnapshot, totalMs, trackOf, transformProperties, undo, updateAppearance } from "./timeline";
 import type { Clip, History, MediaDropTarget, MediaRef } from "./timeline";
@@ -20,6 +20,10 @@ import type { LibraryTab } from "./EditorLibrary";
 import { EditorPlayer } from "./EditorPlayer";
 import { ExportQueue } from "./ExportQueue";
 import { TemplateLibrary } from "./TemplateLibrary";
+import { MontagePanel } from "./MontagePanel";
+import { AvatarPanel } from "./AvatarPanel";
+import { montageSnapshot } from "./montage";
+import type { MontageSource, MontageStyle } from "./montage";
 import { vi } from "./vi";
 
 type View = "library" | "queue" | "publish" | "settings";
@@ -88,6 +92,7 @@ export function App() {
   const saves = useRef({ chain: Promise.resolve(), pending: 0, failed: false });
   const [tools, setTools] = useState<MediaTools | null>(null);
   const [busy, setBusy] = useState("");
+  const [review, setReview] = useState<{ id: number; projectId: number; history: History; aspect: Aspect; lanes: LaneControl[]; revision: number } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [libraryRevision, setLibraryRevision] = useState(0);
   const [timelineRevision, setTimelineRevision] = useState(0);
@@ -252,6 +257,80 @@ export function App() {
     });
   }
 
+  const montageInputs = clips.filter((clip) => clip.track === "video" && clip.available && !clip.look?.disabled
+    && !clipLane(laneControls, clip)?.hidden && (clip.kind === "image" || clip.kind === "video"));
+  const montageAudio = clips.filter((clip) => clip.track === "audio" && clip.kind === "audio" && clip.available && !clip.look?.disabled);
+
+  function buildMontage(style: MontageStyle, seconds: number, sound?: Clip) {
+    if (editsDisabled || !project || !montageInputs.length) return;
+    if (montageInputs.length > 96) { notify("Chia tư liệu thành các timeline có tối đa 96 clip hình để dựng tự động.", true); return; }
+    const inputs = [...montageInputs].sort((a, b) => a.positionMs - b.positionMs || layerOf(a) - layerOf(b));
+    void run("Đang phân tích hình và âm thanh…", async () => {
+      const sources: MontageSource[] = [];
+      let failed = 0;
+      for (const clip of inputs) {
+        if (clip.kind === "image" || clip.endMs - clip.startMs < 500) { sources.push({ clip, shots: [] }); continue; }
+        try {
+          sources.push({ clip, shots: await api.analyzeShots(clip.assetId, clip.startMs, clip.endMs) });
+        } catch { failed += 1; }
+      }
+      if (!sources.length) throw new Error("Không đọc được cảnh từ các clip đã chọn. Kiểm tra FFmpeg và tệp nguồn.");
+      const soundtrack = sound ? { clip: sound, levels: await api.audioLevels(sound.assetId) } : undefined;
+      const snapshot = montageSnapshot(sources, aspect, seconds * 1000, style, soundtrack);
+      const count = snapshot.tracks[0].clips.length;
+      if (!count) throw new Error("Không có cảnh đủ dài để dựng.");
+      await openTemplateProject(`${sound ? "Theo nhịp" : "Highlight"} · ${Array.from(project.name).slice(0, 65).join("")}`, snapshot);
+      success(`Đã dựng ${count} đoạn${failed ? `, bỏ qua ${failed} clip không đọc được` : ""}.`);
+    });
+  }
+
+  function buildReview() {
+    if (!project || editsDisabled || total < 100) return;
+    setPlaying(false);
+    void run("Đang tạo bản xem trước bằng bộ máy xuất…", async () => {
+      await saves.current.chain;
+      if (saves.current.failed) throw new Error("Hãy lưu timeline trước khi tạo bản xem trước.");
+      const id = await api.renderReview(project.id, playheadMs);
+      setReview({ id, projectId: project.id, history, aspect, lanes: laneControls, revision: libraryRevision });
+      setFrameMode(true);
+    });
+  }
+
+  function removeBackground() {
+    const clip = selectedClip;
+    if (!clip || clip.track !== "video" || !["image", "video"].includes(clip.kind) || !clip.available || editsDisabled) return;
+    if (clipLane(laneControls, clip)?.locked) { notify("Mở khóa tầng ảnh để thay clip.", true); return; }
+    void run("Đang phân đoạn trên máy…", async () => {
+      const result = await api.removeMediaBackground(clip.assetId, clip.startMs, clip.endMs);
+      const cutout = result.assets[0];
+      if (!cutout) throw new Error("Không nhập được ảnh đã tách nền.");
+      if (edit(commit(history, replaceClip(clips, clip.key, selectAsset(cutout))))) {
+        await refreshLibrary();
+        setFrameMode(true);
+        success(clip.kind === "video" ? "Đã thay clip bằng video trong suốt. Chọn Xem bản xuất để kiểm tra." : "Đã thay clip bằng ảnh PNG trong suốt.");
+      }
+    });
+  }
+
+  async function createAvatar(avatar: string, voice: string, script: string) {
+    let id: string | null = null;
+    await run("Đang gửi yêu cầu tạo avatar…", async () => {
+      id = await api.createAvatarVideo(avatar, voice, script);
+      if (id) success("Đã nhận mã video. Bấm Kiểm tra và nhập video để lấy kết quả.");
+    });
+    return id;
+  }
+
+  function getAvatar(id: string) {
+    void run("Đang kiểm tra video HeyGen…", async () => {
+      const result = await api.getAvatarVideo(id);
+      if (result.status === "pending") { notify("HeyGen vẫn đang tạo video.", false); return; }
+      if (result.status === "failed") throw new Error("HeyGen báo lượt tạo video thất bại.");
+      if (!result.media?.assets.length) throw new Error("Không nhập được video avatar vào thư viện.");
+      await applyImported(result.media);
+    });
+  }
+
   function trackRegion(region: TrackRegion) {
     const job = tracking;
     setTracking(null);
@@ -347,14 +426,15 @@ export function App() {
     // Wait for queued saves so a reload never reads a stale timeline.
     void saves.current.chain.then(() => api.timeline(projectId)).then((saved) => {
       if (!current) return;
-      setHistory(newHistory(fromTimeline(saved)));
+      const clips = fromTimeline(saved);
+      setHistory(newHistory(clips));
       setLoadedTimeline({ id: projectId, revision: timelineRevision });
       setSelectedKey(null);
       setPlayheadMs(0);
       setAspect(saved.aspect ?? "source");
       setLane({ track: "video", layer: 0 });
       setLaneControls(saved.lanes ?? []);
-      setFrameMode(false);
+      setFrameMode(clips.length > 0);
       setPlaying(false);
       setSaveState("saved");
       saves.current.failed = false;
@@ -848,6 +928,8 @@ export function App() {
               }}
               onSpeak={speakText} onTranslate={translateCaptions} hasCaptionLines={captions.length > 0}
               tab={tool} onTab={openTool} busy={disabled} catalog={catalog} catalogFailed={catalogFailed}
+              montage={<MontagePanel count={montageInputs.length} audio={montageAudio} busy={editsDisabled} onBuild={buildMontage} />}
+              avatar={<AvatarPanel busy={editsDisabled} onCreate={createAvatar} onGet={getAvatar} />} onRemoveBackground={removeBackground}
               onRetryCatalog={() => { setCatalogFailed(false); setCatalogRetry((value) => value + 1); }}
               hasProject={!!project && !editsDisabled} hasVisual={selectedClip?.track === "video" && !editsDisabled}
               hasSpeech={!!selectedClip && (selectedClip.kind === "audio" || selectedClip.kind === "video") && selectedClip.available}
@@ -878,6 +960,9 @@ export function App() {
               onPointerMove={(event) => resizeColumn(event, "library")} onDoubleClick={() => setLibraryWidth(34)}
               onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setLibraryWidth((width) => Math.max(20, Math.min(50, width + (event.key === "ArrowRight" ? 2 : -2)))); } }} />
             <EditorPlayer meterDb={meterDb} tracking={!!tracking} trackingSource={tracking?.sourceKey} onTrackRegion={trackRegion}
+              reviewUrl={review && review.projectId === projectId && review.history === history && review.aspect === aspect
+                && review.lanes === laneControls && review.revision === libraryRevision ? mediaUrl("review", review.id, 0) : undefined}
+              onReview={buildReview} onCloseReview={() => setReview(null)}
               onCancelTracking={() => { setTracking(null); notify("Đã hủy theo dõi chuyển động.", false); }}
               source={<Preview selection={selection} revision={libraryRevision} busy={editsDisabled}
               onAppend={addMedia} onReference={() => openTool("templates")} />}

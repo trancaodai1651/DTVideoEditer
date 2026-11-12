@@ -42,6 +42,22 @@ jobs:
           lipo -archs "$app/Contents/MacOS/$binary"
           lipo "$app/Contents/MacOS/$binary" -verify_arch arm64 x86_64
           hdiutil verify apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+      - if: runner.os == 'macOS'
+        name: Smoke test packaged macOS app
+        shell: bash
+        run: |
+          app="$PWD/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Video Studio.app"
+          binary=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")
+          log="$RUNNER_TEMP/dt-edit-macos-startup.log"
+          "$app/Contents/MacOS/$binary" > "$log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          sleep 5
+          if ! kill -0 "$pid" 2>/dev/null; then
+            cat "$log"
+            exit 1
+          fi
+          echo "Packaged application started and stayed running on $(uname -m)."
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

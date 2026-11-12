@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::Path,
+    sync::atomic::{AtomicBool, AtomicI64, Ordering},
 };
 
 use http_range::HttpRange;
@@ -9,8 +10,11 @@ use tauri::http::{Method, Request, Response, StatusCode, header};
 
 use crate::{
     library::{authorized_asset, authorized_file},
+    model::{Result, StudioError},
     probe::{self, MediaFormat},
+    render,
     store::{DerivedPreview, Store},
+    timeline::{ExportRange, MIN_CLIP_MS},
 };
 
 const MAX_RANGE: u64 = 4 * 1024 * 1024;
@@ -24,7 +28,56 @@ pub fn empty(status: StatusCode) -> Response<Vec<u8>> {
         .expect("static response headers")
 }
 
+pub struct RenderedReview {
+    pub id: i64,
+    root: std::path::PathBuf,
+    _work: tempfile::TempDir,
+    assets: Vec<i64>,
+}
+
+pub fn render_review(store: &Store, project_id: i64, start_ms: i64) -> Result<RenderedReview> {
+    static NEXT_ID: AtomicI64 = AtomicI64::new(1);
+    let mut snapshot = store.snapshot(project_id)?;
+    let duration = snapshot.duration_ms();
+    if duration < MIN_CLIP_MS {
+        return Err(StudioError::Input(
+            "Thêm clip vào timeline để xem bản dựng.",
+        ));
+    }
+    let start_ms = start_ms.clamp(0, duration - MIN_CLIP_MS);
+    snapshot.export_range = Some(ExportRange {
+        start_ms,
+        end_ms: duration.min(start_ms + 20_000),
+    });
+    let tool = |name| {
+        probe::find_tool(name).ok_or(StudioError::Input("Cần FFmpeg và FFprobe trong PATH."))
+    };
+    let work = tempfile::tempdir()?;
+    let root = dunce::canonicalize(work.path())?;
+    let sources = render::resolve(store, &snapshot, &tool("ffprobe")?)?;
+    let mut plan = render::plan(&snapshot, &sources, &root.join("review.mp4"))?;
+    for (id, cube) in &mut plan.luts {
+        *cube = store.lut(*id)?;
+    }
+    render::run(&tool("ffmpeg")?, &plan, &AtomicBool::new(false), |_| {})?;
+    Ok(RenderedReview {
+        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        root,
+        _work: work,
+        assets: sources.into_keys().collect(),
+    })
+}
+
+#[cfg(test)]
 pub fn serve(store: &Store, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+    serve_with_review(store, request, None)
+}
+
+pub fn serve_with_review(
+    store: &Store,
+    request: Request<Vec<u8>>,
+    review: Option<&RenderedReview>,
+) -> Response<Vec<u8>> {
     let origin = request
         .headers()
         .get(header::ORIGIN)
@@ -37,7 +90,7 @@ pub fn serve(store: &Store, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     }) {
         return empty(StatusCode::FORBIDDEN);
     }
-    let mut response = media_response(store, &request);
+    let mut response = media_response(store, &request, review);
     if let Some(origin) = request.headers().get(header::ORIGIN) {
         response
             .headers_mut()
@@ -49,7 +102,11 @@ pub fn serve(store: &Store, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     response
 }
 
-fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
+fn media_response(
+    store: &Store,
+    request: &Request<Vec<u8>>,
+    review: Option<&RenderedReview>,
+) -> Response<Vec<u8>> {
     let head = *request.method() == Method::HEAD;
     if !head && *request.method() != Method::GET {
         return empty(StatusCode::METHOD_NOT_ALLOWED);
@@ -65,6 +122,24 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
     let Ok(asset_id) = id.parse::<i64>() else {
         return empty(StatusCode::NOT_FOUND);
     };
+    if route == "review" {
+        let Some(review) = review.filter(|item| {
+            item.id == asset_id
+                && item.assets.iter().all(|id| {
+                    store
+                        .source(*id, false)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|source| authorized_asset(&source).is_ok())
+                })
+        }) else {
+            return empty(StatusCode::NOT_FOUND);
+        };
+        let Ok((path, _)) = authorized_file(&review.root, Path::new("review.mp4")) else {
+            return empty(StatusCode::NOT_FOUND);
+        };
+        return file_response(&path, "video/mp4", head, request);
+    }
     let thumbnail = route == "thumbnail";
     if asset_id < 1
         || (!thumbnail && !matches!(route, "source" | "render" | "waveform" | "filmstrip"))

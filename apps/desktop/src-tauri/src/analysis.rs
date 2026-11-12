@@ -179,6 +179,141 @@ fn cut_times(output: &str, start_ms: i64, end_ms: i64) -> Vec<i64> {
     cuts
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Shot {
+    start_ms: i64,
+    end_ms: i64,
+    score: u16,
+}
+
+const SHOT_STEP_MS: i64 = 250;
+const SHOT_PIXELS: usize = 64 * 36 * 3;
+const SHOT_WINDOW_MS: i64 = 5000;
+pub const MAX_SHOT_SCAN_MS: i64 = 30 * 60 * 1000;
+
+fn shots_from_frames(frames: &[u8], scanned_ms: i64, levels: &[u8]) -> Vec<Shot> {
+    let mut shots = Vec::new();
+    let mut start = 0;
+    let mut motion = 0.0;
+    let mut exposure = 0.0;
+    let mut count = 0;
+    let mut previous: Option<&[u8]> = None;
+    for (index, frame) in frames.chunks_exact(SHOT_PIXELS).enumerate() {
+        let at = index as i64 * SHOT_STEP_MS;
+        let delta = previous.map_or(0.0, |last| {
+            last.iter()
+                .zip(frame)
+                .map(|(a, b)| usize::from(a.abs_diff(*b)))
+                .sum::<usize>() as f64
+                / (SHOT_PIXELS * 255) as f64
+        });
+        if at - start >= SHOT_WINDOW_MS || (delta > 0.24 && at - start >= 750) {
+            shots.push(scored_shot(start, at, motion, exposure, count, levels));
+            start = at;
+            motion = 0.0;
+            exposure = 0.0;
+            count = 0;
+        } else if count > 0 {
+            motion += delta.min(0.24);
+        }
+        let mean = frame.iter().map(|value| usize::from(*value)).sum::<usize>() as f64
+            / SHOT_PIXELS as f64;
+        exposure += ((mean.min(255.0 - mean) - 12.0) / 48.0).clamp(0.0, 1.0);
+        count += 1;
+        previous = Some(frame);
+    }
+    let end = scanned_ms.min((frames.len() / SHOT_PIXELS) as i64 * SHOT_STEP_MS);
+    if end - start >= 500 && count > 0 {
+        shots.push(scored_shot(start, end, motion, exposure, count, levels));
+    }
+    shots
+}
+
+fn scored_shot(
+    start: i64,
+    end: i64,
+    motion: f64,
+    exposure: f64,
+    count: u32,
+    levels: &[u8],
+) -> Shot {
+    let first = (start / LEVEL_STEP_MS) as usize;
+    let last = ((end / LEVEL_STEP_MS) as usize).min(levels.len());
+    let audio = levels.get(first..last).unwrap_or_default();
+    let energy = audio.iter().map(|value| f64::from(*value)).sum::<f64>()
+        / (audio.len().max(1) * 255) as f64;
+    let score = (630.0 * (motion / f64::from(count) / 0.14).min(1.0)
+        + 220.0 * exposure / f64::from(count)
+        + 150.0 * energy)
+        .round();
+    Shot {
+        start_ms: start,
+        end_ms: end,
+        score: score as u16,
+    }
+}
+
+/// Compact scene candidates sampled at four frames per second. The score uses
+/// frame motion, exposure and source audio energy, without an external service.
+pub fn analyze_shots(
+    store: &Store,
+    asset_id: i64,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<Shot>> {
+    let (asset, path, format) = source(store, asset_id, &["video"])?;
+    if start_ms < 0
+        || end_ms > asset.duration_ms.unwrap_or(0)
+        || end_ms.saturating_sub(start_ms) < 500
+    {
+        return Err(StudioError::Input(
+            "Video cần dài từ 0,5 giây để chọn cảnh.",
+        ));
+    }
+    let duration = (end_ms - start_ms).min(MAX_SHOT_SCAN_MS);
+    let mut command = ffmpeg()?;
+    command
+        .args(format.input_args())
+        .args(["-ss", &seconds(start_ms), "-i"])
+        .arg(path)
+        .args([
+            "-map",
+            "0:V:0",
+            "-an",
+            "-sn",
+            "-dn",
+            "-t",
+            &seconds(duration),
+            "-vf",
+            "fps=4,scale=64:36:flags=area,format=rgb24",
+            "-threads",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]);
+    let limit = (duration.div_euclid(SHOT_STEP_MS) as usize + 2) * SHOT_PIXELS;
+    let frames = probe::capture_limited(command, Duration::from_secs(180), limit).ok_or(
+        StudioError::Input("FFmpeg không đọc được hình để chọn cảnh."),
+    )?;
+    let audio = levels(store, asset_id).unwrap_or_default();
+    let first_level = (start_ms / LEVEL_STEP_MS) as usize;
+    let mut shots = shots_from_frames(
+        &frames,
+        duration,
+        audio.get(first_level..).unwrap_or_default(),
+    );
+    for shot in &mut shots {
+        shot.start_ms += start_ms;
+        shot.end_ms += start_ms;
+    }
+    if shots.is_empty() {
+        return Err(StudioError::Input("Không tìm thấy đoạn hình đủ dài."));
+    }
+    Ok(shots)
+}
+
 /// The area to follow, in thousandths of the frame.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

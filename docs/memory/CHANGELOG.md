@@ -1,6 +1,14 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-060
+Snapshot: 2026-11-12/EDITOR-070
+
+## 2026-11-12 · Editor 0.7.0
+
+- M1-K thêm hai chế độ dựng từ timeline. Highlight xếp hạng cảnh theo chuyển động, độ sáng và âm thanh nguồn. Dựng theo âm thanh chọn điểm cắt gần đỉnh nhịp, có cách chia đều nếu tín hiệu không có nhịp rõ. Hai chế độ tạo dự án riêng, áp chuyển cảnh và keyframe phóng ảnh có thể sửa.
+- M1-H6 thêm **Xem bản xuất**, phát tối đa 20 giây từ playhead bằng cùng graph FFmpeg dùng cho MP4, gồm LUT, màu, đảo ngược, hình và tiếng.
+- M1-H8 thêm lọc loại media, sidebar nhóm Âm thanh/Chữ và menu chuột phải trên thẻ media và trình phát. Dự án có clip mở thẳng ở chế độ Bản dựng.
+- M2-A/M1-J thêm xóa nền trên máy bằng rembg U²-Net và tạo avatar qua HeyGen với keychain và xác nhận native. Không đổi schema.
+- M5-B thêm kiểm tra khởi động ứng dụng đóng gói trên runner macOS và giữ kiểm tra hai kiến trúc trong DMG.
 
 ## 2026-11-12 · Editor 0.6.0
 

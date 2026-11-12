@@ -6,6 +6,8 @@ import type { PointerEvent, RefObject } from "react";
 import type { TimelineDrop } from "./TimelineEditor";
 import type { MediaRef } from "./timeline";
 import { duration, size, vi } from "./vi";
+import { ContextMenu } from "./ContextMenu";
+import type { MenuState } from "./ContextMenu";
 
 export interface Selection {
   assetId: number;
@@ -55,6 +57,7 @@ interface GalleryProps {
 export function Gallery({ data, folders, folderId, page, revision, selected, onFolder, onPage, onSelect,
   query, onQuery, kind, audioOnly, onKind, onImport, onFolderImport, busy, canAdd, timeline, onAppend }: GalleryProps) {
   const gesture = useRef<{ pointer: number; x: number; y: number; media: MediaRef; moved: boolean } | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const pages = data ? Math.ceil(data.total / data.pageSize) : 0;
 
   function startDrag(event: PointerEvent<HTMLButtonElement>, asset: Asset) {
@@ -82,9 +85,10 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
         </label>
       </div>
       <div className="gallery-filter">
-        {!audioOnly && <select aria-label="Loại media" value={kind ?? ""} onChange={(event) => onKind((event.target.value || null) as MediaKind | null)}>
-          <option value="">Tất cả loại</option><option value="video">Video</option><option value="image">Ảnh</option><option value="audio">Âm thanh</option>
-        </select>}
+        {!audioOnly && <nav className="media-kinds" aria-label="Loại media">
+          {([[null, "Tất cả"], ["video", "Video"], ["image", "Ảnh"], ["audio", "Âm thanh"]] as const).map(([value, label]) =>
+            <button type="button" key={label} className="button secondary compact" aria-pressed={value === kind} onClick={() => onKind(value)}>{label}</button>)}
+        </nav>}
         {folders.length > 0 &&
           <select aria-label={vi.filter} value={folderId ?? ""} onChange={(e) => onFolder(e.target.value ? Number(e.target.value) : null)}>
             <option value="">{vi.allFolders}</option>
@@ -101,6 +105,14 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
               title={asset.relativePath}
               onClick={(event) => { if (event.detail === 0 || !gesture.current?.moved) onSelect(selectAsset(asset)); }}
               onDoubleClick={() => { if (canAdd && !gesture.current?.moved) onAppend(selectAsset(asset)); }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ x: event.clientX, y: event.clientY, label: fileName(asset.relativePath), items: [
+                  { label: "Xem trong trình phát", action: () => onSelect(selectAsset(asset)) },
+                  { label: "Thêm vào timeline tại playhead", disabled: !canAdd, action: () => onAppend(selectAsset(asset)) },
+                  { label: "Xem các tệp cùng nguồn", action: () => onFolder(asset.folderId) },
+                ] });
+              }}
               onDragStart={(event) => event.preventDefault()}
               onPointerDown={(event) => startDrag(event, asset)} onPointerMove={(event) => moveDrag(event, false)}
               onPointerUp={(event) => moveDrag(event, true)}
@@ -130,6 +142,7 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
         <span>{vi.page(page + 1, pages)}</span>
         <button className="icon-button" type="button" aria-label={vi.next} disabled={page + 1 >= pages} onClick={() => onPage(page + 1)}><Icon name="right" /></button>
       </div>}
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </section>
   );
 }

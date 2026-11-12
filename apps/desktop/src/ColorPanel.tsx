@@ -66,7 +66,7 @@ export function ColorPanel({ look, luts, onLook, onImportLut, onDeleteLut }: {
         <button type="button" className="button secondary compact" onClick={onImportLut}>Nhập tệp .cube</button>
         {lut && <button type="button" className="button secondary compact danger" onClick={() => onDeleteLut(lut.id)}>Xóa LUT khỏi thư viện</button>}
       </div>
-      <p className="inspector-help">LUT áp dụng đầy đủ khi xuất MP4. Trình phát hiển thị các chỉnh màu khác nhưng chưa mô phỏng LUT.</p>
+      <p className="inspector-help">Chọn Xem bản xuất trong trình phát để xem LUT và màu bằng FFmpeg tại playhead.</p>
     </div>}
     <button type="button" className="button secondary compact" onClick={() => onLook({
       brightness: 0, contrast: 100, saturation: 100, temperature: 0, exposure: undefined, highlights: undefined, shadows: undefined,
