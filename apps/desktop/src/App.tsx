@@ -1,15 +1,17 @@
 import { useCallback, useDeferredValue, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent } from "react";
 import { api, desktop, fileName } from "./desktop";
+import type { TrackRegion } from "./desktop";
 import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, LaneControl, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
 import { Icon } from "./Icon";
 import { Gallery, Preview, selectAsset } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
 import type { Selection } from "./MediaPanels";
+import { detachAudio, restoreAudio, clipBeatMarkers, clipLevelAt, followTrack, removeSilences, sourcePosition, splitAtSourceTimes } from "./timeline";
 import { MAX_LAYERS, addCaptions, addClip, addDroppedMedia, addTitle, changeLayer, changesLockedLane, clipFinish, clipLane, commit, defaultLook, fromTimeline, laneControl, layerOf, lookAt, newHistory, playbackRate, previousVisual, redo, setTransformKey, setTransition, subtitleCues, toSnapshot, totalMs, trackOf, transformProperties, undo, updateAppearance } from "./timeline";
 import type { Clip, History, MediaDropTarget, MediaRef } from "./timeline";
 import { TimelineEditor } from "./TimelineEditor";
-import type { Lane, TimelineDrop } from "./TimelineEditor";
+import type { Lane, SmartAction, TimelineDrop } from "./TimelineEditor";
 import { ClipInspector } from "./ClipInspector";
 import type { InspectorTab } from "./ClipInspector";
 import { EditorLibrary } from "./EditorLibrary";
@@ -36,6 +38,13 @@ function clipSelection(clip: Clip, playheadMs: number): Selection | null {
     seekMs: clip.kind === "image" ? undefined : clip.startMs + (inside ? (playheadMs - clip.positionMs) * playbackRate(clip) : 0),
     width: clip.width, height: clip.height, hasThumbnail: clip.hasThumbnail,
   };
+}
+
+function storedNumber(key: string, fallback: number, min: number, max: number) {
+  try {
+    const value = Number(localStorage.getItem(key));
+    return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+  } catch { return fallback; }
 }
 
 export function App() {
@@ -84,6 +93,11 @@ export function App() {
   const [ready, setReady] = useState(false);
   const [loadedTimeline, setLoadedTimeline] = useState<{ id: number; revision: number } | null>(null);
   const [revokeId, setRevokeId] = useState<number | null>(null);
+  const [tracking, setTracking] = useState<{ sourceKey: string; targetKey: string } | null>(null);
+  const levels = useRef(new Map<number, number[] | "failed" | "loading">());
+  const [levelsVersion, setLevelsVersion] = useState(0);
+  const [libraryWidth, setLibraryWidth] = useState(() => storedNumber("dt-edit-library-width", 34, 20, 50));
+  const [inspectorWidth, setInspectorWidth] = useState(() => storedNumber("dt-edit-inspector-width", 31, 18, 45));
   const project = projects.find((item) => item.id === projectId);
   const disabled = !!busy || !desktop;
   const editsDisabled = disabled || !ready || (projectId !== null
@@ -97,6 +111,115 @@ export function App() {
   const captions = subtitleCues(clips);
   const needCatalog = view === "library" && (tool === "audio" || tool === "stickers");
   const rendering = jobs.some(isActive);
+
+  const soundAssets = [...new Set(clips.filter((clip) => clip.available && !clip.look?.disabled
+    && (clip.track === "audio" || (clip.kind === "video" && !clip.look?.audioDetached))).map((clip) => clip.assetId))].slice(0, 16);
+  const nextLevels = soundAssets.find((id) => !levels.current.has(id));
+  useEffect(() => {
+    if (!desktop || nextLevels === undefined || !ready) return;
+    levels.current.set(nextLevels, "loading");
+    void api.audioLevels(nextLevels).then((values) => levels.current.set(nextLevels, values), () => levels.current.set(nextLevels, "failed"))
+      .finally(() => setLevelsVersion((value) => value + 1));
+  }, [nextLevels, ready]);
+  const meterDb = (() => {
+    void levelsVersion;
+    let power = 0;
+    let sounding = false;
+    for (const clip of clips) {
+      if (clip.look?.disabled || !clip.available || laneControl(laneControls, clip.track, layerOf(clip))?.muted) continue;
+      if (clip.track !== "audio" && (clip.kind !== "video" || clip.look?.audioDetached)) continue;
+      const values = levels.current.get(clip.assetId);
+      if (!Array.isArray(values)) continue;
+      const db = clipLevelAt(clip, values, playheadMs);
+      if (db === null) continue;
+      sounding = true;
+      power += 10 ** (db / 10);
+    }
+    return sounding ? 10 * Math.log10(Math.max(power, 1e-9)) : null;
+  })();
+
+  function resizeColumn(event: PointerEvent<HTMLDivElement>, side: "library" | "inspector") {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!bounds?.width) return;
+    const share = 100 * (side === "library" ? event.clientX - bounds.left : bounds.right - event.clientX) / bounds.width;
+    if (side === "library") {
+      const value = Math.round(Math.max(20, Math.min(50, share)));
+      setLibraryWidth(value);
+      try { localStorage.setItem("dt-edit-library-width", String(value)); } catch { /* optional */ }
+    } else {
+      const value = Math.round(Math.max(18, Math.min(45, share)));
+      setInspectorWidth(value);
+      try { localStorage.setItem("dt-edit-inspector-width", String(value)); } catch { /* optional */ }
+    }
+  }
+
+  function smart(action: SmartAction, key: string) {
+    const clip = clips.find((item) => item.key === key);
+    if (!clip) return;
+    const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+    if (action === "speed") {
+      selectClip(key);
+      setInspectorTab("speed");
+      return;
+    }
+    if (action === "track") {
+      const source = clips.filter((item) => item.track === "video" && item.kind === "video" && item.available && !item.look?.disabled
+        && layerOf(item) < layerOf(clip) && playheadMs >= item.positionMs && playheadMs < clipFinish(item))
+        .sort((a, b) => layerOf(b) - layerOf(a))[0];
+      if (!source) { notify("Đặt playhead trên một clip video ở tầng dưới lớp cần bám theo.", true); return; }
+      setPlaying(false);
+      setFrameMode(true);
+      setSelectedKey(key);
+      setTracking({ sourceKey: source.key, targetKey: key });
+      notify("Kéo một khung quanh vật thể trên trình phát. Nhấn Esc để hủy.", false);
+      return;
+    }
+    void run(action === "scenes" ? "Đang dò cảnh…" : "Đang đo âm lượng…", async () => {
+      try {
+        if (action === "scenes") {
+          const cuts = await api.detectScenes(clip.assetId, clip.startMs, clip.endMs, 32);
+          if (!cuts.length) { notify("Không tìm thấy điểm chuyển cảnh trong clip này.", false); return; }
+          const next = splitAtSourceTimes(clips, key, cuts);
+          if (edit(commit(history, next))) success(`Đã tách thành ${next.length - clips.length + 1} cảnh.`);
+          return;
+        }
+        const values = await api.audioLevels(clip.assetId);
+        levels.current.set(clip.assetId, values);
+        if (action === "silence") {
+          const next = removeSilences(clips, key, values);
+          if (next === clips) { notify("Không có khoảng lặng dài từ 0,6 giây trong clip này.", false); return; }
+          if (edit(commit(history, next))) success("Đã xóa các khoảng lặng và dồn clip phía sau.");
+        } else {
+          const beats = clipBeatMarkers(clip, values);
+          if (!beats.length) { notify("Không phát hiện nhịp rõ trong clip này.", false); return; }
+          timelineDrop.current?.addMarkers(beats);
+          success(`Đã thêm ${Math.min(100, beats.length)} marker theo nhịp.`);
+        }
+      } catch (error) {
+        notify(message(error), true);
+      }
+    });
+  }
+
+  function trackRegion(region: TrackRegion) {
+    const job = tracking;
+    setTracking(null);
+    const source = clips.find((clip) => clip.key === job?.sourceKey);
+    if (!job || !source) return;
+    const start = Math.round(source.startMs + sourcePosition(source, Math.max(0, playheadMs - source.positionMs)).offset);
+    void run("Đang theo dõi chuyển động…", async () => {
+      try {
+        const points = await api.trackMotion(source.assetId, start, source.endMs, region);
+        const latest = history.present;
+        if (edit(commit(history, followTrack(latest, job.sourceKey, job.targetKey, points)))) {
+          success(`Lớp đã bám theo vật thể qua ${points.length} khung.`);
+        }
+      } catch (error) {
+        notify(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+  }
 
   function resizeTimeline(event: PointerEvent<HTMLDivElement>) {
     const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
@@ -660,8 +783,19 @@ export function App() {
         </div>
 
         {view === "library" ? <div className="editor-workspace" style={{ "--panels-fr": `${100 - timelineShare}fr`, "--timeline-fr": `${timelineShare}fr` } as CSSProperties}>
-          <div className="editor-columns">
-            <EditorLibrary tab={tool} onTab={openTool} busy={disabled} catalog={catalog} catalogFailed={catalogFailed}
+          <div className="editor-columns" style={{ "--library-fr": `${libraryWidth}fr`, "--inspector-fr": `${inspectorWidth}fr`, "--player-fr": `${100 - libraryWidth - inspectorWidth}fr` } as CSSProperties}>
+            <EditorLibrary smartTarget={selectedClip && !selectedClip.title ? { key: selectedClip.key, kind: selectedClip.kind, track: selectedClip.track,
+              layer: layerOf(selectedClip), detached: !!selectedClip.look?.audioDetached, linked: selectedClip.look?.audioLink !== undefined } : null}
+              onSmartTool={(action, key) => {
+                if (action !== "detach") { smart(action, key); return; }
+                const target = clips.find((clip) => clip.key === key);
+                if (!target) return;
+                try {
+                  const next = target.look?.audioLink !== undefined ? restoreAudio(clips, key) : detachAudio(clips, key);
+                  if (edit(commit(history, next))) success(target.look?.audioLink !== undefined ? "Đã gộp âm thanh về clip video." : "Đã tách âm thanh sang tầng âm thanh.");
+                } catch (error) { notify(error instanceof Error ? error.message : String(error), true); }
+              }}
+              tab={tool} onTab={openTool} busy={disabled} catalog={catalog} catalogFailed={catalogFailed}
               onRetryCatalog={() => { setCatalogFailed(false); setCatalogRetry((value) => value + 1); }}
               hasProject={!!project && !editsDisabled} hasVisual={selectedClip?.track === "video" && !editsDisabled}
               hasSpeech={!!selectedClip && (selectedClip.kind === "audio" || selectedClip.kind === "video") && selectedClip.available}
@@ -687,13 +821,23 @@ export function App() {
               templates={<TemplateLibrary initialReference={assets?.items.find((asset) => asset.id === selection?.assetId && asset.kind === "video")}
                 disabled={disabled} onProject={openTemplateProject} notify={notify} />}
             />
-            <EditorPlayer source={<Preview selection={selection} revision={libraryRevision} busy={editsDisabled}
+            <div className="column-divider" role="separator" aria-orientation="vertical" aria-label="Đổi chiều rộng thư viện" tabIndex={0}
+              onPointerDown={(event) => { if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId); }}
+              onPointerMove={(event) => resizeColumn(event, "library")} onDoubleClick={() => setLibraryWidth(34)}
+              onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setLibraryWidth((width) => Math.max(20, Math.min(50, width + (event.key === "ArrowRight" ? 2 : -2)))); } }} />
+            <EditorPlayer meterDb={meterDb} tracking={!!tracking} trackingSource={tracking?.sourceKey} onTrackRegion={trackRegion}
+              onCancelTracking={() => { setTracking(null); notify("Đã hủy theo dõi chuyển động.", false); }}
+              source={<Preview selection={selection} revision={libraryRevision} busy={editsDisabled}
               onAppend={addMedia} onReference={() => openTool("templates")} />}
               clips={clips} laneControls={laneControls} aspect={aspect} at={playheadMs} total={total} revision={libraryRevision} frameMode={frameMode} playing={playing}
               onMode={(mode) => { setFrameMode(mode); if (!mode) setPlaying(false); }}
               onPlay={togglePlayback} onSeek={movePlayhead} onAspect={(value) => edit(history, value)} disabled={editsDisabled || !project}
               selectedKey={selectedKey} onSelect={selectClip} onTransform={(clip) => changeClip(clip, true)}
             />
+            <div className="column-divider" role="separator" aria-orientation="vertical" aria-label="Đổi chiều rộng bảng thuộc tính" tabIndex={0}
+              onPointerDown={(event) => { if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId); }}
+              onPointerMove={(event) => resizeColumn(event, "inspector")} onDoubleClick={() => setInspectorWidth(31)}
+              onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setInspectorWidth((width) => Math.max(18, Math.min(45, width + (event.key === "ArrowLeft" ? 2 : -2)))); } }} />
             <ClipInspector clip={selectedClip} aspect={aspect} disabled={editsDisabled || !project || !!(selectedClip && clipLane(laneControls, selectedClip)?.locked)}
               name={project?.name} total={total} playheadMs={playheadMs} tab={inspectorTab} onTab={setInspectorTab}
               onKeyframe={toggleTransformKey} onSeek={movePlayhead}
@@ -718,7 +862,7 @@ export function App() {
             saveState={saveState} lane={lane} laneControls={laneControls} onLaneControl={toggleLane} onLane={setLane} onTitle={() => insertTitle()}
             onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead} onPlay={togglePlayback}
             onDropMedia={dropMedia} onUndo={() => edit(undo(history))} onRedo={() => edit(redo(history))}
-            onExport={startRender} range={exportRange} onRange={markRange} />
+            onExport={startRender} range={exportRange} onRange={markRange} onNotify={notify} onSmart={smart} />
         </div> : view === "queue" ? <ExportQueue jobs={jobs} projects={projects} busy={disabled}
           onRun={() => void run(vi.working, async () => { await api.runRenderQueue(); setJobs(await api.renderQueue()); })}
           onRetry={retryRender} onCancel={cancelRender}

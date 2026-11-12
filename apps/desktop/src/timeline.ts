@@ -1,4 +1,4 @@
-import type { Aspect, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, Timeline, TimelineSnapshot, TitleStyle, Track, TransformKey, TransitionKind } from "./desktop";
+import type { Aspect, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, SpeedPoint, Timeline, TimelineSnapshot, TitleStyle, TrackPoint, Track, TransformKey, TransitionKind } from "./desktop";
 
 // Limits mirror src-tauri/src/timeline.rs, which is the authority on save.
 export const TIMELINE_VERSION = 3;
@@ -53,9 +53,12 @@ let serial = 0;
 const newKey = () => `clip-${++serial}`;
 
 export const playbackRate = (clip: Clip) => (clip.look?.speed ?? 100) / 100;
-export const clipLength = (clip: Clip) => {
-  const speed = clip.look?.speed ?? 100;
-  return Math.floor(((clip.endMs - clip.startMs) * 100 + speed / 2) / speed);
+export const clipLength = (clip: Clip): number => {
+  const span = clip.endMs - clip.startMs;
+  if ((clip.look?.speedCurve?.length ?? 0) >= 2) {
+    return curveSegments(span, clip.look!.speedCurve!).reduce((total, [start, end, speed]) => total + scaledMs(end - start, speed), 0);
+  }
+  return scaledMs(span, clip.look?.speed ?? 100);
 };
 export const clipFinish = (clip: Clip) => clip.positionMs + clipLength(clip);
 export const trackOf = (kind: MediaKind): Track => (kind === "audio" ? "audio" : "video");
@@ -292,8 +295,14 @@ export function updateAppearance(clips: Clip[], clip: Clip): Clip[] {
     }));
     clip = { ...clip, look: { ...clip.look, keyframes: [...keys.values()] } };
   }
-  const positionMs = changedLength
-    ? place(clips, clip.track, clipLength(clip), clip.positionMs, clip.key, layerOf(clip)) : clip.positionMs;
+  if (!changedLength) return clips.map((item) => item.key === clip.key ? clip : item);
+  // A speed change pushes or pulls the clips after it on the same lane, like a ripple edit.
+  const delta = clipLength(clip) - clipLength(before);
+  const edited = clip;
+  const next = clips.map((item) => item.key === edited.key ? edited
+    : sameLane(item, before) && item.positionMs >= clipFinish(before) ? { ...item, positionMs: item.positionMs + delta } : item);
+  if (validPositions(next)) return next;
+  const positionMs = place(clips, clip.track, clipLength(clip), clip.positionMs, clip.key, layerOf(clip));
   return clips.map((item) => item.key === clip.key ? { ...clip, positionMs } : item);
 }
 
@@ -482,14 +491,20 @@ export function splitClip(clips: Clip[], key: string, atMs: number): Clip[] | nu
   if (!clip) return null;
   const offset = Math.round(atMs) - clip.positionMs;
   if (!canSplit(clip, atMs)) return null;
-  const ideal = Math.round(offset * playbackRate(clip));
-  for (const delta of [0, -1, 1, -2, 2]) {
+  const curved = hasCurve(clip);
+  const ideal = Math.round(curved ? sourcePosition(clip, offset).offset : offset * playbackRate(clip));
+  for (const delta of curved ? [0] : [0, -1, 1, -2, 2]) {
     const sourceOffset = ideal + delta;
-    const left = { ...clip, endMs: clip.startMs + sourceOffset };
+    const fraction = Math.round(sourceOffset * 1000 / (clip.endMs - clip.startMs));
+    if (curved && (fraction <= 0 || fraction >= 1000)) return null;
+    const curves = curved ? [curvePart(clip.look!.speedCurve!, 0, fraction), curvePart(clip.look!.speedCurve!, fraction, 1000)] : undefined;
+    const leftBase = curves ? { ...clip, look: { ...clip.look, speedCurve: curves[0] } } : clip;
+    const rightBase = curves ? { ...clip, look: { ...clip.look, speedCurve: curves[1] } } : clip;
+    const left = { ...leftBase, endMs: clip.startMs + sourceOffset };
     const right = clip.kind === "image" || clip.kind === "text"
-      ? { ...clip, endMs: clip.endMs - sourceOffset, positionMs: clipFinish(left) }
-      : { ...clip, startMs: clip.startMs + sourceOffset, positionMs: clipFinish(left) };
-    if (clipLength(left) >= MIN_CLIP_MS && clipLength(right) >= MIN_CLIP_MS && clipFinish(right) === clipFinish(clip)) {
+      ? { ...rightBase, endMs: clip.endMs - sourceOffset, positionMs: clipFinish(left) }
+      : { ...rightBase, startMs: clip.startMs + sourceOffset, positionMs: clipFinish(left) };
+    if (clipLength(left) >= MIN_CLIP_MS && clipLength(right) >= MIN_CLIP_MS && (curved || clipFinish(right) === clipFinish(clip))) {
       const tail = trimKeys(clip, right, clipLength(left));
       return clips.flatMap((item) => item.key === key ? [trimKeys(clip, left, 0), {
         ...tail, key: newKey(), ...(tail.look?.transition ? { look: { ...tail.look, transition: undefined } } : {}),
@@ -534,4 +549,356 @@ export function redo(history: History): History {
   const [next, ...future] = history.future;
   if (!next) return history;
   return { past: [...history.past, history.present], present: next, future };
+}
+
+// ---------------------------------------------------------------------------
+// Speed curves. Integer maths mirrors `curve_segments` in timeline.rs exactly.
+
+export const CURVE_SEGMENTS = 24;
+export const MIN_SPEED = 10;
+export const MAX_SPEED = 1000;
+
+export const speedCurvePresets: { id: string; label: string; points: SpeedPoint[] }[] = [
+  { id: "montage", label: "Dồn nhịp", points: [{ at: 0, speed: 100 }, { at: 250, speed: 300 }, { at: 500, speed: 60 }, { at: 750, speed: 300 }, { at: 1000, speed: 100 }] },
+  { id: "hero", label: "Khoảnh khắc chậm", points: [{ at: 0, speed: 200 }, { at: 400, speed: 200 }, { at: 500, speed: 30 }, { at: 600, speed: 200 }, { at: 1000, speed: 200 }] },
+  { id: "bullet", label: "Viên đạn", points: [{ at: 0, speed: 300 }, { at: 450, speed: 20 }, { at: 550, speed: 20 }, { at: 1000, speed: 300 }] },
+  { id: "jump", label: "Nhảy nhịp", points: [{ at: 0, speed: 100 }, { at: 300, speed: 500 }, { at: 600, speed: 100 }, { at: 1000, speed: 500 }] },
+  { id: "flash-in", label: "Lướt vào", points: [{ at: 0, speed: 600 }, { at: 400, speed: 100 }, { at: 1000, speed: 100 }] },
+  { id: "flash-out", label: "Lướt ra", points: [{ at: 0, speed: 100 }, { at: 600, speed: 100 }, { at: 1000, speed: 600 }] },
+];
+
+function curveSpeed(points: SpeedPoint[], at: number) {
+  let previous = points[0];
+  for (const point of points.slice(1)) {
+    if (at <= point.at) {
+      return previous.speed + Math.trunc((point.speed - previous.speed) * (at - previous.at) / Math.max(1, point.at - previous.at));
+    }
+    previous = point;
+  }
+  return previous.speed;
+}
+
+/** `[source start, source end, speed %]` relative to the in point. */
+export function curveSegments(sourceMs: number, points: SpeedPoint[]): [number, number, number][] {
+  return Array.from({ length: CURVE_SEGMENTS }, (_, index) => [
+    Math.trunc(sourceMs * index / CURVE_SEGMENTS),
+    Math.trunc(sourceMs * (index + 1) / CURVE_SEGMENTS),
+    Math.max(1, curveSpeed(points, Math.trunc((2 * index + 1) * 1000 / (2 * CURVE_SEGMENTS)))),
+  ]);
+}
+
+export const scaledMs = (sourceMs: number, speed: number) => Math.floor((sourceMs * 100 + Math.trunc(speed / 2)) / speed);
+export const hasCurve = (clip: Clip) => (clip.look?.speedCurve?.length ?? 0) >= 2;
+
+export function validCurve(points: SpeedPoint[]) {
+  return points.length >= 2 && points.length <= 10 && points[0].at === 0 && points.at(-1)!.at === 1000
+    && points.every((point, index) => point.speed >= MIN_SPEED && point.speed <= MAX_SPEED
+      && Number.isInteger(point.at) && Number.isInteger(point.speed) && (index === 0 || point.at > points[index - 1].at));
+}
+
+/** Source offset (ms after the in point) and playback rate at a time inside the clip. */
+export function sourcePosition(clip: Clip, elapsed: number): { offset: number; rate: number } {
+  const span = clip.endMs - clip.startMs;
+  if (!hasCurve(clip)) {
+    const rate = playbackRate(clip);
+    return { offset: Math.min(span, Math.max(0, elapsed * rate)), rate };
+  }
+  let output = 0;
+  const segments = curveSegments(span, clip.look!.speedCurve!);
+  for (const [start, end, speed] of segments) {
+    const length = scaledMs(end - start, speed);
+    if (elapsed < output + length) return { offset: start + Math.max(0, elapsed - output) * speed / 100, rate: speed / 100 };
+    output += length;
+  }
+  return { offset: span, rate: segments.at(-1)![2] / 100 };
+}
+
+function curvePart(points: SpeedPoint[], from: number, to: number): SpeedPoint[] {
+  const inside = points.filter((point) => point.at > from && point.at < to);
+  const scale = (at: number) => Math.round((at - from) * 1000 / (to - from));
+  const result = [{ at: 0, speed: curveSpeed(points, from) },
+    ...inside.map((point) => ({ at: scale(point.at), speed: point.speed })),
+    { at: 1000, speed: curveSpeed(points, to) }];
+  return result.filter((point, index) => index === 0 || point.at > result[index - 1].at).slice(0, 10);
+}
+
+/** Applies a curve, or a constant speed when `points` is empty. Keeps the in point. */
+export function setSpeed(clips: Clip[], key: string, speed: number, points: SpeedPoint[] = []): Clip[] {
+  const clip = clips.find((item) => item.key === key);
+  if (!clip || clip.track === "text" || clip.kind === "image") return clips;
+  if (points.length && !validCurve(points)) throw new Error("Đường cong tốc độ cần 2 đến 10 điểm, tốc độ 0,1× đến 10×.");
+  const speedValue = points.length ? 100 : Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(speed)));
+  const edited = { ...clip, look: { ...clip.look, speed: speedValue, speedCurve: points.length ? points : undefined, keyframes: undefined } };
+  return updateAppearance(clips, edited);
+}
+
+// ---------------------------------------------------------------------------
+// Detach and restore audio.
+
+const nextId = (clips: Clip[], read: (clip: Clip) => number | undefined) =>
+  clips.reduce((max, clip) => Math.max(max, read(clip) ?? 0), 0) + 1;
+
+export const canDetachAudio = (clip: Clip) => clip.track === "video" && clip.kind === "video" && clip.available && !clip.look?.audioDetached;
+
+/** Moves a video clip's sound to the nearest free audio layer at the same time. */
+export function detachAudio(clips: Clip[], key: string): Clip[] {
+  const clip = clips.find((item) => item.key === key);
+  if (!clip || !canDetachAudio(clip)) return clips;
+  const link = nextId(clips, (item) => item.look?.audioLink);
+  const look = clip.look ?? {};
+  for (let layer = 0; layer < MAX_LAYERS; layer += 1) {
+    const sound: Clip = {
+      ...clip, key: newKey(), track: "audio", layer, hasThumbnail: false,
+      look: {
+        ...(look.speed && look.speed !== 100 ? { speed: look.speed } : {}),
+        ...(look.speedCurve ? { speedCurve: look.speedCurve } : {}),
+        ...(look.volume !== undefined ? { volume: look.volume } : {}),
+        ...(look.gainDb !== undefined ? { gainDb: look.gainDb } : {}),
+        ...(look.audioFadeInMs !== undefined ? { audioFadeInMs: look.audioFadeInMs } : {}),
+        ...(look.audioFadeOutMs !== undefined ? { audioFadeOutMs: look.audioFadeOutMs } : {}),
+        ...(look.cleanAudio ? { cleanAudio: true } : {}),
+        audioLink: link,
+      },
+    };
+    const next = [...clips.map((item) => item.key === key ? { ...item, look: { ...item.look, audioDetached: true, audioLink: link } } : item), sound];
+    if (validPositions(next) && next.filter((item) => item.track === "audio" && layerOf(item) === layer).length <= MAX_TRACK_CLIPS) return next;
+  }
+  throw new Error("Không còn tầng âm thanh trống ở vị trí của clip.");
+}
+
+/** Removes every audio clip detached from the clip's link and turns the sound back on. */
+export function restoreAudio(clips: Clip[], key: string): Clip[] {
+  const link = clips.find((item) => item.key === key)?.look?.audioLink;
+  if (link === undefined) return clips;
+  return clips.filter((clip) => !(clip.track === "audio" && clip.look?.audioLink === link)).map((clip) =>
+    clip.look?.audioLink === link ? { ...clip, look: { ...clip.look, audioLink: undefined, audioDetached: undefined } } : clip);
+}
+
+// ---------------------------------------------------------------------------
+// Enable / disable, compound and multicam.
+
+export function setDisabled(clips: Clip[], keys: ReadonlySet<string>, disabled: boolean): Clip[] {
+  return clips.map((clip) => keys.has(clip.key) && !clip.title
+    ? { ...clip, look: { ...clip.look, disabled: disabled || undefined } } : clip);
+}
+
+export const compoundOf = (clip: Clip) => clip.look?.compound;
+
+/** Gathers media clips under one named block. Text stays outside. */
+export function createCompound(clips: Clip[], keys: ReadonlySet<string>, name: string): Clip[] {
+  const members = clips.filter((clip) => keys.has(clip.key) && !clip.title);
+  const label = name.trim().slice(0, 60);
+  if (members.length < 2 || !label) return clips;
+  const old = new Set(members.map((clip) => compoundOf(clip)?.id).filter((id) => id !== undefined));
+  const compound = { id: nextId(clips, (clip) => compoundOf(clip)?.id), name: label };
+  return clips.map((clip) => keys.has(clip.key) && !clip.title || old.has(compoundOf(clip)?.id ?? -1)
+    ? { ...clip, look: { ...clip.look, compound } } : clip);
+}
+
+export function releaseCompound(clips: Clip[], id: number): Clip[] {
+  return clips.map((clip) => compoundOf(clip)?.id === id ? { ...clip, look: { ...clip.look, compound: undefined } } : clip);
+}
+
+export function renameCompound(clips: Clip[], id: number, name: string): Clip[] {
+  const label = name.trim().slice(0, 60);
+  if (!label) return clips;
+  return clips.map((clip) => compoundOf(clip)?.id === id ? { ...clip, look: { ...clip.look, compound: { id, name: label } } } : clip);
+}
+
+export interface CompoundBlock { id: number; name: string; keys: string[]; start: number; end: number; track: EditorTrack; layer: number }
+
+/** One block per compound, drawn on its lowest visual lane (or audio if it has no picture). */
+export function compoundBlocks(clips: Clip[]): CompoundBlock[] {
+  const blocks = new Map<number, CompoundBlock>();
+  const rank = (track: EditorTrack, layer: number) => (track === "video" ? 0 : 100) + layer;
+  for (const clip of clips) {
+    const compound = compoundOf(clip);
+    if (!compound) continue;
+    const block = blocks.get(compound.id);
+    if (!block) {
+      blocks.set(compound.id, { id: compound.id, name: compound.name, keys: [clip.key], start: clip.positionMs, end: clipFinish(clip), track: clip.track, layer: layerOf(clip) });
+    } else {
+      block.keys.push(clip.key);
+      block.start = Math.min(block.start, clip.positionMs);
+      block.end = Math.max(block.end, clipFinish(clip));
+      if (rank(clip.track, layerOf(clip)) < rank(block.track, block.layer)) { block.track = clip.track; block.layer = layerOf(clip); }
+    }
+  }
+  return [...blocks.values()];
+}
+
+/** Lines up camera angles on separate video layers and shows the lowest one. */
+export function createMulticam(clips: Clip[], keys: ReadonlySet<string>): Clip[] {
+  const angles = clips.filter((clip) => keys.has(clip.key) && clip.track === "video" && clip.kind === "video")
+    .sort((a, b) => layerOf(a) - layerOf(b));
+  if (angles.length < 2 || angles.length > 9) throw new Error("Chọn 2 đến 9 clip video làm các góc máy.");
+  if (new Set(angles.map(layerOf)).size !== angles.length) throw new Error("Mỗi góc máy cần nằm trên một tầng video riêng.");
+  const id = nextId(clips, (clip) => clip.look?.multicam);
+  const start = Math.min(...angles.map((clip) => clip.positionMs));
+  const lowest = layerOf(angles[0]);
+  const next = clips.map((clip) => angles.includes(clip)
+    ? { ...clip, positionMs: start, look: { ...clip.look, multicam: id, disabled: layerOf(clip) === lowest ? undefined : true } } : clip);
+  if (!validPositions(next)) throw new Error("Không đồng bộ được: một góc máy sẽ chồng lên clip khác trên tầng của nó.");
+  return next;
+}
+
+export const multicamAngles = (clips: Clip[], id: number) =>
+  [...new Set(clips.filter((clip) => clip.look?.multicam === id).map(layerOf))].sort((a, b) => a - b);
+
+/** Cuts to one angle from `atMs` until the next existing switch. */
+export function switchAngle(clips: Clip[], id: number, angle: number, atMs: number): Clip[] {
+  const layer = multicamAngles(clips, id)[angle];
+  if (layer === undefined) return clips;
+  let next = clips;
+  for (const clip of clips.filter((item) => item.look?.multicam === id && atMs > item.positionMs && atMs < clipFinish(item))) {
+    next = splitClip(next, clip.key, atMs) ?? next;
+  }
+  const members = next.filter((clip) => clip.look?.multicam === id);
+  const boundary = Math.min(...members.map((clip) => clip.positionMs).filter((at) => at > atMs + 1), Infinity);
+  return next.map((clip) => clip.look?.multicam === id && clip.positionMs >= atMs - 1 && clip.positionMs < boundary
+    ? { ...clip, look: { ...clip.look, disabled: layerOf(clip) === layer ? undefined : true } } : clip);
+}
+
+export function releaseMulticam(clips: Clip[], id: number): Clip[] {
+  return clips.map((clip) => clip.look?.multicam === id ? { ...clip, look: { ...clip.look, multicam: undefined } } : clip);
+}
+
+// ---------------------------------------------------------------------------
+// Smart tools fed by local analysis.
+
+function elapsedAtSource(clip: Clip, offset: number) {
+  if (!hasCurve(clip)) return offset / playbackRate(clip);
+  let low = 0;
+  let high = clipLength(clip);
+  for (let step = 0; step < 30; step += 1) {
+    const middle = (low + high) / 2;
+    if (sourcePosition(clip, middle).offset < offset) low = middle; else high = middle;
+  }
+  return high;
+}
+
+/** Splits a clip at source times reported by scene detection. */
+export function splitAtSourceTimes(clips: Clip[], key: string, sourceTimes: number[]): Clip[] {
+  let next = clips;
+  let current = key;
+  for (const time of [...sourceTimes].sort((a, b) => a - b)) {
+    const clip = next.find((item) => item.key === current);
+    if (!clip || time <= clip.startMs || time >= clip.endMs) continue;
+    const split = splitClip(next, current, clip.positionMs + Math.round(elapsedAtSource(clip, time - clip.startMs)));
+    if (!split) continue;
+    current = split[split.findIndex((item) => item.key === current) + 1].key;
+    next = split;
+  }
+  return next;
+}
+
+const LEVEL_MS = 50;
+export const levelDb = (level: number) => level * 60 / 255 - 60;
+
+/** Quiet stretches of at least `minMs` in source time, from 50 ms loudness levels. */
+export function silentRanges(levels: number[], thresholdDb: number, minMs: number): [number, number][] {
+  const ranges: [number, number][] = [];
+  let start = -1;
+  levels.forEach((level, index) => {
+    const quiet = levelDb(level) < thresholdDb;
+    if (quiet && start < 0) start = index;
+    if ((!quiet || index === levels.length - 1) && start >= 0) {
+      const end = quiet ? index + 1 : index;
+      if ((end - start) * LEVEL_MS >= minMs) ranges.push([start * LEVEL_MS, end * LEVEL_MS]);
+      start = -1;
+    }
+  });
+  return ranges;
+}
+
+/** Cuts the quiet parts out of a clip and closes the gaps on its lane. */
+export function removeSilences(clips: Clip[], key: string, levels: number[], thresholdDb = -42, minMs = 600, padMs = 120): Clip[] {
+  const clip = clips.find((item) => item.key === key);
+  if (!clip || clip.track === "text" || hasCurve(clip)) return clips;
+  const quiet = silentRanges(levels, thresholdDb, minMs)
+    .map(([start, end]) => [Math.max(clip.startMs, start + padMs), Math.min(clip.endMs, end - padMs)] as const)
+    .filter(([start, end]) => end - start >= MIN_CLIP_MS);
+  if (!quiet.length) return clips;
+  const keep: [number, number][] = [];
+  let cursor = clip.startMs;
+  for (const [start, end] of quiet) {
+    if (start - cursor >= MIN_CLIP_MS) keep.push([cursor, start]);
+    cursor = Math.max(cursor, end);
+  }
+  if (clip.endMs - cursor >= MIN_CLIP_MS) keep.push([cursor, clip.endMs]);
+  if (!keep.length) return clips;
+  let position = clip.positionMs;
+  const pieces = keep.map(([startMs, endMs]) => {
+    const piece = { ...clip, key: newKey(), startMs, endMs, positionMs: position, look: { ...clip.look, keyframes: undefined, transition: undefined } };
+    position += clipLength(piece);
+    return piece;
+  });
+  const removed = clipFinish(clip) - position;
+  const after = (item: Clip) => sameLane(item, clip) && item.positionMs >= clipFinish(clip);
+  return [...clips.filter((item) => item.key !== key).map((item) => after(item) ? { ...item, positionMs: item.positionMs - removed } : item), ...pieces];
+}
+
+/** Onsets where loudness jumps above the recent average, at least 250 ms apart. */
+export function beatTimes(levels: number[]): number[] {
+  const energy = levels.map((level) => 10 ** (levelDb(level) / 10));
+  const beats: number[] = [];
+  for (let index = 1; index < energy.length; index += 1) {
+    const window = energy.slice(Math.max(0, index - 20), index);
+    const average = window.reduce((sum, value) => sum + value, 0) / window.length;
+    const at = index * LEVEL_MS;
+    if (levelDb(levels[index]) > -36 && energy[index] > average * 1.8 && energy[index] > energy[index - 1]
+      && (!beats.length || at - beats.at(-1)! >= 250)) beats.push(at);
+  }
+  return beats;
+}
+
+/** Timeline times of beats inside a clip's visible range. */
+export function clipBeatMarkers(clip: Clip, levels: number[]) {
+  return beatTimes(levels).filter((at) => at >= clip.startMs && at < clip.endMs)
+    .map((at) => clip.positionMs + Math.round(elapsedAtSource(clip, at - clip.startMs)))
+    .filter((at) => at < clipFinish(clip));
+}
+
+/** Loudness in dBFS at a timeline time for one clip, or null when it is silent there. */
+export function clipLevelAt(clip: Clip, levels: number[], atMs: number): number | null {
+  if (atMs < clip.positionMs || atMs >= clipFinish(clip)) return null;
+  const index = Math.floor((clip.startMs + sourcePosition(clip, atMs - clip.positionMs).offset) / LEVEL_MS);
+  const level = levels[index];
+  if (level === undefined) return null;
+  const [fadeIn, fadeOut] = audioFades(clip);
+  const elapsed = atMs - clip.positionMs;
+  const fade = Math.min(1, fadeIn ? elapsed / fadeIn : 1, fadeOut ? (clipLength(clip) - elapsed) / fadeOut : 1);
+  const gain = clip.look?.gainDb ?? 20 * Math.log10(Math.max(0.001, (clip.look?.volume ?? 100) / 100));
+  return levelDb(level) + gain + 20 * Math.log10(Math.max(0.001, fade));
+}
+
+/**
+ * Turns tracking points from a source clip into position keyframes on a target
+ * overlay, so it follows the object. At most 32 keys, evenly spread.
+ */
+export function followTrack(clips: Clip[], sourceKey: string, targetKey: string, points: TrackPoint[]): Clip[] {
+  const source = clips.find((clip) => clip.key === sourceKey);
+  const target = clips.find((clip) => clip.key === targetKey);
+  if (!source || !target || target.track !== "video" || target.key === source.key || !points.length) return clips;
+  const timed = points.map((point) => ({
+    at: Math.round(source.positionMs + elapsedAtSource(source, point.atMs - source.startMs) - target.positionMs),
+    x: Math.max(-100, Math.min(100, Math.round((point.x - 500) / 10))),
+    y: Math.max(-100, Math.min(100, Math.round((point.y - 500) / 10))),
+  })).filter((point) => point.at >= 0 && point.at <= clipLength(target));
+  if (!timed.length) throw new Error("Đoạn đã theo dõi không trùng thời gian với lớp cần gắn.");
+  const step = Math.max(1, Math.ceil(timed.length / 31));
+  const chosen = timed.filter((_, index) => index % step === 0);
+  if (chosen.at(-1) !== timed.at(-1)) chosen.push(timed.at(-1)!);
+  const base = { ...defaultLook, ...target.look };
+  const keyframes = chosen.filter((point, index) => index === 0 || point.at > chosen[index - 1].at).slice(0, 32).map((point) => ({
+    atMs: point.at, x: point.x, y: point.y, scale: Math.round(base.scale), rotate: Math.round(base.rotate), opacity: Math.round(base.opacity), smooth: true,
+  }));
+  return clips.map((clip) => clip.key === targetKey ? { ...clip, look: { ...base, x: keyframes[0].x, y: keyframes[0].y, keyframes } } : clip);
+}
+
+/** Every clip whose span touches a box drawn across lanes on the timeline. */
+export function clipsInBox(clips: Clip[], fromMs: number, toMs: number, lanes: { track: EditorTrack; layer: number }[]) {
+  const [start, end] = fromMs <= toMs ? [fromMs, toMs] : [toMs, fromMs];
+  return clips.filter((clip) => clipFinish(clip) > start && clip.positionMs < end
+    && lanes.some((lane) => lane.track === clip.track && lane.layer === layerOf(clip))).map((clip) => clip.key);
 }

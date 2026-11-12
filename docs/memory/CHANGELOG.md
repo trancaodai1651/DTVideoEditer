@@ -1,6 +1,13 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-041
+Snapshot: 2026-11-12/EDITOR-050
+
+## 2026-11-12 · Editor 0.5.0
+
+- M1-H8 thêm menu chuột phải cho clip, tầng và timeline, chọn bằng khung, tab Thông minh và vách chia đổi rộng ba cột.
+- M1-H3 thêm tách/khôi phục âm thanh, tay nắm fade, meter âm lượng. Migration 009 cache mức RMS 50 ms.
+- M1-H6 thêm tắt clip, compound thu gọn, multicam đổi góc, tốc độ 0,1–10× và speed curve, tracking thành keyframe, dò cảnh, xóa khoảng lặng và marker nhịp. FFmpeg xuất speed curve cho cả hình và tiếng.
+- Đổi tốc độ trong Thuộc tính giờ đẩy clip phía sau trên cùng tầng thay vì dời clip sang chỗ trống khác.
 
 ## 2026-11-12 · Editor 0.4.1
 

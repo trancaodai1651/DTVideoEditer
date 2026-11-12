@@ -1183,3 +1183,151 @@ fn real_ffmpeg_exports_keyframes_and_transitions_with_in_out() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires FFmpeg and FFprobe installed on PATH"]
+fn real_ffmpeg_measures_tracks_and_exports_curves_with_detached_audio() {
+    use crate::analysis::{Region, levels, scene_cuts, track};
+    use crate::timeline::SpeedPoint;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ffmpeg = find_tool("ffmpeg").expect("ffmpeg on PATH");
+    let ffprobe = find_tool("ffprobe").expect("ffprobe on PATH");
+    let make = |name: &str, graph: &str| {
+        let path = dir.path().join(name);
+        let status = Command::new(&ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-filter_complex",
+                graph,
+                "-map",
+                "[v]",
+                "-map",
+                "[a]",
+            ])
+            .args([
+                "-c:v", "libx264", "-threads", "1", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", "2",
+            ])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name}");
+        path
+    };
+    // Red then blue, with silence from 0.5 s to 1.5 s.
+    let cuts = make(
+        "cuts.mp4",
+        "color=red:s=320x180:r=30:d=1[r];color=blue:s=320x180:r=30:d=1[b];[r][b]concat=n=2:v=1:a=0[v];\
+         sine=frequency=440:duration=2,volume=enable='between(t,0.5,1.5)':volume=0[a]",
+    );
+    // A white square moving right at 60 px/s on grey.
+    let moving = make(
+        "moving.mp4",
+        "color=gray:s=320x180:r=30:d=2[bg];color=white:s=30x30:r=30:d=2[box];[bg][box]overlay=x='40+t*60':y=60:shortest=1[v];\
+         sine=frequency=330:duration=2[a]",
+    );
+    let store = Store::open(&dir.path().join("test.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: ffprobe.clone(),
+        ffmpeg: None,
+    };
+    let imported = crate::library::import_files(&store, &[cuts, moving], &probe).unwrap();
+    let (cuts, moving) = (imported.assets[0].id, imported.assets[1].id);
+
+    let loudness = levels(&store, cuts).unwrap();
+    assert!((38..=42).contains(&loudness.len()), "{}", loudness.len());
+    assert!(
+        loudness[14..26].iter().all(|level| *level < 40),
+        "{loudness:?}"
+    );
+    assert!(
+        loudness[2..8].iter().all(|level| *level > 150),
+        "{loudness:?}"
+    );
+    assert_eq!(
+        store.derived_preview(cuts, DerivedPreview::Levels).unwrap(),
+        Some(loudness)
+    );
+
+    let scenes = scene_cuts(&store, cuts, 0, 2000, 32).unwrap();
+    assert_eq!(scenes.len(), 1, "{scenes:?}");
+    assert!((scenes[0] - 1000).abs() <= 80, "{scenes:?}");
+
+    let region = Region {
+        x: 125,
+        y: 333,
+        width: 94,
+        height: 167,
+    };
+    let points = track(&store, moving, 0, 2000, region).unwrap();
+    assert!(points.len() >= 18, "{}", points.len());
+    for point in &points {
+        let expected = (55.0 + point.at_ms as f64 * 0.06) * 1000.0 / 320.0;
+        assert!(
+            (f64::from(point.x) - expected).abs() <= 40.0,
+            "{point:?} vs {expected}"
+        );
+        assert!((i64::from(point.y) - 417).abs() <= 40, "{point:?}");
+    }
+
+    // A curved picture with its sound detached to Audio 1, and a disabled clip after it.
+    let mut picture = clip(cuts, 0, 2000, 0);
+    picture.look.speed_curve = vec![
+        SpeedPoint { at: 0, speed: 50 },
+        SpeedPoint {
+            at: 1000,
+            speed: 200,
+        },
+    ];
+    picture.look.audio_detached = true;
+    picture.look.audio_link = Some(1);
+    let mut sound = picture.clone();
+    sound.look.audio_detached = false;
+    let length = picture.length_ms();
+    let mut off = clip(moving, 0, 1000, length);
+    off.look.disabled = true;
+    let edits = snapshot(vec![picture, off], vec![sound]);
+    let project = store.create_project("Đường cong").unwrap();
+    store.save_timeline(project.id, &edits).unwrap();
+    let saved = store.snapshot(project.id).unwrap();
+    assert_eq!(saved.tracks[1].clips[0].look.audio_link, Some(1));
+    let output = dunce::canonicalize(dir.path()).unwrap().join("curve.mp4");
+    let job = store
+        .create_render_job(project.id, &saved, output.to_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        execute(&store, job.id, &AtomicBool::new(false)).unwrap(),
+        Outcome::Done
+    );
+    let metadata = Command::new(&ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:stream=codec_type,duration",
+            "-of",
+            "json",
+        ])
+        .arg(&output)
+        .output()
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+    let duration: f64 = metadata["format"]["duration"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let expected = (length + 1000) as f64 / 1000.0;
+    assert!(
+        (duration - expected).abs() < 0.08,
+        "{duration} vs {expected}"
+    );
+    let streams = metadata["streams"].as_array().unwrap();
+    let audio = streams
+        .iter()
+        .find(|stream| stream["codec_type"] == "audio")
+        .unwrap();
+    let audio_length: f64 = audio["duration"].as_str().unwrap().parse().unwrap();
+    assert!((audio_length - expected).abs() < 0.1, "{audio_length}");
+}

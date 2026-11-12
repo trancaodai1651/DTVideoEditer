@@ -19,6 +19,7 @@ const tabs = [
   { id: "adjustment", label: "Điều chỉnh", icon: "settings" },
   { id: "templates", label: "Mẫu dựng", icon: "timeline" },
   { id: "advanced", label: "Nâng cao", icon: "effect" },
+  { id: "smart", label: "Thông minh", icon: "split" },
 ] as const satisfies { id: string; label: string; icon: ComponentProps<typeof Icon>["name"] }[];
 
 export type LibraryTab = (typeof tabs)[number]["id"];
@@ -73,9 +74,13 @@ const titles = [
   { label: "Nhãn dưới", description: "Nền tối cho tên hoặc địa điểm", title: { ...defaultTitle, text: "Tên · Địa điểm", size: 5, x: -78, y: 75, background: true } },
 ] satisfies { label: string; description: string; title: TitleStyle }[];
 
-export function EditorLibrary({ tab, onTab, media, templates, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
+export interface SmartTarget { key: string; kind: string; track: string; layer: number; detached: boolean; linked: boolean }
+
+export function EditorLibrary({ smartTarget, onSmartTool, tab, onTab, media, templates, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
   tab: LibraryTab;
   onTab: (tab: LibraryTab) => void;
+  smartTarget: SmartTarget | null;
+  onSmartTool: (tool: "scenes" | "silence" | "beats" | "track" | "speed" | "detach", key: string) => void;
   media: ReactNode;
   templates: ReactNode;
   catalog: CatalogItem[] | null;
@@ -158,6 +163,32 @@ export function EditorLibrary({ tab, onTab, media, templates, catalog, catalogFa
         </div>
       </div>}
       {tab === "templates" && templates}
+      {tab === "smart" && <div className="library-section smart-tools">
+        <h2>Công cụ thông minh</h2>
+        <p>Chạy trên máy bằng FFmpeg với clip đang chọn. Không gửi media ra ngoài.</p>
+        {!smartTarget && <p className="inspector-help">Chọn một clip trên timeline để bật các công cụ.</p>}
+        <div className="preset-grid">
+          {([
+            ["scenes", "Dò cảnh và tách", "Tách clip video tại các điểm chuyển cảnh", smartTarget?.kind === "video"],
+            ["silence", "Xóa khoảng lặng", "Cắt các đoạn im lặng từ 0,6 giây và dồn clip", !!smartTarget && smartTarget.kind !== "image" && smartTarget.track !== "text"],
+            ["beats", "Đánh dấu nhịp nhạc", "Thêm marker theo nhịp để cắt khớp nhạc", !!smartTarget && smartTarget.kind !== "image" && smartTarget.track !== "text"],
+            ["track", "Bám theo chuyển động", "Gắn sticker hoặc lớp phủ theo vật thể trong video bên dưới", smartTarget?.track === "video" && smartTarget.layer > 0],
+            ["detach", smartTarget?.detached || smartTarget?.linked ? "Khôi phục âm thanh" : "Tách âm thanh", "Đưa tiếng của video ra tầng âm thanh riêng", smartTarget?.kind === "video"],
+            ["speed", "Đường cong tốc độ", "Tăng giảm tốc độ theo đồ thị trong Thuộc tính", !!smartTarget && smartTarget.kind !== "image" && smartTarget.track !== "text"],
+          ] as const).map(([id, label, detail, enabled]) => <button type="button" key={id} className="studio-card preset-card"
+            disabled={busy || !enabled || !smartTarget} onClick={() => smartTarget && onSmartTool(id, smartTarget.key)}>
+            <div className="preset-art" style={{ "--swatch": "#3f5d7a" } as CSSProperties}><Icon name="split" size={22} /></div>
+            <strong>{label}</strong><small>{detail}</small>
+          </button>)}
+          <button type="button" className="studio-card preset-card" disabled={busy} onClick={() => onTab("captions")}>
+            <div className="preset-art" style={{ "--swatch": "#5a4a7a" } as CSSProperties}><Icon name="caption" size={22} /></div>
+            <strong>Phụ đề tự động</strong><small>Whisper trên máy, sửa được từng câu</small>
+          </button>
+        </div>
+        <div className="tool-detail"><h3>Chưa có trong bản cục bộ</h3>
+          <p>Xóa nền bằng AI, avatar AI, lồng tiếng và dịch bằng dịch vụ cloud cần mô hình hoặc tài khoản bên ngoài. Các mục này nằm trong backlog M2 và M1-J.</p>
+        </div>
+      </div>}
       {tab === "transitions" && <div className="library-section">
         <h2>Điểm nối hai clip</h2>
         <p>Chọn clip phía sau trên cùng tầng. Hai clip phải chạm mép.</p>

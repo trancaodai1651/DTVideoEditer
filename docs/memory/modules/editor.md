@@ -14,6 +14,20 @@ M1-H2 có công tắc dồn clip chính, hít mép và liên kết riêng. Khi t
 
 M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy tắc đặt clip cho Gallery và native drop. Vùng trên các tầng hình tạo tầng phủ, vùng dưới các tầng âm thanh tạo thêm tầng âm thanh. M1-H3 có filmstrip theo trim và waveform. Khóa tầng bảo vệ phép sửa trên timeline và preview. Ẩn hình/chữ và tắt tiếng là hai điều khiển độc lập, lưu cùng snapshot xuất.
 
+## Dựng nâng cao (0.5.0)
+
+- **Menu chuột phải** [ContextMenu](../../../apps/desktop/src/ContextMenu.tsx) trên clip (cắt, sao chép, dán, nhân bản, xóa, tách, tắt clip, tách/khôi phục âm thanh, tốc độ và đường cong, nhóm, compound, multicam, công cụ thông minh, khóa tầng), trên tên tầng (khóa/ẩn/tắt tiếng, chọn cả tầng, thêm tầng) và trên vùng trống (dán tại đây, playhead, marker, In/Out, công tắc hít mép/dồn/liên kết, vừa khung). Kéo trên chỗ trống của tầng để chọn bằng khung.
+- **Tách âm thanh** tạo clip cùng asset trên tầng âm thanh trống gần nhất, hai bên cùng `audioLink`; clip video có `audioDetached` nên preview và FFmpeg bỏ tiếng của nó. Khôi phục xóa mọi clip âm thanh cùng link. Clip video được phép nằm trên track âm thanh khi có `audioLink`.
+- **Tắt clip** (`V`) giữ thời lượng trên timeline nhưng bỏ khỏi preview và xuất.
+- **Compound** (`Alt+G`) gắn `compound {id, name}` cho các clip media; khi thu gọn hiện một khối kéo được trên tầng thấp nhất, nhấp đúp để mở/thu gọn, menu để đổi tên hoặc tách. Render không đổi.
+- **Multicam** cần 2–9 clip video trên các tầng riêng; đồng bộ theo điểm đầu, góc 1 hiện, các góc khác tắt. Phím 1–9 hoặc menu đổi góc tại playhead: tách mọi góc rồi bật góc chọn tới lần đổi kế tiếp.
+- **Tốc độ** 0,1–10× và **speed curve** 2–10 điểm (vị trí phần nghìn, tốc độ %). [SpeedPanel](../../../apps/desktop/src/SpeedPanel.tsx) vẽ đồ thị log, có 6 preset. Nguồn chia 24 đoạn; `clipLength` và `length_ms` cho kết quả giống hệt. Đổi tốc độ đẩy hoặc kéo các clip sau trên cùng tầng. Split clip có đường cong chia lại đường cong cho hai nửa.
+- **Fade audio** kéo bằng hai núm tròn ở góc trên clip âm thanh.
+- **Meter** ở chân trình phát cộng công suất của các clip đang kêu tại playhead từ mức RMS cache, có vạch đỉnh giữ 1,5 giây.
+- **Công cụ thông minh** (menu hoặc tab Thông minh): dò cảnh và tách, xóa khoảng lặng dưới −42 dB từ 0,6 giây rồi dồn clip, marker theo nhịp, bám theo chuyển động. Tracking: chọn lớp phủ ở tầng trên, đặt playhead trên video ở tầng dưới, vẽ khung trên trình phát; native trả tâm vật thể 10 lần/giây, frontend đổi thành tối đa 32 keyframe vị trí.
+- Phím mới: `V`, `Q`/`W` xóa phần trước/sau playhead và dồn, `Ctrl+R` hoặc `Shift+B` mở Tốc độ, `Ctrl+Shift+S`, `Alt+G`, `Ctrl+D`, `1`–`9`.
+- Ba cột thư viện/trình phát/thuộc tính đổi rộng bằng vách chia, lưu trong `localStorage`.
+
 ## Render
 
 [render.rs](../../../apps/desktop/src-tauri/src/render.rs) dựng một lệnh FFmpeg từ snapshot và media đã qua kiểm tra grant.
@@ -22,6 +36,8 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 - Âm thanh nguồn video và nhiều tầng âm thanh được trộn với gain dB, fade đầu/cuối và limiter. `atempo` giữ cao độ khi đổi tốc độ. Khoảng trống dùng nền đen và im lặng.
 - Đầu ra H.264 (CRF 20, veryfast) và AAC 192 kb/s, `+faststart`.
 - FFmpeg ghi vào tệp tạm riêng trong thư mục đích và hoàn tất bằng thao tác chống ghi đè. Hủy hoặc lỗi dọn tệp tạm.
+
+Clip tắt bị bỏ khỏi graph. Clip video đã tách âm thanh không thêm nhánh audio. Speed curve dùng `setpts` theo từng đoạn và `asplit` → `atrim` → `atempo` → `concat` cho tiếng. `atempo` được nối khi tốc độ dưới 0,5×.
 
 `render_jobs` lưu snapshot, In–Out nếu được đặt, đích đã chọn trong hộp thoại native, tiến độ và lỗi. [ExportQueue](../../../apps/desktop/src/ExportQueue.tsx) chạy FIFO giữa các dự án. Lượt chờ giữ qua restart. Lượt bị gián đoạn được đánh dấu lỗi. Thử lại giữ snapshot và đích đã lưu.
 
@@ -35,6 +51,6 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 
 ## Giới hạn hiện tại
 
-Preview phụ thuộc codec WebView. Một số xử lý hình và tiếng nâng cao chỉ áp dụng đầy đủ khi xuất MP4. Gain dương bị giới hạn bởi volume WebView. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
+Preview phụ thuộc codec WebView. Một số xử lý hình và tiếng nâng cao chỉ áp dụng đầy đủ khi xuất MP4. Gain dương bị giới hạn bởi volume WebView. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. Compound chưa có timeline con riêng. Multicam đồng bộ theo điểm đầu, chưa theo âm thanh. Tracking theo vị trí, chưa theo tỷ lệ hay góc xoay. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
 
 Kiểm tra bằng `pnpm test`, `pnpm test:native` và `pnpm test:media`.

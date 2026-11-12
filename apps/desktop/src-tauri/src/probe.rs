@@ -354,14 +354,18 @@ fn capture(cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
     capture_allow_empty(cmd, deadline).filter(|bytes| !bytes.is_empty())
 }
 
-pub(crate) fn capture_allow_empty(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
+pub(crate) fn capture_allow_empty(cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
+    capture_limited(cmd, deadline, MAX_OUTPUT)
+}
+
+/// Runs a tool and returns stdout when it exits successfully within the deadline
+/// and writes no more than `max` bytes.
+pub(crate) fn capture_limited(mut cmd: Command, deadline: Duration, max: usize) -> Option<Vec<u8>> {
     let mut child = cmd.spawn().ok()?;
     let output = child.stdout.take().expect("stdout is piped");
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        output
-            .take((MAX_OUTPUT + 1) as u64)
-            .read_to_end(&mut bytes)?;
+        output.take((max + 1) as u64).read_to_end(&mut bytes)?;
         Ok::<_, std::io::Error>(bytes)
     });
     let success = match child.wait_timeout(deadline) {
@@ -373,7 +377,7 @@ pub(crate) fn capture_allow_empty(mut cmd: Command, deadline: Duration) -> Optio
         }
     };
     let bytes = reader.join().ok()?.ok()?;
-    (success && bytes.len() <= MAX_OUTPUT).then_some(bytes)
+    (success && bytes.len() <= max).then_some(bytes)
 }
 
 #[cfg(test)]

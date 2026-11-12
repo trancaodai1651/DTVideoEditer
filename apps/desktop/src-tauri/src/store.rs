@@ -28,6 +28,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/006_waveforms.sql"),
     include_str!("../migrations/007_filmstrips.sql"),
     include_str!("../migrations/008_lane_controls.sql"),
+    include_str!("../migrations/009_audio_levels.sql"),
 ];
 const RENDER_JOB: &str = "SELECT id, project_id, status, progress, output_path, duration_ms, error, created_at, finished_at FROM render_jobs";
 const NOT_GRANTED: StudioError = StudioError::Input("Thư mục đã bị thu hồi hoặc không tồn tại.");
@@ -41,6 +42,7 @@ pub struct Store {
 pub enum DerivedPreview {
     Waveform,
     Filmstrip,
+    Levels,
 }
 
 impl DerivedPreview {
@@ -48,6 +50,7 @@ impl DerivedPreview {
         match self {
             Self::Waveform => "waveform",
             Self::Filmstrip => "filmstrip",
+            Self::Levels => "levels",
         }
     }
 }

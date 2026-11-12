@@ -35,6 +35,14 @@ Nếu đang dùng Corepack, chạy `corepack enable` để kích hoạt shim pnp
 
 Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Có thể xuất SRT từ các lớp đã đánh dấu là phụ đề. Để nhận dạng, chọn một clip có tiếng, ngôn ngữ và mô hình Whisper GGML `.bin`. Dùng bản FFmpeg có filter `whisper`. Kiểm tra bằng `ffmpeg -h filter=whisper`. [FFmpeg Whisper](https://ffmpeg.org/ffmpeg-filters.html#whisper) · [Mô hình Whisper](https://github.com/ggml-org/whisper.cpp#quick-start)
 
+## Dựng nâng cao
+
+- Nhấp chuột phải vào clip, tên tầng hoặc vùng trống để mở menu thao tác. Kéo trên chỗ trống của tầng để chọn nhiều clip bằng khung.
+- **Tách âm thanh** (`Ctrl+Shift+S`) đưa tiếng của video ra tầng âm thanh riêng, chọn lại để khôi phục. `V` tắt hoặc bật clip mà vẫn giữ chỗ trên timeline. `Q` và `W` xóa phần trước hoặc sau playhead rồi dồn clip.
+- `Alt+G` gom các clip đã chọn thành compound; nhấp đúp để mở hoặc thu gọn. Chọn 2–9 video trên các tầng khác nhau rồi chọn **Tạo multicam**, sau đó nhấn `1`–`9` khi phát để chuyển góc.
+- `Ctrl+R` mở **Tốc độ**: tốc độ cố định 0,1–10× hoặc **Đường cong** với preset và đồ thị kéo điểm. Kéo hai núm tròn trên clip âm thanh để chỉnh fade. Meter cạnh thời gian trình phát hiển thị mức tiếng tại playhead.
+- Tab **Thông minh** chạy trên máy: dò cảnh và tách, xóa khoảng lặng, đánh dấu nhịp nhạc, bám theo chuyển động (vẽ khung quanh vật thể trên trình phát) và phụ đề Whisper. Kéo vách giữa ba cột để đổi chiều rộng.
+
 ## Đăng bài lên mạng xã hội
 
 Mở **Đăng bài**, chọn nền tảng và dán access token lấy từ app nhà phát triển của bạn. Ứng dụng xác minh token với nền tảng, lưu token vào keychain của hệ điều hành và chỉ giữ tên tài khoản trong cơ sở dữ liệu.

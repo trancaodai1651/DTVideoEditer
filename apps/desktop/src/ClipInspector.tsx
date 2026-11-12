@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
 import { fileName, mediaUrl } from "./desktop";
 import type { Aspect, ClipLook, LaneControl, TitleColor } from "./desktop";
-import { MAX_LAYERS, audioFades, clipFinish, clipLane, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, playbackRate, previousVisual, transformProperties, transitionBetween } from "./timeline";
+import { MAX_LAYERS, audioFades, clipFinish, clipLane, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, previousVisual, sourcePosition, transformProperties, transitionBetween } from "./timeline";
 import type { Clip } from "./timeline";
 import { timecode } from "./vi";
+import { SpeedPanel } from "./SpeedPanel";
 
 export const aspectNames: Record<Aspect, string> = {
   source: "Theo video nguồn", landscape: "16:9 · Ngang", portrait: "9:16 · Dọc", square: "1:1 · Vuông",
@@ -178,8 +179,7 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
         <Toggle label="Khử nhiễu âm thanh" checked={look.cleanAudio} onChange={(cleanAudio) => lookEdit({ cleanAudio })} />
       </>}
       {clip && !title && current === "speed" && <>
-        {field("Tốc độ (%)", "speed", 50, 200)}
-        <p className="inspector-help">Thời lượng sau chỉnh {timecode(clipLength(clip))}. Giữ cao độ âm thanh khi xuất.</p>
+        <SpeedPanel key={clip.key} clip={clip} onSpeed={(speed, speedCurve) => lookEdit({ speed, speedCurve: speedCurve.length ? speedCurve : undefined, keyframes: undefined })} />
         {clip.kind === "video" && <Toggle label="Nội suy chuyển động" checked={look.opticalFlow} onChange={(opticalFlow) => lookEdit({ opticalFlow })} />}
       </>}
       {clip && !title && current === "animation" && <>
@@ -219,8 +219,8 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
 
 function useMediaClock(clip: Clip, at: number, playing: boolean, revision: number) {
   const player = useRef<HTMLMediaElement | null>(null);
-  const rate = playbackRate(clip);
-  const time = (clip.startMs + at * rate) / 1000;
+  const { offset, rate } = sourcePosition(clip, at);
+  const time = (clip.startMs + offset) / 1000;
   const [fadeIn, fadeOut] = audioFades(clip);
   const gain = Math.min(1, fadeIn ? at / fadeIn : 1, fadeOut ? (clipLength(clip) - at) / fadeOut : 1);
   const baseGain = clip.look?.gainDb === undefined ? (clip.look?.volume ?? 100) / 100 : 10 ** (clip.look.gainDb / 20);
@@ -277,7 +277,7 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
     clipPath: look.ellipse ? "ellipse(50% 50%)" : undefined,
   };
   return <div className={`frame-object ${editable ? "editable" : ""} ${selected && editable ? "frame-selected" : ""}`}
-    style={bounds} title={editable ? fileName(clip.relativePath) : undefined}
+    style={bounds} data-key={clip.key} title={editable ? fileName(clip.relativePath) : undefined}
     onPointerDown={editable ? (event) => onTransform(event, { ...clip, look }, "move") : undefined}>
     {clip.kind === "image" ? <img className="frame-layer" src={src} style={style} alt="" draggable={false} />
       : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} muted={muted} playsInline preload="auto" />}
@@ -311,7 +311,7 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
     const join = left && transitionBetween(left, right);
     return left && join ? [{ left, right, ...join }] : [];
   }), [clips]);
-  const active = clipsAt(clips, at).filter((clip) => clip.available)
+  const active = clipsAt(clips, at).filter((clip) => clip.available && !clip.look?.disabled)
     .map((clip) => draft?.key === clip.key ? draft : clip).sort((a, b) => layerOf(a) - layerOf(b));
   const held = joins.filter(({ right, kind, durationMs }) => kind === "dissolve" && at >= right.positionMs
     && at < right.positionMs + durationMs).map(({ left }) => left);
@@ -392,12 +392,12 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
       const shade = Math.min(1, incoming?.kind === "black" ? 2 * elapsed / incoming.durationMs : 1,
         outgoing ? 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 1);
       return <VisualFrame key={clip.key} clip={clip} at={elapsed} revision={revision} playing={playing && !frozen}
-        muted={frozen || !!controls?.muted} aspectRatio={size} editable={editable && !playing && !frozen && !controls?.locked} selected={clip.key === selectedKey}
+        muted={frozen || !!controls?.muted || !!clip.look?.audioDetached} aspectRatio={size} editable={editable && !playing && !frozen && !controls?.locked} selected={clip.key === selectedKey}
         onTransform={begin} live={draft?.key === clip.key} blend={blend} shade={shade} />;
     })}
     {playing && active.filter((clip) => {
       const controls = clipLane(laneControls, clip);
-      return !controls?.muted && (clip.track === "audio" || (clip.kind === "video" && controls?.hidden));
+      return !controls?.muted && (clip.track === "audio" || (clip.kind === "video" && controls?.hidden && !clip.look?.audioDetached));
     }).map((clip) =>
       <AudioFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing} />)}
     {active.filter((clip) => clip.title && !clipLane(laneControls, clip)?.hidden).map((clip) => {

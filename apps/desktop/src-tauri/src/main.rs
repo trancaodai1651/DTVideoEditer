@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod analysis;
 mod captions;
 mod catalog;
 mod library;
@@ -588,6 +589,51 @@ async fn analyze_reference(
     .await
 }
 
+#[tauri::command]
+async fn audio_levels(app: AppHandle, asset_id: i64) -> CommandResult<Vec<u8>> {
+    blocking(move || analysis::levels(&app.state::<AppState>().store, asset_id)).await
+}
+
+#[tauri::command]
+async fn detect_scenes(
+    app: AppHandle,
+    asset_id: i64,
+    start_ms: i64,
+    end_ms: i64,
+    threshold: u8,
+) -> CommandResult<Vec<i64>> {
+    blocking(move || {
+        analysis::scene_cuts(
+            &app.state::<AppState>().store,
+            asset_id,
+            start_ms,
+            end_ms,
+            threshold,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn track_motion(
+    app: AppHandle,
+    asset_id: i64,
+    start_ms: i64,
+    end_ms: i64,
+    region: analysis::Region,
+) -> CommandResult<Vec<analysis::TrackPoint>> {
+    blocking(move || {
+        analysis::track(
+            &app.state::<AppState>().store,
+            asset_id,
+            start_ms,
+            end_ms,
+            region,
+        )
+    })
+    .await
+}
+
 /// Publishing, deleting and editing change something outside this machine, so the
 /// approval is a native dialog that the WebView cannot answer for the user.
 fn confirm(app: &AppHandle, title: &str, message: String, action: &str) -> Result<bool> {
@@ -842,6 +888,9 @@ fn main() {
             run_render_queue,
             list_editor_templates,
             analyze_reference,
+            audio_levels,
+            detect_scenes,
+            track_motion,
             list_social_accounts,
             connect_social_account,
             disconnect_social_account,

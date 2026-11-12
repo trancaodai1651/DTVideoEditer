@@ -22,7 +22,7 @@ use crate::{
     store::Store,
     timeline::{
         Aspect, ClipEdit, Effect, KeyColor, Look, Motion, TimelineSnapshot, TransformKey,
-        TransitionKind, check_version, transition_between,
+        TransitionKind, check_version, curve_segments, transition_between,
     },
 };
 
@@ -128,22 +128,78 @@ fn audio_chain(index: usize, clip: &ClipEdit) -> String {
         || format!("{:.2}", f64::from(clip.look.volume) / 100.0),
         |db| format!("{db}dB"),
     );
-    let tempo = if clip.look.speed == 100 {
-        String::new()
-    } else {
-        format!(",atempo={:.2}", f64::from(clip.look.speed) / 100.0)
-    };
     let clean = if clip.look.clean_audio {
         ",afftdn=nf=-28,highpass=f=70"
     } else {
         ""
     };
-    format!(
+    let head = format!(
         "[{index}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,\
-         atrim=duration={},asetpts=PTS-STARTPTS{tempo}{clean},volume={volume}{fades},adelay={}:all=1[a{index}]",
-        seconds(clip.source_length_ms()),
+         atrim=duration={},asetpts=PTS-STARTPTS",
+        seconds(clip.source_length_ms())
+    );
+    let tail = format!(
+        "volume={volume}{fades},adelay={}:all=1[a{index}]",
         clip.position_ms
-    )
+    );
+    if clip.look.speed_curve.len() < 2 {
+        return format!("{head}{}{clean},{tail}", tempo(i64::from(clip.look.speed)));
+    }
+    // A speed curve plays each source segment at its own tempo, then joins them.
+    let segments = curve_segments(clip.source_length_ms(), &clip.look.speed_curve);
+    let outputs: String = (0..segments.len())
+        .map(|part| format!("[ac{index}x{part}]"))
+        .collect();
+    let mut chain = vec![format!("{head}{clean},asplit={}{outputs}", segments.len())];
+    for (part, (start, end, speed)) in segments.iter().enumerate() {
+        chain.push(format!(
+            "[ac{index}x{part}]atrim=start={}:end={},asetpts=PTS-STARTPTS{}[ap{index}x{part}]",
+            seconds(*start),
+            seconds(*end),
+            tempo(*speed)
+        ));
+    }
+    let parts: String = (0..segments.len())
+        .map(|part| format!("[ap{index}x{part}]"))
+        .collect();
+    chain.push(format!("{parts}concat=n={}:v=0:a=1,{tail}", segments.len()));
+    chain.join(";")
+}
+
+/// `atempo` accepts 0.5 to 100 per filter, so slower speeds are chained.
+fn tempo(speed: i64) -> String {
+    let mut factor = speed as f64 / 100.0;
+    let mut filters = String::new();
+    while factor < 0.5 {
+        filters.push_str(",atempo=0.5");
+        factor /= 0.5;
+    }
+    if (factor - 1.0).abs() > 1e-9 {
+        filters.push_str(&format!(",atempo={factor:.4}"));
+    }
+    filters
+}
+
+/// Maps source time to output time for a speed curve, segment by segment.
+fn curve_pts(clip: &ClipEdit) -> String {
+    let segments = curve_segments(clip.source_length_ms(), &clip.look.speed_curve);
+    let mut offset = 0;
+    let mut pieces = Vec::new();
+    for (start, end, speed) in &segments {
+        pieces.push((
+            *end,
+            format!(
+                "{}+(T-STARTT-{})*100/{speed}",
+                seconds(offset),
+                seconds(*start)
+            ),
+        ));
+        offset += (end - start).saturating_mul(100).saturating_add(speed / 2) / speed;
+    }
+    let (_, last) = pieces.pop().expect("a curve has segments");
+    pieces.iter().rev().fold(last, |inner, (end, value)| {
+        format!("if(lt(T-STARTT,{}),{value},{inner})", seconds(*end))
+    })
 }
 
 fn grade_filters(look: &Look) -> String {
@@ -271,8 +327,11 @@ pub fn plan(
     let mut audio = vec!["[abase]".to_owned()];
     let mut index = 0;
     let mut video = "[base]".to_owned();
-    let (mut visuals, hidden): (Vec<_>, Vec<_>) =
-        snapshot.clips("video").into_iter().partition(|clip| {
+    let (mut visuals, hidden): (Vec<_>, Vec<_>) = snapshot
+        .clips("video")
+        .into_iter()
+        .filter(|clip| !clip.look.disabled)
+        .partition(|clip| {
             !snapshot
                 .lane("video", clip.layer)
                 .is_some_and(|lane| lane.hidden)
@@ -345,7 +404,9 @@ pub fn plan(
             ""
         };
         let flip = if look.flip { "hflip," } else { "" };
-        let timing = if look.speed == 100 {
+        let timing = if look.speed_curve.len() >= 2 {
+            format!("setpts='({})/TB',", curve_pts(clip))
+        } else if look.speed == 100 {
             String::new()
         } else {
             format!("setpts=(PTS-STARTPTS)*100/{},", look.speed)
@@ -396,6 +457,7 @@ pub fn plan(
         video = composed;
         if source.kind == "video"
             && source.has_audio
+            && !look.audio_detached
             && !snapshot
                 .lane("video", clip.layer)
                 .is_some_and(|lane| lane.muted)
@@ -409,6 +471,7 @@ pub fn plan(
         let source = sources.get(&clip.asset_id).ok_or_else(missing)?;
         if source.kind == "video"
             && source.has_audio
+            && !clip.look.audio_detached
             && !snapshot
                 .lane("video", clip.layer)
                 .is_some_and(|lane| lane.muted)
@@ -420,9 +483,10 @@ pub fn plan(
         }
     }
     for clip in snapshot.clips("audio") {
-        if snapshot
-            .lane("audio", clip.layer)
-            .is_some_and(|lane| lane.muted)
+        if clip.look.disabled
+            || snapshot
+                .lane("audio", clip.layer)
+                .is_some_and(|lane| lane.muted)
         {
             continue;
         }
@@ -820,6 +884,76 @@ mod tests {
             layer: 0,
             look: Default::default(),
         }
+    }
+
+    #[test]
+    fn plans_speed_curves_disabled_clips_and_detached_audio() {
+        let sources = HashMap::from([
+            (1, source("a.mp4", "video", true)),
+            (2, source("b.mp4", "video", true)),
+        ]);
+        let mut curved = clip(1, 0, 4800, 0);
+        curved.look.speed_curve = vec![
+            crate::timeline::SpeedPoint { at: 0, speed: 50 },
+            crate::timeline::SpeedPoint {
+                at: 1000,
+                speed: 400,
+            },
+        ];
+        curved.look.audio_detached = true;
+        curved.look.audio_link = Some(3);
+        let mut sound = clip(1, 0, 4800, 0);
+        sound.look.audio_link = Some(3);
+        sound.look.speed_curve = curved.look.speed_curve.clone();
+        let mut off = clip(2, 0, 1000, curved.length_ms());
+        off.look.disabled = true;
+        let snapshot = TimelineSnapshot {
+            version: 3,
+            tracks: vec![
+                TrackEdit {
+                    kind: "video".into(),
+                    clips: vec![curved.clone(), off],
+                },
+                TrackEdit {
+                    kind: "audio".into(),
+                    clips: vec![sound],
+                },
+            ],
+            titles: vec![],
+            aspect: Aspect::Source,
+            lanes: Vec::new(),
+            export_range: None,
+        };
+        let output = sources[&1].path.with_file_name("out.mp4");
+        let plan = plan(&snapshot, &sources, &output).unwrap();
+        assert_eq!(
+            plan.duration_ms,
+            curved.length_ms() + 1000,
+            "a disabled clip keeps its time"
+        );
+        let args: Vec<_> = plan
+            .args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let graph = &args[args
+            .iter()
+            .position(|arg| arg == "-filter_complex")
+            .unwrap()
+            + 1];
+        // Two inputs only: the curved picture and its detached sound. The disabled clip is skipped.
+        assert_eq!(args.iter().filter(|arg| *arg == "-i").count(), 2);
+        assert!(graph.contains("setpts='(if(lt(T-STARTT,0.200),0.000+(T-STARTT-0.000)*100/57,"));
+        assert!(graph.contains("asplit=24[ac1x0]"));
+        assert!(graph.contains(
+            "[ac1x0]atrim=start=0.000:end=0.200,asetpts=PTS-STARTPTS,atempo=0.5700[ap1x0]"
+        ));
+        assert!(graph.contains("concat=n=24:v=0:a=1,volume=1.00,adelay=0:all=1[a1]"));
+        assert!(
+            !graph.contains("[0:a:0]"),
+            "detached video keeps its sound off"
+        );
+        assert!(graph.contains("[abase][a1]amix=inputs=2"));
     }
 
     #[test]

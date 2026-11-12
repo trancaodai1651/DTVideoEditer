@@ -1,11 +1,15 @@
 import { useEffect, useEffectEvent, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent, PointerEvent, Ref } from "react";
+import type { KeyboardEvent, MouseEvent, PointerEvent, Ref } from "react";
+import { ContextMenu } from "./ContextMenu";
+import type { MenuItem, MenuState } from "./ContextMenu";
 import { fileName, mediaUrl } from "./desktop";
 import type { EditorTrack, ExportRange, LaneControl, Project } from "./desktop";
 import { Icon } from "./Icon";
 import {
-  MAX_LAYERS, MAX_TIMELINE_MS, audioFades, canSplit, changesLockedLane, clipFinish, clipLane, clipLength, clipsAt, deleteSelection, groupOf, groupSelection,
-  laneControl, layerOf, mediaDropPlacement, moveClip, moveSelection, pasteSelection, previousVisual, snap, splitClip, totalMs, transitionBetween, trimClip,
+  MAX_LAYERS, MAX_TIMELINE_MS, audioFades, canDetachAudio, canSplit, changesLockedLane, clipFinish, clipLane, clipLength, clipsAt, clipsInBox, compoundBlocks,
+  compoundOf, createCompound, createMulticam, deleteSelection, detachAudio, groupOf, groupSelection, hasCurve, laneControl, layerOf, mediaDropPlacement,
+  moveClip, moveSelection, multicamAngles, pasteSelection, previousVisual, releaseCompound, releaseMulticam, renameCompound, restoreAudio, setDisabled,
+  setSpeed, snap, speedCurvePresets, splitClip, switchAngle, totalMs, transitionBetween, trimClip,
 } from "./timeline";
 import type { Clip, MediaDropTarget, MediaRef } from "./timeline";
 import { frameTimecode, timecode, vi } from "./vi";
@@ -14,7 +18,8 @@ const MIN_SCALE = 0.00002;
 const MAX_SCALE = 0.96;
 const TICKS = [100, 200, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000];
 const SNAP_PX = 8;
-type Mode = "move" | "start" | "end";
+type Mode = "move" | "start" | "end" | "fadeIn" | "fadeOut";
+export type SmartAction = "scenes" | "silence" | "beats" | "track" | "speed";
 type Tool = "select" | "split" | "left" | "right";
 type SaveState = "saved" | "saving" | "error";
 
@@ -44,6 +49,8 @@ interface Props {
   onExport: (queueOnly: boolean) => void;
   range: ExportRange | undefined;
   onRange: (edge: "start" | "end" | "clear") => void;
+  onNotify: (text: string, error: boolean) => void;
+  onSmart: (action: SmartAction, key: string) => void;
 }
 
 export type Lane = { track: EditorTrack; layer: number };
@@ -52,6 +59,7 @@ export interface TimelineDrop {
   clear: () => void;
   target: (x: number, y: number) => MediaDropTarget | null;
   hover: (x?: number, y?: number) => void;
+  addMarkers: (times: number[]) => void;
 }
 const kinds = ["text", "video", "audio"] as const;
 const label = { text: "Chữ", video: "Video", audio: "Âm thanh" };
@@ -79,6 +87,18 @@ export function TimelineEditor(props: Props) {
   const [nativeOver, setNativeOver] = useState(false);
   const [viewport, setViewport] = useState({ width: 600, left: 0 });
   const [extra, setExtra] = useState({ text: 0, video: 1, audio: 1 });
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const boxStart = useRef<{ x: number; y: number; pointer: number } | null>(null);
+  const lastPress = useRef({ target: "", at: 0 });
+  /** Pointer events report no click count, so a second press within 400 ms counts as a double click. */
+  function doublePress(target: string) {
+    const now = performance.now();
+    const double = lastPress.current.target === target && now - lastPress.current.at < 400;
+    lastPress.current = { target: double ? "" : target, at: now };
+    return double;
+  }
   const drag = useRef<{ key: string; keys: ReadonlySet<string>; mode: Mode; at: number; x: number; y: number; pointer: number } | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLElement>(null);
@@ -92,6 +112,8 @@ export function TimelineEditor(props: Props) {
   const firstTick = Math.floor(viewport.left / (tick * scale));
   const tickCount = Math.min(Math.floor(width / (tick * scale)) - firstTick + 1, Math.ceil(viewport.width / (tick * scale)) + 2);
   const zoomPercent = Math.round(100 * Math.log(scale / MIN_SCALE) / Math.log(MAX_SCALE / MIN_SCALE));
+  const blocks = compoundBlocks(shown).filter((block) => !expanded.has(block.id));
+  const folded = new Set(blocks.flatMap((block) => block.keys));
   const selected = clips.find((clip) => clip.key === selectedKey);
   const group = selected && groupOf(selected);
   const chosen = new Set(selected ? multi.includes(selected.key) ? multi : group
@@ -202,6 +224,11 @@ export function TimelineEditor(props: Props) {
   }
 
   useImperativeHandle(props.ref, () => ({
+    addMarkers(times) {
+      const next = [...new Set([...markers, ...times.map(Math.round)])].filter((at) => at >= 0 && at <= MAX_TIMELINE_MS).sort((a, b) => a - b).slice(0, 100);
+      setMarkers(next);
+      try { localStorage.setItem(markerStorage, JSON.stringify(next)); } catch { /* Storage can be unavailable. */ }
+    },
     clear: () => setPending(null),
     target: mediaTarget,
     hover: (x, y) => setNativeOver(x !== undefined && y !== undefined && !!mediaTarget(x, y)),
@@ -224,6 +251,7 @@ export function TimelineEditor(props: Props) {
     editor.current?.focus({ preventScroll: true });
     if (clipLane(laneControls, clip)?.locked) { setMulti([]); onSelect(clip.key); return; }
     if (tool === "split" && mode === "move") {
+      if (clip.look?.compound && !expanded.has(clip.look.compound.id)) return;
       const at = Math.round(Math.round(timeAt(event.clientX) * 30 / 1000) * 1000 / 30);
       const next = splitClip(clips, clip.key, at);
       if (next) { onChange(next); onPlayhead(at); }
@@ -264,6 +292,16 @@ export function TimelineEditor(props: Props) {
       return active.keys.size > 1 ? moveSelection(clips, active.keys, at - clip.positionMs)
         : moveClip(clips, clip.key, at, target.layer);
     }
+    if (active.mode === "fadeIn" || active.mode === "fadeOut") {
+      const [fadeIn, fadeOut] = audioFades(clip);
+      const length = clipLength(clip);
+      const value = active.mode === "fadeIn" ? fadeIn + delta : fadeOut - delta;
+      const other = active.mode === "fadeIn" ? fadeOut : fadeIn;
+      const next = Math.round(Math.max(0, Math.min(10_000, length - other, value)) / 10) * 10;
+      const key = active.mode === "fadeIn" ? "audioFadeInMs" : "audioFadeOutMs";
+      if (next === (active.mode === "fadeIn" ? fadeIn : fadeOut)) return clips;
+      return clips.map((item) => item.key === clip.key ? { ...item, look: { ...item.look, [key]: next } } : item);
+    }
     return trimClip(clips, clip.key, active.mode, delta, magnet, linkage);
   }
 
@@ -301,6 +339,183 @@ export function TimelineEditor(props: Props) {
     if (next !== clips) onChange(next);
   }
 
+  function apply(change: () => Clip[], done?: string) {
+    try {
+      const next = change();
+      if (next !== clips && onChange(next) && done) props.onNotify(done, false);
+    } catch (error) {
+      props.onNotify(error instanceof Error ? error.message : String(error), true);
+    }
+  }
+
+  function copy(cut = false) {
+    clipboard.current = clips.filter((clip) => chosen.has(clip.key));
+    if (cut) remove();
+  }
+
+  function paste(at = playheadMs) {
+    const next = pasteSelection(clips, clipboard.current, at);
+    if (next !== clips && onChange(next)) {
+      setMulti(next.slice(clips.length).map((clip) => clip.key));
+      onSelect(next[clips.length].key);
+    }
+  }
+
+  function selectBlock(keys: string[]) {
+    setMulti(keys);
+    onSelect(keys[0] ?? null);
+  }
+
+  function open(event: MouseEvent, label: string, items: MenuItem[]) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (locked) return;
+    editor.current?.focus({ preventScroll: true });
+    setMenu({ x: event.clientX, y: event.clientY, label, items });
+  }
+
+  function clipMenu(event: MouseEvent, clip: Clip) {
+    const members = chosen.has(clip.key) ? chosen : new Set(groupOf(clip)
+      ? clips.filter((item) => groupOf(item) === groupOf(clip)).map((item) => item.key) : [clip.key]);
+    if (!chosen.has(clip.key)) { setMulti([...members]); onSelect(clip.key); }
+    const picked = clips.filter((item) => members.has(item.key));
+    const lockedLane = !!clipLane(laneControls, clip)?.locked;
+    const media = clip.track !== "text";
+    const compound = compoundOf(clip);
+    const cam = clip.look?.multicam;
+    const anyDisabled = picked.some((item) => item.look?.disabled);
+    const items: MenuItem[] = [
+      { label: "Cắt", shortcut: "Ctrl+X", disabled: lockedLane, action: () => { clipboard.current = picked; apply(() => deleteSelection(clips, members, magnet, linkage)); } },
+      { label: "Sao chép", shortcut: "Ctrl+C", action: () => { clipboard.current = picked; } },
+      { label: "Dán tại playhead", shortcut: "Ctrl+V", disabled: !clipboard.current.length, action: () => paste() },
+      { label: "Nhân bản ngay sau", shortcut: "Ctrl+D", action: () => { clipboard.current = picked; paste(Math.max(...picked.map(clipFinish))); } },
+      { label: "Xóa", shortcut: "Delete", danger: true, disabled: lockedLane, action: () => apply(() => deleteSelection(clips, members, magnet, linkage)) },
+      "separator",
+      { label: "Tách tại playhead", shortcut: "Ctrl+B", disabled: lockedLane || !canSplit(clip, playheadMs), action: () => apply(() => splitClip(clips, clip.key, playheadMs) ?? clips) },
+      { label: anyDisabled ? "Bật lại clip" : "Tắt clip", shortcut: "V", disabled: lockedLane || !media, action: () => apply(() => setDisabled(clips, members, !anyDisabled)) },
+    ];
+    if (clip.track === "video" && clip.kind === "video") {
+      items.push(clip.look?.audioDetached
+        ? { label: "Khôi phục âm thanh", action: () => apply(() => restoreAudio(clips, clip.key), "Đã gộp âm thanh về clip video.") }
+        : { label: "Tách âm thanh", shortcut: "Ctrl+Shift+S", disabled: lockedLane || !canDetachAudio(clip), action: () => apply(() => detachAudio(clips, clip.key), "Đã tách âm thanh sang tầng âm thanh.") });
+    }
+    if (clip.track === "audio" && clip.look?.audioLink !== undefined) {
+      items.push({ label: "Gộp lại vào video", action: () => apply(() => restoreAudio(clips, clip.key), "Đã gộp âm thanh về clip video.") });
+    }
+    if (media && clip.kind !== "image") {
+      items.push("separator", { heading: "Tốc độ" });
+      for (const speed of [50, 100, 200]) {
+        items.push({ label: (speed / 100) + "×", checked: !hasCurve(clip) && (clip.look?.speed ?? 100) === speed, disabled: lockedLane,
+          action: () => apply(() => setSpeed(clips, clip.key, speed)) });
+      }
+      for (const preset of speedCurvePresets.slice(0, 4)) {
+        items.push({ label: "Đường cong · " + preset.label, disabled: lockedLane, action: () => apply(() => setSpeed(clips, clip.key, 100, preset.points)) });
+      }
+      items.push({ label: "Chỉnh đường cong…", disabled: lockedLane, action: () => props.onSmart("speed", clip.key) });
+    }
+    items.push("separator", { heading: "Nhóm và dựng nâng cao" });
+    items.push({ label: "Nhóm", shortcut: "Ctrl+G", disabled: picked.length < 2, action: () => apply(() => groupSelection(clips, members)) });
+    if (picked.some(groupOf)) items.push({ label: "Bỏ nhóm", shortcut: "Ctrl+Shift+G", action: () => apply(() => groupSelection(clips, members, true)) });
+    if (compound) {
+      items.push(
+        { label: expanded.has(compound.id) ? "Thu gọn compound" : "Mở compound", action: () => setExpanded((current) => {
+          const next = new Set(current);
+          if (next.has(compound.id)) next.delete(compound.id); else next.add(compound.id);
+          return next;
+        }) },
+        { label: "Đổi tên compound…", action: () => {
+          const name = window.prompt("Tên compound", compound.name);
+          if (name) apply(() => renameCompound(clips, compound.id, name));
+        } },
+        { label: "Tách compound", action: () => apply(() => releaseCompound(clips, compound.id), "Đã tách compound thành các clip.") },
+      );
+    } else {
+      items.push({ label: "Tạo compound", shortcut: "Alt+G", disabled: picked.filter((item) => item.track !== "text").length < 2,
+        action: () => apply(() => createCompound(clips, members, "Compound " + (compoundBlocks(clips).length + 1)), "Đã tạo compound. Nhấp đúp để mở.") });
+    }
+    if (cam !== undefined) {
+      const angles = multicamAngles(clips, cam);
+      angles.forEach((_, index) => items.push({ label: "Chuyển sang góc " + (index + 1) + " tại playhead", shortcut: String(index + 1),
+        action: () => apply(() => switchAngle(clips, cam, index, playheadMs)) }));
+      items.push({ label: "Gỡ multicam", action: () => apply(() => releaseMulticam(clips, cam)) });
+    } else if (picked.filter((item) => item.track === "video" && item.kind === "video").length >= 2) {
+      items.push({ label: "Tạo multicam từ các clip đã chọn", action: () => apply(() => createMulticam(clips, members), "Đã đồng bộ góc máy. Nhấn 1–9 để chuyển góc tại playhead.") });
+    }
+    if (media) {
+      items.push("separator", { heading: "Công cụ thông minh" });
+      if (clip.kind === "video") items.push({ label: "Dò cảnh và tách", action: () => props.onSmart("scenes", clip.key) });
+      if (clip.kind !== "image") {
+        items.push({ label: "Xóa khoảng lặng", action: () => props.onSmart("silence", clip.key) });
+        items.push({ label: "Đánh dấu nhịp nhạc", action: () => props.onSmart("beats", clip.key) });
+      }
+      if (clip.track === "video" && layerOf(clip) > 0) items.push({ label: "Bám theo chuyển động…", action: () => props.onSmart("track", clip.key) });
+    }
+    items.push("separator", { label: lockedLane ? "Mở khóa tầng" : "Khóa tầng", action: () => props.onLaneControl({ track: clip.track, layer: layerOf(clip) }, "locked") });
+    open(event, "Thao tác với clip", items);
+  }
+
+  function laneMenu(event: MouseEvent, target: Lane) {
+    const control = laneControl(laneControls, target.track, target.layer);
+    const items: MenuItem[] = [
+      { label: "Khóa tầng", checked: !!control?.locked, action: () => props.onLaneControl(target, "locked") },
+      ...(target.track !== "audio" ? [{ label: "Ẩn hình", checked: !!control?.hidden, action: () => props.onLaneControl(target, "hidden") }] : []),
+      ...(target.track !== "text" ? [{ label: "Tắt tiếng", checked: !!control?.muted, action: () => props.onLaneControl(target, "muted") }] : []),
+      "separator",
+      { label: "Chọn tất cả trên tầng", action: () => selectBlock(clips.filter((clip) => clip.track === target.track && layerOf(clip) === target.layer).map((clip) => clip.key)) },
+      { label: "Thêm tầng " + label[target.track].toLowerCase(), disabled: layerCount(target.track) >= MAX_LAYERS, action: () => addLane(target.track) },
+    ];
+    open(event, "Thao tác với tầng", items);
+  }
+
+  function canvasMenu(event: MouseEvent) {
+    const at = timeAt(event.clientX);
+    open(event, "Thao tác với timeline", [
+      { label: "Dán tại đây", shortcut: "Ctrl+V", disabled: !clipboard.current.length, action: () => paste(at) },
+      { label: "Đặt playhead tại đây", action: () => onPlayhead(at) },
+      { label: "Chọn tất cả", shortcut: "Ctrl+A", disabled: !clips.length, action: () => selectBlock(clips.map((clip) => clip.key)) },
+      "separator",
+      { label: "Thêm chữ tại playhead", action: props.onTitle },
+      { label: "Thêm/gỡ marker", shortcut: "M", action: marker },
+      { label: "Đặt điểm In", shortcut: "I", disabled: !total, action: () => props.onRange("start") },
+      { label: "Đặt điểm Out", shortcut: "O", disabled: !total, action: () => props.onRange("end") },
+      { label: "Bỏ vùng In–Out", disabled: !props.range, action: () => props.onRange("clear") },
+      "separator",
+      { label: "Hít mép", shortcut: "N", checked: snapping, action: () => setSnapping(!snapping) },
+      { label: "Dồn clip chính", shortcut: "P", checked: magnet, action: () => setMagnet(!magnet) },
+      { label: "Liên kết", shortcut: "~", checked: linkage, action: () => setLinkage(!linkage) },
+      { label: "Vừa khung", shortcut: "Shift+Z", disabled: !total, action: fit },
+    ]);
+  }
+
+  function beginBox(event: PointerEvent<HTMLElement>) {
+    if (locked || event.button !== 0 || !canvas.current) return;
+    boxStart.current = { x: event.clientX, y: event.clientY, pointer: event.pointerId };
+    canvas.current.setPointerCapture(event.pointerId);
+  }
+
+  function boxRect(event: PointerEvent<HTMLElement>) {
+    const start = boxStart.current;
+    const bounds = canvas.current?.getBoundingClientRect();
+    if (!start || !bounds) return null;
+    return { left: Math.min(start.x, event.clientX) - bounds.left, top: Math.min(start.y, event.clientY) - bounds.top,
+      width: Math.abs(event.clientX - start.x), height: Math.abs(event.clientY - start.y) };
+  }
+
+  function finishBox(event: PointerEvent<HTMLElement>) {
+    const start = boxStart.current;
+    boxStart.current = null;
+    setBox(null);
+    if (!start || start.pointer !== event.pointerId || !canvas.current || Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5) return;
+    const [top, bottom] = [Math.min(start.y, event.clientY), Math.max(start.y, event.clientY)];
+    const rows = [...canvas.current.querySelectorAll<HTMLElement>(".tl-lane[data-track]")].filter((row) => {
+      const bounds = row.getBoundingClientRect();
+      return bounds.bottom > top && bounds.top < bottom;
+    }).map((row) => ({ track: row.dataset.track as EditorTrack, layer: Number(row.dataset.layer) }));
+    const keys = clipsInBox(clips, timeAt(start.x), timeAt(event.clientX), rows);
+    const blocksHit = blocks.filter((block) => keys.some((key) => block.keys.includes(key))).flatMap((block) => block.keys);
+    selectBlock([...new Set([...keys, ...blocksHit])]);
+  }
+
   function marker() {
     const at = Math.round(playheadMs);
     const next = markers.includes(at) ? markers.filter((value) => value !== at)
@@ -310,27 +525,52 @@ export function TimelineEditor(props: Props) {
   }
 
   function keys(event: KeyboardEvent<HTMLElement>) {
-    if (locked || event.altKey || (event.target instanceof HTMLElement && event.target.closest("input, select, textarea, [contenteditable=true]"))) return;
+    if (locked || (event.target instanceof HTMLElement && event.target.closest("input, select, textarea, [contenteditable=true]"))) return;
     const key = event.key.toLowerCase();
+    if (event.altKey) {
+      if (key === "g" && chosen.size > 1) {
+        apply(() => createCompound(clips, chosen, `Compound ${compoundBlocks(clips).length + 1}`), "Đã tạo compound. Nhấp đúp để mở.");
+        event.preventDefault();
+      }
+      return;
+    }
     if (event.ctrlKey || event.metaKey) {
       if (key === "b") split(event.shiftKey);
       else if (key === "a") { setMulti(clips.map((clip) => clip.key)); onSelect(clips[0]?.key ?? null); }
       else if (key === "g") onChange(groupSelection(clips, chosen, event.shiftKey));
-      else if (key === "c" || key === "x") {
+      else if (key === "c" || key === "x") copy(key === "x");
+      else if (key === "v") paste();
+      else if (key === "d" && chosen.size) {
         clipboard.current = clips.filter((clip) => chosen.has(clip.key));
-        if (key === "x") remove();
-      } else if (key === "v") {
-        const next = pasteSelection(clips, clipboard.current, playheadMs);
-        if (next !== clips && onChange(next)) {
-          setMulti(next.slice(clips.length).map((clip) => clip.key));
-          onSelect(next[clips.length].key);
-        }
+        paste(Math.max(...clipboard.current.map(clipFinish)));
+      } else if (key === "r" && selected && selected.track !== "text") {
+        props.onSmart("speed", selected.key);
+      } else if (key === "s" && event.shiftKey && selected) {
+        apply(() => selected.look?.audioDetached ? restoreAudio(clips, selected.key) : detachAudio(clips, selected.key));
       } else return;
       event.preventDefault();
       return;
     }
+    const camera = selected?.look?.multicam;
+    if (camera !== undefined && /^[1-9]$/.test(event.key)) {
+      apply(() => switchAngle(clips, camera, Number(event.key) - 1, playheadMs));
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Delete" || event.key === "Backspace") remove();
+    else if (key === "v" && chosen.size) apply(() => setDisabled(clips, chosen, !clips.some((clip) => chosen.has(clip.key) && clip.look?.disabled)));
     else if (key === "s") split();
+    else if (key === "b" && event.shiftKey && selected && selected.track !== "text") props.onSmart("speed", selected.key);
+    else if ((key === "q" || key === "w") && !event.shiftKey) {
+      // Delete the part of the clip before (Q) or after (W) the playhead and close the gap.
+      const target = selected && clipsAt([selected], playheadMs).length ? selected
+        : clipsAt(clips, playheadMs).find((clip) => clip.track === "video" && layerOf(clip) === 0);
+      if (target && !clipLane(laneControls, target)?.locked) {
+        apply(() => key === "q"
+          ? trimClip(clips, target.key, "start", playheadMs - target.positionMs, true, linkage)
+          : trimClip(clips, target.key, "end", playheadMs - clipFinish(target), true, linkage));
+      }
+    }
     else if (key === "a") setTool("select");
     else if (key === "b") setTool("split");
     else if (key === "[") setTool("left");
@@ -449,7 +689,7 @@ export function TimelineEditor(props: Props) {
             const name = `${label[target.track]} ${target.layer + 1}`;
             return <div className="tl-track-label" key={laneKey(target)}>
               {showOverlaySlot && target.track === "video" && target.layer === overlayLayer - 1 && <div className="tl-overlay-slot" aria-hidden="true" />}
-              <div className="tl-track-header" data-track={target.track} data-layer={target.layer}>
+              <div className="tl-track-header" data-track={target.track} data-layer={target.layer} onContextMenu={(event) => laneMenu(event, target)}>
                 <button type="button" className="track-name" disabled={locked}
                   aria-pressed={laneKey(lane) === laneKey(target)} onClick={() => props.onLane(target)}>
                   <Icon name={target.track === "text" ? "text" : target.track} size={13} />{name}
@@ -473,13 +713,16 @@ export function TimelineEditor(props: Props) {
           })}
           <div className="tl-below" aria-hidden="true" />
         </div>
-          <div className="tl-canvas" ref={canvas} style={{ width }}
+          <div className="tl-canvas" ref={canvas} style={{ width }} onContextMenu={canvasMenu}
             onPointerMove={(event) => {
+              if (boxStart.current) { setBox(boxRect(event)); return; }
               if (!drag.current) return;
               const next = dragResult(event);
               setDraft(changesLockedLane(clips, next, laneControls) ? null : next);
             }}
-            onPointerUp={finish} onPointerCancel={cancelDrag} onLostPointerCapture={cancelDrag}>
+            onPointerUp={(event) => { if (boxStart.current) finishBox(event); else finish(event); }}
+            onPointerCancel={() => { boxStart.current = null; setBox(null); cancelDrag(); }}
+            onLostPointerCapture={() => { if (!boxStart.current) cancelDrag(); }}>
             <div className="tl-ruler"
               onPointerDown={(event) => {
                 if (event.button !== 0) return;
@@ -502,16 +745,35 @@ export function TimelineEditor(props: Props) {
             {lanes.map((target) => {
               const { track, layer } = target;
               const control = laneControl(laneControls, track, layer);
-              const items = shown.filter((clip) => clip.track === track && layerOf(clip) === layer);
+              const items = shown.filter((clip) => clip.track === track && layerOf(clip) === layer && !folded.has(clip.key));
+              const laneBlocks = blocks.filter((block) => block.track === track && block.layer === layer);
               return <div key={laneKey(target)}>
                 {showOverlaySlot && track === "video" && layer === overlayLayer - 1 && <div className="tl-overlay-slot" aria-hidden="true">{ghost("video", overlayLayer)}</div>}
                 <div className={`tl-lane ${track}${track === "video" && layer === 0 ? " main-track" : ""}${control?.locked ? " locked-lane" : ""}${control?.hidden || (control?.muted && track === "audio") ? " inactive-lane" : ""}`} data-track={track} data-layer={layer}
                 onPointerDown={(event) => {
                   if (event.target === event.currentTarget) {
                     editor.current?.focus({ preventScroll: true }); props.onLane(target); setMulti([]); onSelect(null);
+                    beginBox(event);
                   }
                 }}>
-                {!items.length && track === "video" && layer === 0 && <span className="track-empty"><Icon name="video" size={14} />Kéo media hoặc tệp vào đây để dựng</span>}
+                {laneBlocks.map((block) => <div key={`compound-${block.id}`} role="button" tabIndex={0}
+                  className={`tl-clip compound ${block.keys.some((key) => chosen.has(key)) ? "selected" : ""}`}
+                  style={{ left: block.start * scale, width: Math.max((block.end - block.start) * scale, 6) }}
+                  aria-label={`Compound ${block.name}, ${block.keys.length} clip, nhấp đúp để mở`} title={`${block.name} · nhấp đúp để mở`}
+                  onContextMenu={(event) => { const first = clips.find((clip) => clip.key === block.keys[0]); if (first) { selectBlock(block.keys); clipMenu(event, first); } }}
+                  onPointerDown={(event) => {
+                    if (locked || event.button !== 0) return;
+                    event.stopPropagation();
+                    editor.current?.focus({ preventScroll: true });
+                    if (doublePress(`block-${block.id}`)) { setExpanded((current) => new Set([...current, block.id])); return; }
+                    selectBlock(block.keys);
+                    canvas.current?.setPointerCapture(event.pointerId);
+                    drag.current = { key: block.keys[0], keys: new Set(block.keys), mode: "move", at: timeAt(event.clientX), x: event.clientX, y: event.clientY, pointer: event.pointerId };
+                  }}>
+                  <span className="tl-clip-name">▣ {block.name}</span>
+                  <small>{block.keys.length} clip · {timecode(block.end - block.start)}</small>
+                </div>)}
+                {!items.length && !laneBlocks.length && track === "video" && layer === 0 && <span className="track-empty"><Icon name="video" size={14} />Kéo media hoặc tệp vào đây để dựng</span>}
                 {ghost(track, layer)}
                 {items.map((clip) => {
                   const name = clip.title?.text ?? fileName(clip.relativePath);
@@ -520,11 +782,20 @@ export function TimelineEditor(props: Props) {
                   const [fadeIn, fadeOut] = track === "audio" ? audioFades(clip) : [0, 0];
                   return <div key={clip.key} role="button" tabIndex={0} aria-pressed={chosen.has(clip.key)}
                     aria-label={vi.clipLabel(name, timecode(clip.positionMs), timecode(clipLength(clip)))}
-                    className={`tl-clip ${track} ${chosen.has(clip.key) ? "selected" : ""} ${clip.available ? "" : "offline"}`}
+                    className={`tl-clip ${track} ${chosen.has(clip.key) ? "selected" : ""} ${clip.available ? "" : "offline"}${clip.look?.disabled ? " disabled-clip" : ""}${compoundOf(clip) ? " in-compound" : ""}`}
                     style={{ left: clip.positionMs * scale, width: Math.max(clipLength(clip) * scale, 6) }}
                     title={clip.available ? clip.relativePath : vi.unavailable}
                     onKeyDown={(event) => { if (event.key === "Enter") { setMulti([]); onSelect(clip.key); } }}
-                    onPointerDown={(event) => begin(event, clip, "move")}>
+                    onPointerDown={(event) => {
+                      const compound = compoundOf(clip);
+                      if (compound && event.button === 0 && doublePress(clip.key)) {
+                        event.stopPropagation();
+                        setExpanded((current) => { const next = new Set(current); next.delete(compound.id); return next; });
+                        return;
+                      }
+                      begin(event, clip, "move");
+                    }}
+                    onContextMenu={(event) => clipMenu(event, clip)}>
                     <span className="tl-handle start" aria-hidden="true"
                       onPointerDown={(event) => begin(event, clip, "start")} />
                     {clip.available && (clip.hasThumbnail || clip.kind === "video") && <span className="tl-clip-art" aria-hidden="true"
@@ -546,8 +817,17 @@ export function TimelineEditor(props: Props) {
                     {clip.look?.keyframes?.map((key) => <span className="tl-keyframe" key={key.atMs}
                       title={`Keyframe ${timecode(key.atMs)}`} style={{ left: key.atMs * scale }} />)}
                     {groupOf(clip) && <span className="tl-group-badge" title={`Nhóm ${groupOf(clip)}`}>↔</span>}
+                    <span className="tl-badges">
+                    {(clip.look?.audioDetached || clip.look?.audioLink !== undefined) && <span className="tl-badge" title={clip.track === "audio" ? "Âm thanh đã tách từ video" : "Âm thanh đã tách"}>{clip.track === "audio" ? "⛓" : "🔇"}</span>}
+                    {clip.look?.multicam !== undefined && <span className="tl-badge" title="Góc máy multicam">🎥{multicamAngles(shown, clip.look.multicam).indexOf(layerOf(clip)) + 1}</span>}
+                    {hasCurve(clip) && <span className="tl-badge" title="Đường cong tốc độ">⏱</span>}
+                    {compoundOf(clip) && <span className="tl-badge" title={`Thuộc compound ${compoundOf(clip)!.name}`}>▣</span>}</span>
                     {fadeIn > 0 && <span className="tl-fade in" aria-hidden="true" style={{ width: fadeIn * scale }} />}
                     {fadeOut > 0 && <span className="tl-fade out" aria-hidden="true" style={{ width: fadeOut * scale }} />}
+                    {track === "audio" && <span className="tl-fade-knob in" title={`Fade vào ${fadeIn} ms · kéo để chỉnh`} style={{ left: fadeIn * scale }}
+                      onPointerDown={(event) => begin(event, clip, "fadeIn")} />}
+                    {track === "audio" && <span className="tl-fade-knob out" title={`Fade ra ${fadeOut} ms · kéo để chỉnh`} style={{ right: fadeOut * scale }}
+                      onPointerDown={(event) => begin(event, clip, "fadeOut")} />}
                     <span className="tl-handle end" aria-hidden="true"
                       onPointerDown={(event) => begin(event, clip, "end")} />
                   </div>;
@@ -557,11 +837,13 @@ export function TimelineEditor(props: Props) {
             })}
             <div className="tl-below" aria-hidden="true">{nextAudioLayer > 0 && nextAudioLayer < MAX_LAYERS && ghost("audio", nextAudioLayer)}</div>
             <div className="tl-playhead" style={{ left: playheadMs * scale }} aria-hidden="true" />
+            {box && <div className="tl-box" aria-hidden="true" style={box} />}
             {props.range && props.range.endMs > props.range.startMs && <div className="tl-export-range" aria-hidden="true"
               style={{ left: props.range.startMs * scale, width: (props.range.endMs - props.range.startMs) * scale }} />}
           </div>
       </div>
 
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </section>
   );
 }

@@ -24,6 +24,10 @@ Frontend giữ trạng thái sửa và lịch sử undo/redo, gửi nguyên snap
 
 Kết nối bằng access token do người dùng tự lấy từ app của họ, vì OAuth cần app secret và redirect đã đăng ký mà dự án chưa có. Token nằm trong keychain qua crate `keyring`, HTTP dùng `reqwest` blocking với TLS của hệ điều hành để không phải build thư viện mã hóa. Mỗi lần đăng, sửa, xóa phải qua hộp thoại native. M4-B và M4-C được làm trước M4-A theo yêu cầu của chủ dự án.
 
+## ADR-008 · 2026-11-12 · Thuộc tính clip cho dựng nâng cao và phân tích cục bộ
+
+Tách âm thanh, tắt clip, compound, multicam và speed curve là trường tùy chọn trong `Look`, mặc định rỗng, để snapshot version 3 và dữ liệu cũ giữ nguyên. Compound là nhóm có tên hiển thị thành một khối trên timeline, không phải timeline con; render không đổi. Multicam là các góc trên tầng riêng, đổi góc bằng split và tắt clip. Speed curve chia nguồn thành 24 đoạn tốc độ không đổi; Rust và TypeScript dùng cùng phép tính số nguyên để thời lượng khớp tuyệt đối, FFmpeg dùng `setpts` từng đoạn cho hình và `atrim`/`atempo`/`concat` cho tiếng. Tracking dùng block matching trên khung xám 160 px trong Rust thay vì thêm OpenCV. Mức âm lượng RMS 50 ms được cache để meter, xóa khoảng lặng và dò nhịp dùng chung.
+
 ## ADR-007 · 2026-11-11 · Cấp quyền từng tệp từ picker và native drop
 
 M1-H1 mở rộng ADR-002. Picker tệp và sự kiện thả từ hệ điều hành lưu canonical path với phạm vi đúng một tệp. Dùng bảng grant hiện tại để tái sử dụng thu hồi, ID nguồn và quan hệ SQLite. Cấp quyền thư mục vẫn cần hộp thoại chọn thư mục. Frontend nhận tọa độ thả và asset ID để quyết định chèn clip vào dự án đang mở. Preview, waveform, render, nhận dạng, phân tích mẫu và publishing dùng chung kiểm tra phạm vi nguồn. [Quyền media](SECURITY.md)

@@ -1,12 +1,54 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-041
+Snapshot: 2026-11-12/EDITOR-050
 
 ## Điểm vào cho Claude Code hoặc Codex
 
-Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có thao tác timeline, preview, các thư viện và thuộc tính tương tự CapCut Desktop, kho mẫu từ video tham chiếu, hàng đợi xuất nhiều dự án và bộ cài Windows/macOS Universal. Người dùng đã cho phép push source lên `origin` và chạy GitHub Actions. Tiếp tục M1-H3, rồi M1-H6 và M1-F. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker hoặc native drop.
+Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [module editor](modules/editor.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có giao diện, thao tác và chức năng tương đương CapCut Desktop, và đã cho phép push lên `origin`, chạy GitHub Actions và build bộ cài. DT_Edit dùng bố cục và luồng thao tác tương tự nhưng giao diện, tên và tài nguyên là của riêng dự án, không sao chép thương hiệu hay asset CapCut. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker, native drop hoặc phân tích media.
 
-Phiên khảo sát dùng Computer Use trên CapCut Windows 9.7.1.4203, draft tổng hợp **1111 (1)**. Đã thử import nhiều tệp, split theo frame, trim với magnet/linkage, chọn phải, group/compound, keyframe, Black Fade, kéo chữ, mask hình chữ nhật, SRT tiếng Việt, fade và kéo clip WAV, lớp hiệu ứng riêng, zoom vừa khung, xuất MP4 toàn timeline và xuất riêng range In–Out. Người dùng chưa có quyền CapCut Pro. Dùng ca CC-06/CC-07 cho thao tác timeline, CC-14 cho keyframe, CC-18/CC-19 cho audio và CC-23/CC-29 cho nối cảnh và xuất vùng. [Kết quả khảo sát](CAPCUT_DESKTOP_AUDIT.md)
+Task tiếp theo là **M1-H8**: chạy các ca dưới đây trong cửa sổ Tauri thật, sửa lỗi phát hiện, rồi làm phần còn lại của M1-H8 và M1-H6 theo backlog.
+
+## Bản 0.5.0
+
+Người dùng yêu cầu hoàn thiện sidebar, menu chuột phải, tách âm thanh, compound, multicam, speed curve, tracking và luồng AI/Pro, tiếp nối M1-H3. Phạm vi đã làm và còn lại:
+
+| Mục | Đã làm | Còn lại |
+| --- | --- | --- |
+| Menu chuột phải | Clip, tên tầng, vùng trống timeline, điều hướng bằng phím, tự giữ trong cửa sổ. [ContextMenu](../../apps/desktop/src/ContextMenu.tsx) | Thẻ thư viện, trình phát; copy/paste thuộc tính, thay clip, freeze, reverse |
+| Sidebar | Tab **Thông minh** gọi công cụ thật trên clip đang chọn; ba cột đổi rộng. [EditorLibrary](../../apps/desktop/src/EditorLibrary.tsx) | Danh mục con trong từng tab, đổi cỡ panel theo chiều dọc |
+| Tách âm thanh | Tách/khôi phục, liên kết `audioLink`, `Ctrl+Shift+S`, preview tắt tiếng video, FFmpeg bỏ nhánh tiếng | Đồng bộ lại khi kéo lệch |
+| Meter, fade | Meter RMS tại playhead, vạch đỉnh; núm kéo fade đầu/cuối | Meter hai kênh |
+| Tắt clip | `V`, menu, giữ thời lượng, bỏ khỏi preview và xuất | |
+| Compound | `Alt+G`, khối thu gọn kéo được, nhấp đúp mở/thu gọn, đổi tên, tách | Timeline con riêng, xuất riêng compound |
+| Multicam | 2–9 góc trên tầng riêng, đồng bộ theo điểm đầu, phím 1–9 đổi góc tại playhead | Đồng bộ theo âm thanh, xem lưới nhiều góc |
+| Tốc độ | 0,1–10×, speed curve 2–10 điểm, 6 preset, đồ thị kéo điểm, `Ctrl+R`/`Shift+B`; đổi tốc độ đẩy clip sau | Smooth slow-mo theo đường cong |
+| Tracking | Vẽ khung trên trình phát, block matching 10 khung/giây, tối đa 32 keyframe vị trí | Theo tỷ lệ, góc xoay; mask bám theo |
+| Thông minh | Dò cảnh và tách, xóa khoảng lặng, marker theo nhịp, phụ đề Whisper (có sẵn) | Xóa nền AI, avatar, lồng tiếng, dịch cloud cần mô hình hoặc tài khoản (M2, M1-J) |
+| Phím | `Q`/`W` xóa trước/sau playhead và dồn, `Ctrl+D` nhân bản | Phím player và attributes theo bảng khảo sát |
+
+Source chính: [phép sửa](../../apps/desktop/src/timeline.ts) cuối tệp, [TimelineEditor](../../apps/desktop/src/TimelineEditor.tsx), [SpeedPanel](../../apps/desktop/src/SpeedPanel.tsx), [EditorPlayer](../../apps/desktop/src/EditorPlayer.tsx), [App](../../apps/desktop/src/App.tsx) (`smart`, `trackRegion`, meter), [analysis.rs](../../apps/desktop/src-tauri/src/analysis.rs), [timeline.rs](../../apps/desktop/src-tauri/src/timeline.rs) (`SpeedPoint`, `Compound`, `curve_segments`), [render.rs](../../apps/desktop/src-tauri/src/render.rs) (`curve_pts`, `tempo`) và [migration 009](../../apps/desktop/src-tauri/migrations/009_audio_levels.sql). Schema dữ liệu lên `user_version = 9`; timeline JSON vẫn version 3 với trường tùy chọn mới.
+
+**Đã kiểm chứng trên Windows 11**
+
+- `pnpm lint`, `pnpm typecheck`, `cargo fmt --check`, 28 test Node (thêm [smart.test.mjs](../../scripts/smart.test.mjs)), 26 test Rust, 6 test FFmpeg thật, `context:check`, `skills:check`.
+- Test FFmpeg mới `real_ffmpeg_measures_tracks_and_exports_curves_with_detached_audio`: mức RMS thấp trong đoạn im lặng 0,5–1,5 giây và được cache; dò đúng một điểm cắt ở 1 giây (±80 ms); tracking hình vuông chạy 60 px/giây sai lệch ≤ 40/1000 khung; xuất clip speed curve 0,5×→2× có âm thanh tách và một clip tắt, FFprobe đo thời lượng hình và tiếng khớp tính toán (±80–100 ms).
+- Giao diện production chạy trong trình duyệt với IPC giả lập tạm (đã gỡ khỏi repo): menu chuột phải, tách âm thanh lưu đúng `audioLink`, multicam đổi góc tại 5,97 giây, compound thu gọn và mở, preset speed curve, tab Thông minh tách 3 cảnh, vẽ khung tracking ghi keyframe.
+- Bộ cài NSIS 0.5.0 build tại máy (xem mục Bộ cài).
+
+**Chưa kiểm chứng**
+
+- Chưa thao tác trong cửa sổ Tauri thật và trên macOS. Meter, tracking và dò cảnh mới chạy với dữ liệu thật trong test native, chưa qua giao diện thật. Kéo núm fade và chọn bằng khung chưa thử bằng chuột.
+
+**Ca chạy lại trong cửa sổ thật**
+
+1. `pnpm demo:media`, build QA với app identifier riêng như mục 0.4.1, nhập MP4 và WAV mẫu.
+2. Chuột phải clip video → Tách âm thanh: có clip ở tầng âm thanh, video không còn tiếng khi phát, xuất MP4 vẫn có tiếng. Chuột phải → Khôi phục âm thanh.
+3. Chọn clip → `V`: clip mờ sọc, preview đen tại đó, MP4 giữ tổng thời lượng.
+4. Đặt hai video trên Video 1 và Video 2, chọn cả hai → menu Tạo multicam → phát và nhấn `2`, `1` ở các mốc khác nhau; xuất và kiểm tra đổi hình.
+5. Chọn clip → `Ctrl+R` → Đường cong → Viên đạn, kéo một điểm, phát thử; xuất và đo thời lượng bằng FFprobe so với số trong Thuộc tính.
+6. Thêm sticker ở tầng trên một video có vật chuyển động, menu Bám theo chuyển động, vẽ khung, phát và xuất.
+7. Chọn clip có đoạn im lặng → tab Thông minh → Xóa khoảng lặng; với nhạc → Đánh dấu nhịp nhạc.
+8. Kéo vách chia giữa ba cột, khởi động lại để kiểm tra kích thước được giữ. Kiểm tra ở 1280×720 và 2560×1440.
 
 ## Bản 0.4.1
 

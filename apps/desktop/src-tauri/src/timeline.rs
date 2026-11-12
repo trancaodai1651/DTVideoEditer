@@ -95,6 +95,75 @@ pub struct Look {
     pub keyframes: Vec<TransformKey>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transition: Option<ClipTransition>,
+    /// A video clip whose sound was moved to its own audio clip.
+    #[serde(skip_serializing_if = "is_false")]
+    pub audio_detached: bool,
+    /// Pairs a detached audio clip with the video clip it came from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_link: Option<u32>,
+    /// Keeps the clip on the timeline but leaves it out of preview and export.
+    #[serde(skip_serializing_if = "is_false")]
+    pub disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compound: Option<Compound>,
+    /// Clips that share a multicam id are camera angles of one take.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multicam: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub speed_curve: Vec<SpeedPoint>,
+}
+
+/// A point on a speed curve. `at` is the position in the source range in
+/// thousandths, `speed` is a percentage of normal speed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpeedPoint {
+    pub at: u16,
+    pub speed: u16,
+}
+
+/// Clips that share a compound id are edited and moved as one named block.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Compound {
+    pub id: u32,
+    pub name: String,
+}
+
+pub const CURVE_SEGMENTS: i64 = 24;
+pub const MIN_SPEED: u16 = 10;
+pub const MAX_SPEED: u16 = 1000;
+
+fn curve_speed(points: &[SpeedPoint], at: i64) -> i64 {
+    let mut previous = points[0];
+    for &point in &points[1..] {
+        if at <= i64::from(point.at) {
+            let (a0, a1) = (i64::from(previous.at), i64::from(point.at));
+            let (s0, s1) = (i64::from(previous.speed), i64::from(point.speed));
+            return s0 + (s1 - s0) * (at - a0) / (a1 - a0).max(1);
+        }
+        previous = point;
+    }
+    i64::from(previous.speed)
+}
+
+/// The source range split into equal parts, each played at one speed:
+/// `(source start, source end, speed percent)` relative to the clip in point.
+pub fn curve_segments(source_ms: i64, points: &[SpeedPoint]) -> Vec<(i64, i64, i64)> {
+    (0..CURVE_SEGMENTS)
+        .map(|index| {
+            let middle = (2 * index + 1) * 1000 / (2 * CURVE_SEGMENTS);
+            (
+                source_ms * index / CURVE_SEGMENTS,
+                source_ms * (index + 1) / CURVE_SEGMENTS,
+                curve_speed(points, middle).max(1),
+            )
+        })
+        .collect()
+}
+
+fn scaled(source_ms: i64, speed: i64) -> i64 {
+    source_ms.saturating_mul(100).saturating_add(speed / 2) / speed
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +241,12 @@ impl Default for Look {
             edit_group: None,
             keyframes: Vec::new(),
             transition: None,
+            audio_detached: false,
+            audio_link: None,
+            disabled: false,
+            compound: None,
+            multicam: None,
+            speed_curve: Vec::new(),
         }
     }
 }
@@ -179,6 +254,17 @@ impl Default for Look {
 impl Look {
     fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    fn valid_curve(&self) -> bool {
+        let points = &self.speed_curve;
+        (2..=10).contains(&points.len())
+            && points[0].at == 0
+            && points[points.len() - 1].at == 1000
+            && points.windows(2).all(|pair| pair[0].at < pair[1].at)
+            && points
+                .iter()
+                .all(|point| (MIN_SPEED..=MAX_SPEED).contains(&point.speed))
     }
 
     fn valid(&self) -> bool {
@@ -194,7 +280,13 @@ impl Look {
             && self.audio_fade_in_ms.is_none_or(|ms| ms <= 10_000)
             && self.audio_fade_out_ms.is_none_or(|ms| ms <= 10_000)
             && self.gain_db.is_none_or(|db| (-60..=6).contains(&db))
-            && (50..=200).contains(&self.speed)
+            && (MIN_SPEED..=MAX_SPEED).contains(&self.speed)
+            && (self.speed_curve.is_empty() || self.speed == 100)
+            && (self.speed_curve.is_empty() || self.valid_curve())
+            && self.compound.as_ref().is_none_or(|compound| {
+                let length = compound.name.chars().count();
+                (1..=60).contains(&length) && !compound.name.chars().any(char::is_control)
+            })
             && (-180..=180).contains(&self.rotate)
             && (-100..=100).contains(&self.temperature)
     }
@@ -275,11 +367,13 @@ impl ClipEdit {
     }
 
     pub fn length_ms(&self) -> i64 {
-        let speed = i64::from(self.look.speed.max(1));
-        self.source_length_ms()
-            .saturating_mul(100)
-            .saturating_add(speed / 2)
-            / speed
+        if self.look.speed_curve.len() >= 2 {
+            return curve_segments(self.source_length_ms(), &self.look.speed_curve)
+                .into_iter()
+                .map(|(start, end, speed)| scaled(end - start, speed))
+                .sum();
+        }
+        scaled(self.source_length_ms(), i64::from(self.look.speed.max(1)))
     }
 
     pub fn finish_ms(&self) -> i64 {
@@ -440,7 +534,9 @@ pub fn check_version(snapshot: &TimelineSnapshot) -> Result<()> {
 pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()> {
     let fits_track = match asset.kind {
         "audio" => track == "audio",
-        "video" | "image" => track == "video",
+        // A video clip's sound can sit on an audio track once it is detached.
+        "video" => track == "video" || (track == "audio" && clip.look.audio_link.is_some()),
+        "image" => track == "video",
         _ => false,
     };
     if !fits_track {
@@ -448,7 +544,9 @@ pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()
     }
     if clip.layer >= MAX_LAYERS
         || !clip.look.valid()
-        || (asset.kind == "image" && clip.look.speed != 100)
+        || (asset.kind == "image" && (clip.look.speed != 100 || !clip.look.speed_curve.is_empty()))
+        || (track != "video" && (clip.look.audio_detached || clip.look.multicam.is_some()))
+        || (track == "video" && clip.look.audio_link.is_some() && !clip.look.audio_detached)
         || (track == "audio" && !clip.look.keyframes.is_empty())
         || clip.look.transition.as_ref().is_some_and(|edit| {
             track != "video"
@@ -541,6 +639,78 @@ mod tests {
             layer: 0,
             look: Look::default(),
         }
+    }
+
+    #[test]
+    fn speed_curves_fix_length_and_detached_audio_fits_audio_tracks() {
+        let mut curved = clip(0, 4800, 0);
+        curved.look.speed_curve = vec![
+            SpeedPoint { at: 0, speed: 200 },
+            SpeedPoint {
+                at: 1000,
+                speed: 200,
+            },
+        ];
+        assert_eq!(curved.length_ms(), 2400);
+        curved.look.speed_curve = vec![
+            SpeedPoint { at: 0, speed: 100 },
+            SpeedPoint {
+                at: 500,
+                speed: 400,
+            },
+            SpeedPoint {
+                at: 1000,
+                speed: 100,
+            },
+        ];
+        let segments = curve_segments(4800, &curved.look.speed_curve);
+        assert_eq!(segments.len(), 24);
+        assert_eq!((segments[0].0, segments[23].1), (0, 4800));
+        assert_eq!(segments[0].2, 112);
+        assert_eq!(segments[11].2, 387);
+        assert_eq!(curved.length_ms(), 2213);
+        let video = AssetFacts {
+            kind: "video",
+            duration_ms: Some(6000),
+        };
+        assert!(check_clip("video", &curved, &video).is_ok());
+        curved.look.speed = 150;
+        assert!(
+            check_clip("video", &curved, &video).is_err(),
+            "a curve replaces the constant speed"
+        );
+        curved.look.speed = 100;
+        curved.look.speed_curve[1].at = 0;
+        assert!(check_clip("video", &curved, &video).is_err());
+
+        let mut sound = clip(0, 3000, 0);
+        assert!(check_clip("audio", &sound, &video).is_err());
+        sound.look.audio_link = Some(7);
+        assert!(check_clip("audio", &sound, &video).is_ok());
+        let mut picture = clip(0, 3000, 0);
+        picture.look.audio_link = Some(7);
+        assert!(
+            check_clip("video", &picture, &video).is_err(),
+            "the video side must be marked detached"
+        );
+        picture.look.audio_detached = true;
+        assert!(check_clip("video", &picture, &video).is_ok());
+        picture.look.compound = Some(Compound {
+            id: 1,
+            name: String::new(),
+        });
+        assert!(check_clip("video", &picture, &video).is_err());
+        picture.look.compound = Some(Compound {
+            id: 1,
+            name: "Mở đầu".into(),
+        });
+        picture.look.multicam = Some(2);
+        picture.look.disabled = true;
+        assert!(check_clip("video", &picture, &video).is_ok());
+        let mut slow = clip(0, 1000, 0);
+        slow.look.speed = 10;
+        assert_eq!(slow.length_ms(), 10_000);
+        assert!(check_clip("video", &slow, &video).is_ok());
     }
 
     #[test]

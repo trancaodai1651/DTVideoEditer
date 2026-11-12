@@ -103,7 +103,21 @@ export interface ClipLook {
   editGroup?: number;
   keyframes?: TransformKey[];
   transition?: ClipTransition;
+  /** A video clip whose sound now lives on its own audio clip. */
+  audioDetached?: boolean;
+  /** Pairs a detached audio clip with the video clip it came from. */
+  audioLink?: number;
+  /** Kept on the timeline but left out of preview and export. */
+  disabled?: boolean;
+  compound?: { id: number; name: string };
+  /** Clips sharing a multicam id are camera angles of one take. */
+  multicam?: number;
+  speedCurve?: SpeedPoint[];
 }
+/** `at` is the position in the source range in thousandths, `speed` a percentage. */
+export interface SpeedPoint { at: number; speed: number }
+export interface TrackPoint { atMs: number; x: number; y: number }
+export interface TrackRegion { x: number; y: number; width: number; height: number }
 export type TransitionKind = "black" | "dissolve";
 export interface ClipTransition {
   kind: TransitionKind;
@@ -307,6 +321,12 @@ export const api = {
   templates: () => invoke<TemplateEntry[]>("list_editor_templates"),
   analyzeReference: (assetId: number, name: string) => invoke<TemplateEntry>("analyze_reference", { assetId, name }),
   tools: () => invoke<MediaTools>("media_tools"),
+  /** Loudness per 50 ms, 0 = -60 dBFS or quieter, 255 = full scale. */
+  audioLevels: (assetId: number) => invoke<number[]>("audio_levels", { assetId }),
+  detectScenes: (assetId: number, startMs: number, endMs: number, threshold: number) =>
+    invoke<number[]>("detect_scenes", { assetId, startMs, endMs, threshold }),
+  trackMotion: (assetId: number, startMs: number, endMs: number, region: TrackRegion) =>
+    invoke<TrackPoint[]>("track_motion", { assetId, startMs, endMs, region }),
   accounts: () => invoke<SocialAccount[]>("list_social_accounts"),
   connectAccount: (input: ConnectInput) => invoke<SocialAccount>("connect_social_account", { input }),
   disconnectAccount: (accountId: number) => invoke<void>("disconnect_social_account", { accountId }),
