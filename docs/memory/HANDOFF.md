@@ -36,11 +36,21 @@ Source chính: [timeline.ts](../../apps/desktop/src/timeline.ts) phần "Colour,
 - Test FFmpeg mới `real_ffmpeg_grades_freezes_reverses_and_syncs_audio`: độ lệch hai góc đo được 700 ms (±20); điểm ảnh cho thấy reverse bắt đầu bằng nửa xanh và kết thúc bằng đỏ, freeze giữ khung xanh, LUT đảo đỏ thành cyan, hue 120 chuyển đỏ sang lục, lớp điều chỉnh bão hòa 0 khử màu; xuất chữ phông đậm, màu hex, viền, nền, bóng, hiện dần, căn trái.
 - Phát hiện và sửa lỗi có từ 0.5.0: giải mã PCM bỏ mất khoảng trống ở đầu luồng tiếng nên lệch thời gian cho meter, xóa khoảng lặng và marker nhịp. Migration 010 xóa cache mức âm lượng cũ.
 - Giao diện production trong trình duyệt với IPC giả lập tạm (đã gỡ khỏi repo): thêm lớp điều chỉnh và kéo phơi sáng/bão hòa (preview nhận bảng tông giống khi xuất), khung hình tĩnh, multicam theo âm thanh, timeline con của compound, lồng tiếng, lưu key và dịch phụ đề, đổi phông/màu/bóng chữ.
-- Bản debug với dữ liệu riêng khởi động và nâng lên schema 10. Bộ cài NSIS 0.6.0 build tại máy.
+- Bản debug với dữ liệu riêng khởi động và nâng lên schema 10. Bộ cài NSIS 0.6.0 build tại máy, CI và đóng gói hai nền tảng đạt.
 
 **Chưa kiểm chứng**
 
 - Cửa sổ Tauri thật, macOS, lệnh `say`. Chưa gọi Claude API thật (cần key của người dùng). Phông Impact/Courier trên macOS và Linux dùng đường dẫn ứng viên, chưa thử.
+
+**Bộ cài và revision 0.6.0**
+
+- Commit `48836d9`, tag `v0.6.0`. CI master/tag và hai job đóng gói (NSIS Windows x64, DMG macOS Universal có `lipo` và `hdiutil verify`) đạt. [CI](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43147030547) · [Bộ cài](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43147030572) · [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.6.0)
+- Bộ cài Windows build tại máy: `apps/desktop/src-tauri/target/verified-installers/v0.6.0/AI Video Studio_0.6.0_x64-setup.exe`, SHA-256 `21667c90fcbf2667fa0c3510ff91998746db264492128b4a614556062d7d7852`. DMG tải từ trang run (phiên này không có `gh`); digest archive ghi bên dưới.
+
+| Archive trên Actions | SHA-256 |
+| --- | --- |
+| `windows-x64-setup` | `aec010f14619cb2212fc9da46ca8e12e6957410e3fc8170a9dd107e0a9450ef1` |
+| `macos-universal-dmg` | `bccd90ea55a98809a7df485d139f43229a336790e1d9c367b136020d2e529038` |
 
 **Ca chạy lại trong cửa sổ thật**
 
