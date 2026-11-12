@@ -283,7 +283,7 @@ impl Segmenter {
             let target = format!("{system}-{}", std::env::consts::ARCH);
             let archive = resources.join("rembg").join(format!("{target}.tar.gz"));
             if archive.is_file() {
-                let root = data.join(format!("rembg-2.0.87-v1-{target}"));
+                let root = data.join(format!("rembg-2.0.87-v2-{target}"));
                 let python_path = if cfg!(windows) {
                     "python/python.exe"
                 } else {

@@ -1,6 +1,10 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-080
+Snapshot: 2026-11-12/EDITOR-081
+
+## 2026-11-12 · Editor 0.8.1
+
+- M5-A sửa mặc định Proxy bật ở lần mở đầu tiên. M5-B bỏ biên dịch JIT cho các bộ lọc PyMatting không dùng trong pipeline xóa nền tích hợp để giảm thời gian khởi động.
 
 ## 2026-11-12 · Editor 0.8.0
 

@@ -8,6 +8,9 @@ if not model.is_file():
     raise RuntimeError("Missing bundled u2netp.onnx")
 os.environ["REMBG_HOME"] = str(root)
 os.environ["OMP_NUM_THREADS"] = "2"
+# The standard mask path uses ONNX and Pillow. Avoid compiling PyMatting's
+# optional alpha-matting kernels when importing rembg on a fresh install.
+os.environ["NUMBA_DISABLE_JIT"] = "1"
 sys.path.insert(0, str(root / "packages"))
 
 from PIL import Image

@@ -1,6 +1,6 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-080
+Snapshot: 2026-11-12/EDITOR-081
 
 ## Điểm vào cho Claude Code hoặc Codex
 
@@ -8,7 +8,9 @@ Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án
 
 Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu, thử các ca còn mở trong [backlog](TASK_BACKLOG.md) và mục bên dưới trên Windows/macOS.
 
-## Bản 0.8.0
+## Bản 0.8.1
+
+QA phát hiện Proxy của tag 0.8.0 tắt khi chưa có preference. Bản 0.8.1 sửa mặc định và dùng runtime rembg tách phiên bản, bỏ JIT cho các bộ lọc PyMatting không dùng. Hai phiên bản dùng cùng schema.
 
 - **M1-K.** Bản 0.7.0 bỏ clip khi FFmpeg báo lỗi và một cảnh ưu tiên có thể dùng hết thời lượng. Bản mới quét từng khối 120 giây cho đến hết khoảng video trên timeline, trả số mili giây đã đọc và số khối dùng giải mã GPU. Ưu tiên CUDA hoặc VideoToolbox để giải mã/thu nhỏ, rồi thử giải mã GPU với resize CPU và cuối cùng CPU hoàn toàn. Xếp điểm bằng chuyển động, ánh sáng và RMS. Nếu còn đoạn chưa đọc, app giữ clip và hiện thông báo. Dành thời lượng cho nhiều asset khác nhau trước khi thêm cảnh từ cùng nguồn. Chế độ **Dựng theo âm thanh** lấy nhịp từ một clip hoặc các clip đang phát trên track âm thanh, giữ overlap và layer. Giới hạn 96 clip hình đầu vào, 120 giây đầu ra. [Analysis](../../apps/desktop/src-tauri/src/analysis.rs) · [Montage](../../apps/desktop/src/montage.ts)
 - **M5-A.** Proxy mặc định bật, chạy nền khi nguồn đang xem rộng ≥2560 hoặc cao ≥1440. Tạo thủ công từ menu chuột phải của trình phát. Proxy H.264 720p/30fps giữ tiếng AAC và cache theo ID/kích thước/mtime. Kiểm tra lại grant khi đọc byte range. Kết xuất và phân tích dùng nguồn gốc. Video alpha dùng nguồn gốc. [Proxy](../../apps/desktop/src-tauri/src/proxy.rs)

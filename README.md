@@ -53,7 +53,7 @@ Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Có thể
 - **Proxy** trong trình phát mặc định bật. Video từ 2560 px ngang hoặc 1440 px dọc được tạo proxy H.264 720p khi xem. Chuột phải trong trình phát để tạo proxy cho clip khác hoặc chuyển về nguồn gốc. Xuất MP4 và **Xem bản xuất** dùng media gốc.
 - Trong menu **Dự án**, chọn **Lưu dự án thành tệp…** rồi chọn thư mục và tên `.dtedit`. **Mở tệp dự án…** tạo dự án có thể sửa từ bản đã lưu. Tệp giữ timeline và LUT, tham chiếu media tại vị trí gốc. Khi chuyển sang thư viện mới, nhập lại nguồn từ vị trí gốc trước khi mở.
 - **Xem bản xuất** trong trình phát dùng FFmpeg để xem tối đa 20 giây từ playhead, gồm LUT, chỉnh màu và video đảo ngược.
-- Chọn clip rồi mở **Thông minh → Xóa nền AI**. Bộ cài phát hành 0.8.0 chứa runtime `rembg` và mô hình U²-Net nhỏ, tự giải nén lần đầu. Bản chạy từ source có thể dùng `rembg[cpu,cli]` trên PATH. Video cần FFmpeg và đoạn trim 0,5–8 giây. Với video alpha, dùng **Xem bản xuất** nếu trình phát tương tác thiếu codec. [rembg](https://github.com/danielgatis/rembg)
+- Chọn clip rồi mở **Thông minh → Xóa nền AI**. Bộ cài phát hành 0.8.1 chứa runtime `rembg` và mô hình U²-Net nhỏ, tự giải nén lần đầu. Bản chạy từ source có thể dùng `rembg[cpu,cli]` trên PATH. Video cần FFmpeg và đoạn trim 0,5–8 giây. Với video alpha, dùng **Xem bản xuất** nếu trình phát tương tác thiếu codec. [rembg](https://github.com/danielgatis/rembg)
 - **Thông minh → Avatar AI** cần HeyGen API key, Avatar ID và Voice ID. Tạo job từ kịch bản, kiểm tra trạng thái rồi nhập MP4. [HeyGen API](https://developers.heygen.com/reference/create-video)
 
 ## Đăng bài lên mạng xã hội

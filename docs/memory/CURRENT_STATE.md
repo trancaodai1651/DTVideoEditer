@@ -1,6 +1,6 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-12/EDITOR-080
+Snapshot: 2026-11-12/EDITOR-081
 
 Next task: M1-H8
 
@@ -15,7 +15,7 @@ Next task: M1-H8
 - Bản 0.6.0 (M1-H6, M1-H8, M2-B một phần): chỉnh màu đầy đủ (phơi sáng, vùng sáng/tối, điểm trắng/đen, nhiệt độ, sắc độ, tông, bão hòa, rực màu, đường cong tông, LUT .cube), lớp điều chỉnh, chữ phong phú (5 phông, màu tùy chọn, viền, nền, căn lề, bóng, hiện/ẩn dần, giãn dòng), sao chép/dán thuộc tính, thay clip, khung hình tĩnh, đảo ngược, timeline con cho compound, multicam đồng bộ theo âm thanh, tracking theo vị trí/tỷ lệ/góc xoay, lồng tiếng bằng giọng của hệ điều hành và dịch phụ đề bằng Claude API có hỏi xác nhận. [Editor và render](modules/editor.md)
 - M5-B một phần: quy trình NSIS Windows x64 và DMG Universal arm64/x86_64.
 - Bản 0.7.0 (M1-K, M1-H6, M1-H8, M2-A/M1-J): dựng highlight hoặc dựng theo một clip âm thanh từ timeline, mở thành dự án mới có thể sửa; **Xem bản xuất** bằng FFmpeg; lọc loại media và menu chuột phải của thẻ/trình phát; xóa nền AI cục bộ và tạo avatar HeyGen. Cơ sở dữ liệu schema 10, timeline version 3. [Editor và render](modules/editor.md)
-- Bản 0.8.0 (M1-K, M1-L, M5-A/M5-B): quét toàn bộ khoảng video được dùng trên timeline, giữ nhiều nguồn trong highlight, dựng theo một hoặc nhiều âm thanh, proxy 720p, tệp `.dtedit` lưu ở nơi được chọn và runtime xóa nền đi kèm bộ cài. [Bàn giao](HANDOFF.md)
+- Bản 0.8.1 (M1-K, M1-L, M5-A/M5-B): quét toàn bộ khoảng video được dùng trên timeline, giữ nhiều nguồn trong highlight, dựng theo một hoặc nhiều âm thanh, proxy 720p mặc định bật, tệp `.dtedit` lưu ở nơi được chọn và runtime xóa nền đi kèm bộ cài. [Bàn giao](HANDOFF.md)
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token trong keychain, nháp, duyệt native, đăng, danh sách, sửa và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng

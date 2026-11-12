@@ -49,7 +49,9 @@ function clipSelection(clip: Clip, playheadMs: number): Selection | null {
 
 function storedNumber(key: string, fallback: number, min: number, max: number) {
   try {
-    const value = Number(localStorage.getItem(key));
+    const saved = localStorage.getItem(key);
+    if (saved === null) return fallback;
+    const value = Number(saved);
     return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
   } catch { return fallback; }
 }
