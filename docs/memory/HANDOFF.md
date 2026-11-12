@@ -15,25 +15,35 @@ Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu
 | M1-K | Kéo nguồn lên timeline → **Thông minh** → **Dựng tự động từ timeline**. **Chọn cảnh highlight** ưu tiên cảnh có điểm cao, giữ thứ tự nguồn, chọn thêm ảnh. **Dựng theo một clip âm thanh** căn điểm cắt gần đỉnh RMS, chia đều khi không có nhịp rõ, giữ một lớp tiếng đã chọn và tắt tiếng nguồn video. Tối đa 96 clip đầu vào và 120 giây đầu ra. Cảnh được đánh giá từ tín hiệu hình/tiếng cục bộ. Dự án mới giữ các clip, chuyển cảnh, màu và keyframe ảnh ở dạng sửa được. |
 | M1-H6 | Trình phát → **Xem bản xuất**. FFmpeg dùng project đã lưu và render tối đa 20 giây từ playhead. Nhấn **Bản dựng** để tiếp tục kéo/chỉnh. Chế độ chỉnh trực tiếp còn xấp xỉ ở tint/vibrance/hue, và reverse dùng tua frame. |
 | M1-H8 | Media có bộ lọc Tất cả/Video/Ảnh/Âm thanh. Sidebar Âm thanh mở nhạc nền, hiệu ứng âm thanh và tệp đã nhập. Sidebar Chữ mở chữ cơ bản, mẫu chữ và phụ đề. Menu chuột phải ở thẻ media mở nguồn, thêm clip và lọc theo loại. Menu trình phát mở nguồn/bản dựng/bản xuất, vừa khung và toàn màn hình. |
-| M1-J/M2-A | **Thuộc tính → Nâng cao → Xóa nền AI** chạy `rembg` trên PATH với mô hình U²-Net nhỏ. Ảnh ra PNG alpha. Video trim 0,5–8 giây ra ProRes 4444 alpha, 12 fps, cạnh tối đa 640 px, giữ tiếng AAC nếu có. Có thể dùng **Xem bản xuất** nếu WebView không phát được ProRes. Nguồn gốc giữ nguyên và thao tác thay clip hoàn tác được. **Thông minh → Avatar AI** cần HeyGen API key, Avatar ID và Voice ID. Sau khi đồng ý gửi kịch bản, lưu mã job để kiểm tra rồi nhập MP4 khi hoàn tất. |
+| M1-J/M2-A | Chọn clip rồi mở **Thông minh → Xóa nền AI**. Lệnh `rembg` trên PATH dùng mô hình U²-Net nhỏ. Ảnh ra PNG alpha. Video trim 0,5–8 giây ra ProRes 4444 alpha, 12 fps, cạnh tối đa 640 px, giữ tiếng AAC nếu có. Có thể dùng **Xem bản xuất** nếu WebView thiếu codec ProRes. Nguồn gốc giữ nguyên và thao tác thay clip hoàn tác được. **Thông minh → Video avatar AI · HeyGen** cần HeyGen API key, Avatar Look ID và Voice ID. Sau khi đồng ý gửi kịch bản, lưu mã job để kiểm tra rồi nhập MP4 khi hoàn tất. |
 
 Source chính: [montage.ts](../../apps/desktop/src/montage.ts), [MontagePanel](../../apps/desktop/src/MontagePanel.tsx), [analysis.rs](../../apps/desktop/src-tauri/src/analysis.rs), [preview.rs](../../apps/desktop/src-tauri/src/preview.rs), [generative.rs](../../apps/desktop/src-tauri/src/generative.rs), [AvatarPanel](../../apps/desktop/src/AvatarPanel.tsx), [installer workflow](../../.github/workflows/installers.yml). Schema SQLite 10, timeline JSON v3.
 
 **Kiểm chứng**
 
-- Windows Tauri production QA 1280×720 dùng kho dữ liệu riêng: nhập MP4/PNG/WAV bằng picker, kéo từng tệp từ thư viện xuống timeline, dựng highlight ba đoạn có chuyển cảnh và phát bản xem trước MP4.
+- Windows Tauri production QA dùng kho dữ liệu riêng. Cửa sổ 1280×720 nhập MP4/PNG/WAV bằng picker, kéo từng tệp vào timeline, tạo highlight ba đoạn có chuyển cảnh và phát bản xem trước MP4. Trên màn hình 2560×1440 (vùng cửa sổ tối đa 2560×1392), đã kiểm tra bố cục, sidebar Âm thanh/Chữ và tạo dự án theo WAV 3 giây, có hai đoạn hình 1,5 giây và chuyển cảnh 480 ms. Mở lại dự án nguồn từ nút Dự án xác nhận vẫn có ba clip gốc.
+- Tauri Windows đã xóa nền PNG của ảnh thử trên tầng Video 2, thấy video tầng dưới qua phần trong suốt. Kiểm tra tab Thông minh cho thấy cả hai ô API key chưa được cấu hình.
+- Lint, TypeScript, 36 test Node, 33 test Rust, 7 test FFmpeg, `cargo fmt --check`, `pnpm context:check` và `pnpm skills:check` đều đạt. [CI tag](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43154122657) · [CI master](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43154122806)
 - Test Node đo vị trí cắt theo audio đã trim và cách chia nguồn khi nhạc ngắn. Test FFmpeg đo cảnh tại mốc 1000 ms trong nguồn đã trim, kiểm tra LUT/hue/reverse qua pixel khi xuất và xác nhận preview dùng MP4 byte-range.
 - Test `real_rembg_segments_photo_and_short_video` chạy rembg 2.0.87 và mô hình `u2netp` thật. FFprobe đọc PNG `rgba` và MOV ProRes có alpha và AAC. Lệnh chạy lại: đặt `DT_EDIT_REMBG_FIXTURE` trỏ tới PNG chân dung và chạy `cargo test real_rembg_segments_photo_and_short_video -- --ignored` trong `apps/desktop/src-tauri` với rembg và FFmpeg trên PATH.
 
 **Ca tiếp theo**
 
 - Live test Claude và HeyGen cần key nhập trực tiếp trong ứng dụng. Kiểm tra dịch giữ thời điểm phụ đề, phản hồi khi hết quota, vòng đời job HeyGen và tải MP4. Hai key nằm trong keychain, tránh ghi vào bàn giao.
-- Thử thao tác Finder, export, voice `say` và cửa sổ macOS. Kiểm tra layout tại 2560×1440, presets và các thao tác còn thiếu trong M1-H8.
+- Thử kéo từ Finder, export, giọng `say` và các thao tác editor trên máy Mac thật. CI đã khởi động app đóng gói trên Apple Silicon. Lần thử khởi động trên Intel và ký/notarize còn ở M5-B. Tiếp tục các preset và thao tác trong M1-H8.
 - Thử montage với nguồn dài hơn và bộ video có cảnh nổi bật được đánh dấu sẵn để đo chất lượng. Phân tích chữ, câu thoại, chuyển động và các lớp âm thanh từ video mẫu thuộc M1-F.
 
 **Phát hành**
 
-- Tag `v0.7.0` chạy GitHub Actions để build NSIS x64 và DMG Universal. [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.7.0)
+- Revision bộ cài `3a92f148d1d5fb79a4e38049ec6bd7d3a4629086`, tag `v0.7.0`. Runner build NSIS x64 và DMG Universal. Mac `lipo` xác nhận `x86_64 arm64`, `hdiutil verify` đạt và ứng dụng khởi động trên runner `arm64`. [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.7.0) · [Bộ cài](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43154122677) · [Job macOS](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43154122677/job/130969967030)
+- Thư mục bộ cài đã giải nén trên PC là `apps/desktop/src-tauri/target/verified-installers/v0.7.0/`. Đã đối chiếu SHA-256 từng ZIP với GitHub Actions trước khi giải nén.
+
+| Tệp | SHA-256 |
+| --- | --- |
+| `AI Video Studio_0.7.0_x64-setup.exe` | `dbbf54a0f0ed650a9b15d807422dc6070f68173712a0190dfc7785cf5c7c8565` |
+| `AI Video Studio_0.7.0_universal.dmg` | `91a7028507634c225b6e94eb4db20107c99a242e4a7173bff0c2dfa85f8e8557` |
+| Archive `windows-x64-setup` | `e4153226212ed94fb592d1e573fb4ff4233f5c12fc3fe8da312176687876ab1b` |
+| Archive `macos-universal-dmg` | `c3865b8c383c7c110847d387cfa384bfd1c9b7ed31cafe07c69365c54248604e` |
 
 ## Bản 0.6.0
 

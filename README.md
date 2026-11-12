@@ -51,7 +51,7 @@ Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Có thể
 
 - **Thông minh → Dựng tự động từ timeline** có hai chế độ. **Chọn cảnh highlight** ưu tiên đoạn video có tín hiệu chuyển động, ánh sáng và âm thanh nổi bật. **Dựng theo một clip âm thanh** căn các đoạn video/ảnh theo clip âm thanh đã chọn. Cả hai tạo dự án mới có chuyển cảnh và keyframe ảnh để sửa tiếp.
 - **Xem bản xuất** trong trình phát dùng FFmpeg để xem tối đa 20 giây từ playhead, gồm LUT, chỉnh màu và video đảo ngược.
-- **Nâng cao → Xóa nền AI** cần Python 3.11–3.13, `rembg` trong PATH và FFmpeg cho video. Cài bằng `python -m pip install "rembg[cpu,cli]"`, sau đó mở lại ứng dụng. CLI tải mô hình U²-Net nhỏ ở lần đầu. Dùng với ảnh hoặc video đã trim 0,5–8 giây. Với video alpha, dùng **Xem bản xuất** nếu trình phát tương tác thiếu codec. [rembg](https://github.com/danielgatis/rembg)
+- Chọn clip rồi mở **Thông minh → Xóa nền AI**. Cần Python 3.11–3.13, `rembg` trong PATH và FFmpeg cho video. Cài bằng `python -m pip install "rembg[cpu,cli]"`, sau đó mở lại ứng dụng. CLI tải mô hình U²-Net nhỏ ở lần đầu. Dùng với ảnh hoặc video đã trim 0,5–8 giây. Với video alpha, dùng **Xem bản xuất** nếu trình phát tương tác thiếu codec. [rembg](https://github.com/danielgatis/rembg)
 - **Thông minh → Avatar AI** cần HeyGen API key, Avatar ID và Voice ID. Tạo job từ kịch bản, kiểm tra trạng thái rồi nhập MP4. [HeyGen API](https://developers.heygen.com/reference/create-video)
 
 ## Đăng bài lên mạng xã hội

@@ -4,6 +4,8 @@
 | --- | --- | --- |
 | FFprobe và FFmpeg | Chạy binary local từ PATH, chỉ tệp trong grant, không dùng token | Smoke test trên video, WAV, ảnh và tệp hỏng |
 | Claude API (dịch phụ đề) | Đã có. HTTP thô tới `/v1/messages`, model `claude-opus-5-5`, effort `low`, `fallbacks: "default"` với beta `server-side-fallback-2026-07-01`, `anthropic-version: 2026-10-21`. Key trong keychain, hỏi xác nhận mỗi lần gửi | Chưa gọi thật. Cần key để live test, kiểm tra lỗi 401/429 và refusal |
+| HeyGen (avatar) | Tạo video với Avatar Look ID và Voice ID qua `POST /v3/videos`, lấy trạng thái qua `GET /v3/videos/{id}`, tải MP4 khi hoàn tất. Keychain và xác nhận native trước khi gửi kịch bản | Test kiểm tra dữ liệu gửi và URL tải. Cần key và ID thật để kiểm tra vòng đời job. [HeyGen](https://developers.heygen.com/reference/create-video) |
+| rembg (xóa nền) | CLI cục bộ, mô hình `u2netp`, chỉ đọc media trong grant | Đã chạy mô hình thật trên Windows. PNG alpha qua Tauri và MOV ProRes alpha có AAC qua test native. [rembg](https://github.com/danielgatis/rembg) |
 | Giọng đọc hệ điều hành | Đã có. Windows System.Speech, macOS `say`. Không cần mạng | Đã chạy thật trên Windows 11. macOS chưa thử |
 | Gemini, Claude, OpenAI | M2. User cung cấp key trong OS keychain, chọn provider/model, đồng ý với dữ liệu gửi | Schema validation và lỗi auth/rate limit. Live test theo quyền và quota hiện hành |
 | Codex và Claude CLI/SDK | M2. User tự cài, đăng nhập và chọn opt-in | Kiểm tra điều khoản và capability. Tách auth CLI khỏi billing API |

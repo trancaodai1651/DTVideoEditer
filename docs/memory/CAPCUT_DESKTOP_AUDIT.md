@@ -4,6 +4,8 @@ Khảo sát ngày 11/11/2026 trên Windows, CapCut Desktop 9.7.1.4203, giao di�
 
 Bổ sung cho 0.4.1 sau khi mở lại draft thử bằng Computer Use. Timeline chính cho thấy clip video phủ trên track chính, WAV dưới track chính, filmstrip theo thời gian, waveform và nhóm nút khóa/ẩn/tắt tiếng ở đầu tầng. Media tab dùng một hàng cuộn và thẻ media có trạng thái đã thêm. Việc thả vào khoảng trống trong các lần kéo bằng Computer Use chưa cho kết quả ổn định. Ca xác minh hai luồng kéo trong DT_Edit nằm ở [bàn giao](HANDOFF.md).
 
+Bổ sung cho 0.7.0 ngày 12/11/2026. Đã mở draft trống trên CapCut 9.7.1.4203 ở trạng thái chưa đăng nhập. Tab Media có sidebar nguồn, Audio có Import/Yours/Music/Sound effects, Text có Add text/Text effects/Text template/Auto captions/Local captions. DT_Edit có lọc theo loại ở Media, sidebar nhóm ở Âm thanh và Chữ, cùng các menu của thẻ media và trình phát. Còn mở phần preset và luồng thao tác trong M1-H8. [Bàn giao](HANDOFF.md)
+
 ## Tái lập
 
 1. Từ thư mục DT_Edit chạy `pnpm demo:media` để tạo MP4 H.264/AAC 640×360 dài 6 giây, WAV 3 giây và PNG trong một thư mục tạm. Thử trên draft riêng. Phiên này tạo draft mặc định **1111 (1)** bằng **Create project**.

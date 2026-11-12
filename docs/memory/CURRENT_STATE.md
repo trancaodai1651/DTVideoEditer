@@ -19,7 +19,7 @@ Next task: M1-H8
 
 ## Mức kiểm chứng
 
-- 0.7.0 trên Windows 11: kéo MP4/PNG/WAV từ thư viện trong cửa sổ Tauri 1280×720, tạo highlight có ba đoạn, phát bản xem trước kết xuất. Test FFmpeg xác nhận đọc byte-range từ preview MP4 có LUT. Test U²-Net thật cho PNG RGBA và MOV ProRes 4444 có alpha và tiếng AAC. [Bàn giao](HANDOFF.md)
+- 0.7.0 trên Windows 11: cửa sổ Tauri 1280×720 và trên màn hình 2560×1440, kéo MP4/PNG/WAV, tạo cả highlight và bản theo WAV, phát preview FFmpeg và xóa nền PNG. Test rembg thật xuất ProRes có alpha và AAC. CI macOS kiểm tra DMG hai kiến trúc và khởi động app trên ARM64. Live test Claude/HeyGen cần key. [Bàn giao](HANDOFF.md)
 
 - 0.6.0: 33 test Node, 32 test Rust, 7 test FFmpeg thật và test giọng đọc Windows thật đạt. Test FFmpeg mới đo độ lệch âm thanh 700 ms giữa hai góc, kiểm tra điểm ảnh cho reverse, freeze, LUT đảo màu, hue, lớp điều chỉnh khử màu, và xuất chữ nhiều thuộc tính. Giao diện đã thao tác trong trình duyệt với IPC giả lập. Chưa thử trong cửa sổ Tauri thật và chưa gọi Claude API thật. [Bàn giao](HANDOFF.md)
 
