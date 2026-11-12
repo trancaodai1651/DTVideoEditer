@@ -246,6 +246,43 @@ pub fn has_audio(ffprobe: &Path, path: &Path, format: &MediaFormat) -> bool {
     capture(cmd, PROBE_TIMEOUT).is_some_and(|bytes| bytes.starts_with(b"audio"))
 }
 
+#[derive(Deserialize)]
+pub struct EditStream {
+    pub codec_type: String,
+    pub avg_frame_rate: Option<String>,
+    pub channels: Option<u8>,
+    pub sample_rate: Option<String>,
+    pub disposition: Option<EditDisposition>,
+}
+
+#[derive(Deserialize)]
+pub struct EditDisposition {
+    pub attached_pic: Option<u8>,
+}
+
+pub fn edit_streams(ffprobe: &Path, path: &Path, format: &MediaFormat) -> Option<Vec<EditStream>> {
+    #[derive(Deserialize)]
+    struct Response {
+        streams: Vec<EditStream>,
+    }
+    let mut cmd = command(ffprobe);
+    cmd.args(["-v", "error"])
+        .args(format.input_args())
+        .args([
+            "-show_entries",
+            "stream=codec_type,avg_frame_rate,channels,sample_rate:stream_disposition=attached_pic",
+            "-of",
+            "json",
+            "-i",
+        ])
+        .arg(path);
+    Some(
+        serde_json::from_slice::<Response>(&capture(cmd, PROBE_TIMEOUT)?)
+            .ok()?
+            .streams,
+    )
+}
+
 pub fn find_tool(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let binary = if cfg!(windows) {

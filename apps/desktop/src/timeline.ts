@@ -4,7 +4,7 @@ import type { Aspect, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, SpeedP
 export const TIMELINE_VERSION = 3;
 export const MAX_LAYERS = 12;
 export const MAX_TRACK_CLIPS = 200;
-export const MAX_TITLES = 300;
+export const MAX_TITLES = 1800;
 export const MIN_CLIP_MS = 100;
 export const MAX_IMAGE_MS = 600_000;
 export const MAX_TIMELINE_MS = 21_600_000;
@@ -267,7 +267,7 @@ export function addTitle(clips: Clip[], wantedMs: number, layer: number, title =
 
 export function addCaptions(clips: Clip[], cues: Cue[], offset: number): Clip[] {
   if (clips.filter((clip) => clip.kind === "text").length + cues.length > MAX_TITLES) {
-    throw new Error("Timeline hỗ trợ tối đa 300 lớp chữ và câu phụ đề.");
+    throw new Error(`Timeline hỗ trợ tối đa ${MAX_TITLES} lớp chữ và câu phụ đề.`);
   }
   const updated = [...clips];
   for (const cue of cues) {

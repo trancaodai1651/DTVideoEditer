@@ -1,12 +1,23 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-090
+Snapshot: 2026-11-12/EDITOR-100
 
 ## Điểm vào cho Claude Code hoặc Codex
 
 Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [module editor](modules/editor.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có giao diện, thao tác và chức năng tương đương CapCut Desktop, và đã cho phép push lên `origin`, chạy GitHub Actions và build bộ cài. DT_Edit dùng bố cục và luồng thao tác tương tự nhưng giao diện, tên và tài nguyên là của riêng dự án, không sao chép thương hiệu hay asset CapCut. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker, native drop hoặc phân tích media.
 
-Task tiếp theo là **M1-H8**. Trước hết QA tay bản 0.9.0 theo mục **Ca tiếp theo** bên dưới, rồi đối chiếu preset và thao tác còn thiếu trong [backlog](TASK_BACKLOG.md) trên Windows/macOS.
+Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu trên Windows/macOS. M1-L còn ca mở XML trong Adobe Premiere để lưu lại thành `.prproj`. [Backlog](TASK_BACKLOG.md)
+
+## Bản 0.10.0
+
+- **M1-D.** Ảnh báo lỗi cho thấy picker GGML và một clip khoảng 25 phút. 0.9.0 có nhánh fallback mở picker và giới hạn 15 phút. `transcribe_clip` mặc định nay chỉ dùng model đi kèm hoặc cache theo SHA-256. Khi thiếu, tải tệp pin vào app data, xác minh trước khi đặt vào cache. Hộp thoại chỉ mở khi chọn mô hình tùy chọn. FFmpeg vẫn cần filter `whisper`. Từng đoạn 5 phút xử lý trên máy, trả tiến độ và ghép mốc thời gian có xét tốc độ cố định 0,5–2×. Giới hạn chung 1800 câu/chữ, SRT 6 MiB. [Captions](../../apps/desktop/src-tauri/src/captions.rs)
+- **M1-L.** Dự án → Xuất cho Adobe Premiere (.xml)… ghi `xmeml version=4`, tham chiếu file URL với escaping, mốc nguồn theo FPS và mốc sequence 30 fps, tầng hình và tiếng, gain, liên kết video với âm thanh gốc. Xuất SRT cạnh XML khi có phụ đề. Trong Premiere, chọn File → Import, nhập thêm SRT nếu có, rồi Save As `.prproj`. `.dtedit` giữ dữ liệu đầy đủ của DT Edit. XML báo khi dự án có thuộc tính cần làm lại như retime, LUT, chuyển cảnh, chữ trang trí hoặc keyframe. [Premiere exporter](../../apps/desktop/src-tauri/src/premiere.rs) · [Nhập XML trong Premiere](https://helpx.adobe.com/premiere/desktop/organize-media/import-files/migrate-from-final-cut-pro-x.html)
+- **M1-H8/M5-B.** Khi đổi tab, nội dung thư viện bắt đầu ở đầu tab. Installer xác minh model có trong layout Windows và trong `.app` macOS. Schema SQLite 10, timeline JSON v3.
+
+**Còn mở**
+
+- Máy Windows hiện tại không có Adobe Premiere. Kiểm thử mở XML và lưu `.prproj` trong Premiere trên máy có ứng dụng, gồm ca tốc độ nguồn hỗn hợp và clip dọc.
+- QA nhận dạng tiếng Việt và clip 25 phút của người dùng. Tiếp tục M1-H8, HSL/LUT realtime và preset xuất M1-H6, test Claude/HeyGen khi có key. [Backlog](TASK_BACKLOG.md)
 
 ## Bản 0.9.0
 

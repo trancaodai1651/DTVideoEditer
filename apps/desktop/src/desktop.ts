@@ -341,6 +341,7 @@ export const api = {
   pickFolder: () => invoke<number | null>("pick_folder"),
   pickMediaFiles: () => invoke<ImportedFiles | null>("pick_media_files"),
   onMediaDrop: (receive: (drop: MediaDrop) => void) => listen<MediaDrop>("studio-media-drop", ({ payload }) => receive(payload)),
+  onCaptionProgress: (receive: (percent: number) => void) => listen<number>("studio-caption-progress", ({ payload }) => receive(payload)),
   scan: (folderId: number) => invoke<ScanReport>("scan_folder", { folderId }),
   folders: () => invoke<Folder[]>("list_folders"),
   revoke: (folderId: number) => invoke<void>("revoke_folder", { folderId }),
@@ -354,6 +355,7 @@ export const api = {
   projects: () => invoke<Project[]>("list_projects"),
   createProject: (name: string) => invoke<Project>("create_project", { name }),
   saveProjectFile: (projectId: number) => invoke<string | null>("save_project_file", { projectId }),
+  exportPremiereXml: (projectId: number) => invoke<{ xmlPath: string; srtPath: string | null; hasUnsupported: boolean } | null>("export_premiere_xml", { projectId }),
   openProjectFile: () => invoke<Project | null>("open_project_file"),
   createEditedProject: (name: string, snapshot: TimelineSnapshot) =>
     invoke<Project>("create_edited_project", { name, snapshot }),

@@ -6,6 +6,7 @@ mod catalog;
 mod generative;
 mod library;
 mod model;
+mod premiere;
 mod preview;
 mod probe;
 mod project_file;
@@ -345,18 +346,16 @@ async fn transcribe_clip(
     choose_model: Option<bool>,
 ) -> CommandResult<Option<Vec<captions::Cue>>> {
     blocking(move || {
-        let resources = app.path().resource_dir().ok();
-        let bundled = if choose_model == Some(true) {
-            None
-        } else {
-            captions::bundled_model(resources.as_deref())
-        };
-        let window = app
-            .get_webview_window("main")
-            .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
-        let path = if let Some(path) = bundled {
-            path
-        } else {
+        let state = app.state::<AppState>();
+        let _scan = state
+            .scan
+            .try_lock()
+            .map_err(|_| StudioError::Input("Đang cập nhật thư viện."))?;
+        captions::whisper_binary()?;
+        let path = if choose_model == Some(true) {
+            let window = app
+                .get_webview_window("main")
+                .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
             let Some(selected) = app
                 .dialog()
                 .file()
@@ -370,13 +369,16 @@ async fn transcribe_clip(
             selected
                 .into_path()
                 .map_err(|_| StudioError::Input("Chỉ hỗ trợ mô hình trên máy."))?
+        } else {
+            let resources = app.path().resource_dir().ok();
+            captions::default_model(resources.as_deref(), &state.data_dir, || {
+                let _ = app.emit("studio-caption-progress", -1_i64);
+            })?
         };
-        let state = app.state::<AppState>();
-        let _scan = state
-            .scan
-            .try_lock()
-            .map_err(|_| StudioError::Input("Đang cập nhật thư viện."))?;
-        captions::transcribe(&state.store, &clip, &language, &path).map(Some)
+        captions::transcribe(&state.store, &clip, &language, &path, |done, total| {
+            let _ = app.emit("studio-caption-progress", done * 100 / total);
+        })
+        .map(Some)
     })
     .await
 }
@@ -456,6 +458,47 @@ async fn save_project_file(app: AppHandle, project_id: i64) -> CommandResult<Opt
                 .to_string_lossy()
                 .into_owned(),
         ))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn export_premiere_xml(
+    app: AppHandle,
+    project_id: i64,
+) -> CommandResult<Option<premiere::ExportResult>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let project = state
+            .store
+            .projects()?
+            .into_iter()
+            .find(|project| project.id == project_id)
+            .ok_or(StudioError::Input("Không tìm thấy dự án."))?;
+        let window = app
+            .get_webview_window("main")
+            .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
+        let name = PathBuf::from(output_name(&project.name)).with_extension("xml");
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Xuất timeline cho Adobe Premiere")
+            .set_file_name(name.to_string_lossy().as_ref())
+            .add_filter("Final Cut Pro XML", &["xml"])
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = file
+            .into_path()
+            .map_err(|_| StudioError::Input("Chọn vị trí lưu trên máy."))?;
+        let path = if path.extension().is_none() {
+            path.with_extension("xml")
+        } else {
+            path
+        };
+        premiere::export(&state.store, &project, &path).map(Some)
     })
     .await
 }
@@ -1239,6 +1282,7 @@ fn main() {
             load_timeline,
             save_timeline,
             save_project_file,
+            export_premiere_xml,
             open_project_file,
             prepare_proxy,
             proxy_status,

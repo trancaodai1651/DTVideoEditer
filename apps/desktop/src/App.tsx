@@ -880,10 +880,17 @@ export function App() {
 
   function transcribe(language: string, chooseModel = false) {
     if (!selectedClip || !["video", "audio"].includes(selectedClip.kind)) return;
+    if (selectedClip.look?.reverse || selectedClip.look?.speedCurve?.length) {
+      notify("Hãy dùng clip phát xuôi với tốc độ cố định để giữ mốc phụ đề chính xác.", true);
+      return;
+    }
     void run("Đang nhận dạng giọng nói trên máy…", async () => {
       const { assetId, startMs, endMs, positionMs, look } = selectedClip;
-      const cues = await api.transcribe({ assetId, startMs, endMs, speed: look?.speed ?? 100 }, language, chooseModel);
-      if (cues) loadCues(cues, positionMs);
+      const stop = await api.onCaptionProgress((percent) => setBusy(percent < 0 ? "Đang tải mô hình Whisper mặc định…" : `Đang nhận dạng giọng nói · ${percent}%`));
+      try {
+        const cues = await api.transcribe({ assetId, startMs, endMs, speed: look?.speed ?? 100 }, language, chooseModel);
+        if (cues) loadCues(cues, positionMs);
+      } finally { stop(); }
     });
   }
 
@@ -950,6 +957,20 @@ export function App() {
     });
   }
 
+  function exportPremiereXml() {
+    if (!project) return;
+    if (projectMenu.current) projectMenu.current.open = false;
+    void run("Đang xuất timeline cho Premiere…", async () => {
+      await saves.current.chain;
+      if (saves.current.failed) throw new Error("Timeline chưa lưu thành công. Hãy thử lưu lại trước khi xuất XML.");
+      const result = await api.exportPremiereXml(project.id);
+      if (!result) return;
+      const subtitles = result.srtPath ? ` Nhập thêm ${fileName(result.srtPath)} để chuyển phụ đề.` : "";
+      const warning = result.hasUnsupported ? " Kiểm tra lại tốc độ, màu, hiệu ứng và chữ trang trí trong Premiere." : "";
+      success(`Đã lưu ${result.xmlPath}. Trong Premiere, chọn File → Import rồi Save As .prproj.${subtitles}${warning}`);
+    });
+  }
+
   function openProjectFile() {
     if (projectMenu.current) projectMenu.current.open = false;
     void run("Đang mở tệp dự án…", async () => {
@@ -986,6 +1007,7 @@ export function App() {
             <div className="project-file-actions">
               <button type="button" className="button secondary compact" disabled={editsDisabled || !project} onClick={saveProjectFile}>Lưu dự án thành tệp…</button>
               <button type="button" className="button secondary compact" disabled={disabled} onClick={openProjectFile}>Mở tệp dự án…</button>
+              <button type="button" className="button secondary compact" disabled={editsDisabled || !project || !clips.some((clip) => clip.track === "video" || clip.track === "audio")} onClick={exportPremiereXml}>Xuất cho Adobe Premiere (.xml)…</button>
             </div>
             <form onSubmit={createProject}>
               <label className="edit-field">{vi.projectName}

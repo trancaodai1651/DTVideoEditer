@@ -1,6 +1,13 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-090
+Snapshot: 2026-11-12/EDITOR-100
+
+## 2026-11-12 · Editor 0.10.0
+
+- M1-D sửa luồng Tạo phụ đề mở picker khi không tìm thấy resource. Dùng model đi kèm, cache hoặc tải bản Whisper đã pin và kiểm tra SHA-256. Hộp thoại GGML ở trong tùy chọn riêng.
+- M1-D nhận dạng clip theo đoạn 5 phút, cộng offset theo tốc độ, hiện tiến độ, nâng giới hạn phụ đề/chữ lên 1800 và SRT UTF-8 lên 6 MiB.
+- M1-L thêm xuất Final Cut Pro XML 4 có tầng hình/tiếng và tham chiếu nguồn. Tạo SRT cùng tên khi có phụ đề để nhập thêm vào Premiere.
+- M1-H8 đưa thư viện về đầu nội dung khi chuyển tab. M5-B kiểm tra resource Whisper sau đóng gói trên Windows/macOS.
 
 ## 2026-11-12 · Editor 0.9.0
 

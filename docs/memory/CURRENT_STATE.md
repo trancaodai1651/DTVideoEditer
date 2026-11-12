@@ -1,6 +1,6 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-12/EDITOR-090
+Snapshot: 2026-11-12/EDITOR-100
 
 Next task: M1-H8
 
@@ -17,6 +17,7 @@ Next task: M1-H8
 - Bản 0.7.0 (M1-K, M1-H6, M1-H8, M2-A/M1-J): dựng highlight hoặc dựng theo một clip âm thanh từ timeline, mở thành dự án mới có thể sửa; **Xem bản xuất** bằng FFmpeg; lọc loại media và menu chuột phải của thẻ/trình phát; xóa nền AI cục bộ và tạo avatar HeyGen. Cơ sở dữ liệu schema 10, timeline version 3. [Editor và render](modules/editor.md)
 - Bản 0.8.1 (M1-K, M1-L, M5-A/M5-B): quét toàn bộ khoảng video được dùng trên timeline, giữ nhiều nguồn trong highlight, dựng theo một hoặc nhiều âm thanh, proxy 720p mặc định bật, tệp `.dtedit` lưu ở nơi được chọn và runtime xóa nền đi kèm bộ cài. [Bàn giao](HANDOFF.md)
 - Bản 0.9.0 (M1-D, M1-K, M1-H6, M5-A/M5-B): bộ cài kèm mô hình Whisper `ggml-small-q5_1.bin` nên tạo phụ đề không cần chọn mô hình; proxy chỉ tạo khi người dùng bật/bấm tạo; highlight phân tích độ nét, màu, rung máy, điểm cắt thích ứng và đỉnh âm, mặc định không giới hạn thời lượng; dựng theo âm thanh dài đúng timeline âm thanh và đi qua hết tư liệu trước khi lặp; chỉnh màu thêm bánh xe Lift/Gamma/Gain, đường cong R/G/B kéo điểm và HSL sáu dải. [Bàn giao](HANDOFF.md)
+- Bản 0.10.0 (M1-D, M1-L, M1-H8): luồng Tạo phụ đề tìm model trong bộ cài hoặc cache và tự tải bản đã pin khi thiếu. Nhận dạng theo đoạn 5 phút có tiến độ, tối đa 1800 câu/chữ trên timeline. Xuất Final Cut Pro XML 4 và SRT để chuyển dự án sang Adobe Premiere. Đổi tab thư viện đưa phần nội dung về đầu tab mới. [Bàn giao](HANDOFF.md)
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token trong keychain, nháp, duyệt native, đăng, danh sách, sửa và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng
@@ -34,4 +35,4 @@ Next task: M1-H8
 
 ## Tiếp theo
 
-M1-H8: tiếp tục preset và các ca giao diện còn mở trong [bàn giao](HANDOFF.md). QA tay bản 0.9.0 trong Tauri (phụ đề không hỏi mô hình, Proxy tắt mặc định, highlight không giới hạn, dựng theo nhạc dài, bánh xe/HSL/đường cong). M1-H6 còn preset xuất, mask theo tracking, HSL và LUT trong preview tương tác. M2-A/M1-J còn live test Claude/HeyGen. M1-F mở rộng phân tích video mẫu. [Backlog](TASK_BACKLOG.md)
+M1-H8: tiếp tục preset và các ca giao diện còn mở trong [bàn giao](HANDOFF.md). M1-L kiểm thử import XML trong Adobe Premiere và lưu `.prproj`. M1-H6 còn preset xuất, mask theo tracking, HSL và LUT trong preview tương tác. M2-A/M1-J còn live test Claude/HeyGen. M1-F mở rộng phân tích video mẫu. [Backlog](TASK_BACKLOG.md)

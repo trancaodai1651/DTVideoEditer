@@ -63,7 +63,10 @@ fn seconds(ms: i64) -> String {
     format!("{}.{:03}", ms / 1000, ms % 1000)
 }
 
-fn frame_size(snapshot: &TimelineSnapshot, sources: &HashMap<i64, Source>) -> (u32, u32) {
+pub(crate) fn frame_size(
+    snapshot: &TimelineSnapshot,
+    sources: &HashMap<i64, Source>,
+) -> (u32, u32) {
     match snapshot.aspect {
         Aspect::Landscape => return (1920, 1080),
         Aspect::Portrait => return (1080, 1920),

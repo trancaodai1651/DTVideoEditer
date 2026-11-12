@@ -192,7 +192,7 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
         <button type="button" aria-pressed={textGroup === "presets"} onClick={() => setTextGroup("presets")}>Mẫu chữ</button>
         <button type="button" onClick={() => onTab("captions")}>Phụ đề</button>
       </nav>}
-      <div className="library-body" aria-label={selected.label}>
+      <div className="library-body" key={tab} aria-label={selected.label}>
       {(tab === "media" || tab === "audio" && audioGroup === "local") && media}
       {hasStock && <div className="library-section">
         <h2>{tab === "stickers" ? "Sticker DT_Edit" : audioGroup === "music" ? "Nhạc nền DT_Edit" : "Hiệu ứng âm thanh"}</h2>
@@ -229,12 +229,14 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
           <button type="button" className="button secondary compact" disabled={busy || !hasCaptions} onClick={onExportSrt}>Xuất SRT</button>
         </div>
         <div className="tool-detail"><h3>Nhận dạng lời nói trên máy</h3>
-          <p>Chọn clip có tiếng trên timeline. Bộ cài đã kèm mô hình Whisper small đa ngôn ngữ, cần FFmpeg có filter whisper.</p>
+          <p>Chọn clip có tiếng. Tạo phụ đề dùng mô hình Whisper có sẵn, tự tải nếu thiếu.</p>
           <label className="edit-field">Ngôn ngữ<select value={language} onChange={(event) => setLanguage(event.target.value)}>
             <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="auto">Tự nhận diện</option>
           </select></label>
           <button type="button" className="button primary" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, false)}>Tạo phụ đề</button>
-          <button type="button" className="button secondary compact" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, true)}>Dùng mô hình GGML khác…</button>
+          <details className="caption-options"><summary>Mô hình tùy chọn</summary>
+            <button type="button" className="button secondary compact" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, true)}>Chọn tệp GGML…</button>
+          </details>
         </div>
       </div>}
       {tab === "templates" && templates}

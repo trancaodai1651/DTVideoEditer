@@ -1933,23 +1933,130 @@ fn real_whisper_transcribes_with_the_bundled_model_layout() {
         0,
     )
     .unwrap();
+    let delayed = dir.path().join("delayed.wav");
+    let status = Command::new(find_tool("ffmpeg").unwrap())
+        .args(["-v", "error", "-i"])
+        .arg(speech)
+        .args(["-af", "adelay=12000:all=1"])
+        .arg(&delayed)
+        .status()
+        .unwrap();
+    assert!(status.success());
     let store = Store::open(&dir.path().join("test.sqlite3")).unwrap();
     let probe = Ffprobe {
         binary: find_tool("ffprobe").expect("ffprobe on PATH"),
         ffmpeg: None,
     };
-    let asset = &crate::library::import_files(&store, &[speech], &probe)
+    let asset = &crate::library::import_files(&store, &[delayed], &probe)
         .unwrap()
         .assets[0];
     let clip: crate::captions::SpeechClip = serde_json::from_value(serde_json::json!({
         "assetId": asset.id, "startMs": 0, "endMs": asset.duration_ms.unwrap(), "speed": 100
     }))
     .unwrap();
-    let cues = crate::captions::transcribe(&store, &clip, "en", &model).unwrap();
+    let progress = std::cell::RefCell::new(Vec::new());
+    let cues =
+        crate::captions::transcribe_in_chunks(&store, &clip, "en", &model, 10_000, |done, _| {
+            progress.borrow_mut().push(done)
+        })
+        .unwrap();
+    assert_eq!(
+        *progress.borrow(),
+        vec![0, 10_000, asset.duration_ms.unwrap()]
+    );
+    assert!(
+        cues.iter()
+            .any(|cue| cue.start_ms >= 10_000 && cue.text.to_lowercase().contains("caption"))
+    );
     let text = cues
         .iter()
         .map(|cue| cue.text.to_lowercase())
         .collect::<Vec<_>>()
         .join(" ");
     assert!(text.contains("caption"), "{text}");
+}
+
+#[test]
+#[ignore = "requires FFmpeg and FFprobe on PATH"]
+fn real_ffmpeg_exports_editable_premiere_xml_and_srt() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = std::env::var_os("DT_EDIT_PREMIERE_FIXTURE_DIR").map(std::path::PathBuf::from);
+    let directory = directory.as_deref().unwrap_or(temp.path());
+    let source = directory.join("Cảnh #1 & âm.mp4");
+    let status = Command::new(find_tool("ffmpeg").unwrap())
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=320x180:r=25:d=3",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=3",
+            "-c:v",
+            "libx264",
+            "-threads",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ac",
+            "2",
+        ])
+        .arg(&source)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let store = Store::open(&temp.path().join("test.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: find_tool("ffprobe").unwrap(),
+        ffmpeg: None,
+    };
+    let assets = crate::library::import_files(&store, &[source], &probe).unwrap();
+    let id = assets.assets[0].id;
+    let first = clip(id, 800, 1800, 500);
+    let mut second = clip(id, 1600, 2600, 1800);
+    second.layer = 1;
+    second.look.hue = 20;
+    let mut edit = snapshot(vec![first, second], vec![]);
+    edit.titles.push(crate::timeline::TitleEdit {
+        caption: true,
+        text: "Chào Premiere".into(),
+        position_ms: 500,
+        duration_ms: 1000,
+        size: 8,
+        ..Default::default()
+    });
+    let project = store
+        .create_project_with_timeline("Đoạn & thứ tự", Some(&edit))
+        .unwrap();
+    let path = directory.join("Premiere.xml");
+    let exported = crate::premiere::export(&store, &project, &path).unwrap();
+    assert!(exported.has_unsupported && exported.srt_path.is_some());
+    let xml = fs::read_to_string(&path).unwrap();
+    let mut reader = quick_xml::Reader::from_str(&xml);
+    loop {
+        if matches!(reader.read_event().unwrap(), quick_xml::events::Event::Eof) {
+            break;
+        }
+    }
+    assert!(xml.contains("Đoạn &amp; thứ tự"));
+    assert!(xml.contains("<timebase>25</timebase>"));
+    assert!(xml.contains("<start>15</start><end>45</end><in>20</in><out>45</out>"));
+    assert!(xml.contains("<pathurl>file://") && xml.contains("%23"));
+    assert_eq!(xml.matches("<pathurl>").count(), 1);
+    assert_eq!(xml.matches("<clipitem id=").count(), 4);
+    assert_eq!(xml.matches("<linkclipref>").count(), 8);
+    let srt = crate::captions::read(&path.with_extension("srt")).unwrap();
+    assert_eq!(
+        (&*srt[0].text, srt[0].start_ms, srt[0].end_ms),
+        ("Chào Premiere", 500, 1500)
+    );
+    assert!(crate::premiere::export(&store, &project, &path).is_err());
+    store.revoke(assets.assets[0].folder_id).unwrap();
+    assert!(crate::premiere::export(&store, &project, &directory.join("revoked.xml")).is_err());
 }

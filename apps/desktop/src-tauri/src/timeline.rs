@@ -8,7 +8,7 @@ pub const MIN_CLIP_MS: i64 = 100;
 pub const MAX_IMAGE_MS: i64 = 10 * 60 * 1000;
 pub const MAX_TIMELINE_MS: i64 = 6 * 60 * 60 * 1000;
 pub const MAX_TRACK_CLIPS: usize = 200;
-pub const MAX_TITLES: usize = 300;
+pub const MAX_TITLES: usize = 1800;
 
 /// One edit point set. `start_ms..end_ms` is the range read from the source,
 /// `position_ms` is where that range starts on the timeline.

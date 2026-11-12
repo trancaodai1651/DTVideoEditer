@@ -43,10 +43,17 @@ jobs:
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: pnpm install --frozen-lockfile
       - run: pnpm tauri build --ci --config src-tauri/target/rembg.bundle.json ${{ matrix.args }}
+      - if: runner.os == 'Windows'
+        name: Verify packaged Whisper model
+        shell: pwsh
+        run: |
+          $model = Get-Item apps/desktop/src-tauri/target/release/whisper/ggml-small-q5_1.bin
+          if ($model.Length -ne 190085487) { throw 'Missing or incomplete packaged Whisper model' }
       - if: runner.os == 'macOS'
         shell: bash
         run: |
           app="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Video Studio.app"
+          test "$(stat -f %z "$app/Contents/Resources/whisper/ggml-small-q5_1.bin")" = 190085487
           binary=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")
           lipo -archs "$app/Contents/MacOS/$binary"
           lipo "$app/Contents/MacOS/$binary" -verify_arch arm64 x86_64
