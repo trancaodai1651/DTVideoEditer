@@ -34,7 +34,15 @@ Người dùng yêu cầu: kèm mô hình Whisper trong bộ cài; chỉ proxy k
 
 **Phát hành**
 
-RELEASE_090_PLACEHOLDER
+- Revision `e983640`, tag `v0.9.0`. GitHub Actions: hai lượt Desktop checks và build NSIS x64 + DMG Universal đều đạt (bước macOS chạy `lipo`, `hdiutil verify` và khởi động app). [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.9.0) · [Build](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43180416813) · [Checks](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43180411623)
+- Bộ cài Windows build cục bộ: `apps/desktop/src-tauri/target/release/bundle/nsis/AI Video Studio_0.9.0_x64-setup.exe` (367.719.032 byte), resource `whisper/ggml-small-q5_1.bin` có trong `target/release/whisper/`, app release khởi động được. Archive CI tải về cần đăng nhập GitHub (không có `gh` trên máy này), nên chưa đối chiếu ZIP như 0.8.1.
+- Build lại: `python scripts/package-rembg.py`, `python scripts/package-whisper.py`, rồi `pnpm tauri build --ci --config src-tauri/target/rembg.bundle.json` với tùy chọn bundle của workflow.
+
+| Tệp | SHA-256 |
+| --- | --- |
+| `AI Video Studio_0.9.0_x64-setup.exe` (build cục bộ) | `7e49ba356f8a622fdbed077d556c03986d78f0ab84072db233674dfab5bb960f` |
+| Archive CI `windows-x64-setup` (367.973.190 byte) | `e78e8b122762251c9ba77f1d10f1f0697f7edfbd42fece589fa5aa5dec5a41a4` |
+| Archive CI `macos-universal-dmg` (495.649.111 byte) | `057c300a3f5e7631831f9022e0ffc72f8262403eb228540c3ac2bbfff7c41abb` |
 
 ## Bản 0.8.1
 
