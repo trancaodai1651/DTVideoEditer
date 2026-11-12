@@ -16,7 +16,7 @@ export interface Clip {
   key: string;
   assetId: number;
   relativePath: string;
-  kind: MediaKind | "text";
+  kind: MediaKind | "text" | "adjustment";
   track: EditorTrack;
   startMs: number;
   endMs: number;
@@ -53,6 +53,8 @@ let serial = 0;
 const newKey = () => `clip-${++serial}`;
 
 export const playbackRate = (clip: Clip) => (clip.look?.speed ?? 100) / 100;
+/** Clips whose source range is a duration rather than a span of media. */
+export const isStill = (clip: Clip) => clip.kind === "image" || clip.kind === "text" || clip.kind === "adjustment" || clip.look?.freezeAtMs !== undefined;
 export const clipLength = (clip: Clip): number => {
   const span = clip.endMs - clip.startMs;
   if ((clip.look?.speedCurve?.length ?? 0) >= 2) {
@@ -158,21 +160,31 @@ export function fromTimeline(timeline: Timeline): Clip[] {
     key: newKey(), assetId: 0, relativePath: title.text, kind: "text", track: "text",
     startMs: 0, endMs: durationMs, positionMs, sourceMs: null, available: true, layer, title,
   }));
-  return [...media, ...titles];
+  const adjustments: Clip[] = (timeline.adjustments ?? []).map(({ positionMs, durationMs, layer, look }) => ({
+    key: newKey(), assetId: 0, relativePath: ADJUSTMENT_NAME, kind: "adjustment", track: "text",
+    startMs: 0, endMs: durationMs, positionMs, sourceMs: null, available: true, layer, look,
+  }));
+  return [...media, ...titles, ...adjustments];
 }
+
+export const ADJUSTMENT_NAME = "Lớp điều chỉnh";
 
 export function toSnapshot(clips: Clip[], aspect: Aspect = "source", lanes: LaneControl[] = []): TimelineSnapshot {
   const titles = clips.filter((clip) => clip.title).map((clip) => ({
     ...clip.title!, positionMs: clip.positionMs, durationMs: clipLength(clip), layer: layerOf(clip),
+  }));
+  const adjustments = clips.filter((clip) => clip.kind === "adjustment").map((clip) => ({
+    positionMs: clip.positionMs, durationMs: clipLength(clip), layer: layerOf(clip), look: clip.look ?? {},
   }));
   return {
     version: TIMELINE_VERSION,
     ...(aspect !== "source" ? { aspect } : {}),
     ...(lanes.length ? { lanes } : {}),
     ...(titles.length ? { titles } : {}),
+    ...(adjustments.length ? { adjustments } : {}),
     tracks: (["video", "audio"] as const).map((kind) => ({
       kind,
-      clips: clips.filter((clip) => clip.track === kind).sort((a, b) => a.positionMs - b.positionMs)
+      clips: clips.filter((clip) => clip.track === kind && clip.kind !== "adjustment").sort((a, b) => a.positionMs - b.positionMs)
         .map(({ assetId, startMs, endMs, positionMs, layer, look }) => ({
           assetId, startMs, endMs, positionMs, ...(layer ? { layer } : {}), ...(look ? { look } : {}),
         })),
@@ -458,7 +470,7 @@ export function trimStart(clips: Clip[], key: string, deltaMs: number, ripple = 
     const before = clips.filter((other) => sameLane(other, clip) && other.key !== key
       && clipFinish(other) <= clip.positionMs).reduce((end, other) => Math.max(end, clipFinish(other)), 0);
     const room = ripple ? Infinity : clip.positionMs - before;
-    const still = clip.kind === "image" || clip.kind === "text";
+    const still = isStill(clip);
     const rate = playbackRate(clip);
     const extend = still ? Math.min(room, MAX_IMAGE_MS - clipLength(clip)) : Math.min(Math.floor(room * rate), clip.startMs);
     const delta = clamp(Math.round(deltaMs * rate), -extend, clip.endMs - clip.startMs - Math.ceil(MIN_CLIP_MS * rate));
@@ -472,7 +484,7 @@ export function trimEnd(clips: Clip[], key: string, deltaMs: number) {
   return update(clips, key, (clip) => {
     const next = clips.filter((other) => sameLane(other, clip) && other.key !== key
       && other.positionMs >= clipFinish(clip)).reduce((start, other) => Math.min(start, other.positionMs), MAX_TIMELINE_MS);
-    const source = clip.kind === "image" || clip.kind === "text" ? MAX_IMAGE_MS : (clip.sourceMs ?? clip.endMs) - clip.startMs;
+    const source = isStill(clip) ? MAX_IMAGE_MS : (clip.sourceMs ?? clip.endMs) - clip.startMs;
     const rate = playbackRate(clip);
     const shortest = Math.ceil(MIN_CLIP_MS * rate);
     const longest = Math.max(shortest, Math.min(Math.floor((next - clip.positionMs) * rate), source));
@@ -501,7 +513,7 @@ export function splitClip(clips: Clip[], key: string, atMs: number): Clip[] | nu
     const leftBase = curves ? { ...clip, look: { ...clip.look, speedCurve: curves[0] } } : clip;
     const rightBase = curves ? { ...clip, look: { ...clip.look, speedCurve: curves[1] } } : clip;
     const left = { ...leftBase, endMs: clip.startMs + sourceOffset };
-    const right = clip.kind === "image" || clip.kind === "text"
+    const right = isStill(clip)
       ? { ...rightBase, endMs: clip.endMs - sourceOffset, positionMs: clipFinish(left) }
       : { ...rightBase, startMs: clip.startMs + sourceOffset, positionMs: clipFinish(left) };
     if (clipLength(left) >= MIN_CLIP_MS && clipLength(right) >= MIN_CLIP_MS && (curved || clipFinish(right) === clipFinish(clip))) {
@@ -728,7 +740,7 @@ export function compoundBlocks(clips: Clip[]): CompoundBlock[] {
 }
 
 /** Lines up camera angles on separate video layers and shows the lowest one. */
-export function createMulticam(clips: Clip[], keys: ReadonlySet<string>): Clip[] {
+export function createMulticam(clips: Clip[], keys: ReadonlySet<string>, keepPositions = false): Clip[] {
   const angles = clips.filter((clip) => keys.has(clip.key) && clip.track === "video" && clip.kind === "video")
     .sort((a, b) => layerOf(a) - layerOf(b));
   if (angles.length < 2 || angles.length > 9) throw new Error("Chọn 2 đến 9 clip video làm các góc máy.");
@@ -737,7 +749,7 @@ export function createMulticam(clips: Clip[], keys: ReadonlySet<string>): Clip[]
   const start = Math.min(...angles.map((clip) => clip.positionMs));
   const lowest = layerOf(angles[0]);
   const next = clips.map((clip) => angles.includes(clip)
-    ? { ...clip, positionMs: start, look: { ...clip.look, multicam: id, disabled: layerOf(clip) === lowest ? undefined : true } } : clip);
+    ? { ...clip, positionMs: keepPositions ? clip.positionMs : start, look: { ...clip.look, multicam: id, disabled: layerOf(clip) === lowest ? undefined : true } } : clip);
   if (!validPositions(next)) throw new Error("Không đồng bộ được: một góc máy sẽ chồng lên clip khác trên tầng của nó.");
   return next;
 }
@@ -884,6 +896,8 @@ export function followTrack(clips: Clip[], sourceKey: string, targetKey: string,
     at: Math.round(source.positionMs + elapsedAtSource(source, point.atMs - source.startMs) - target.positionMs),
     x: Math.max(-100, Math.min(100, Math.round((point.x - 500) / 10))),
     y: Math.max(-100, Math.min(100, Math.round((point.y - 500) / 10))),
+    scale: point.scale ?? 1000,
+    angle: point.angle ?? 0,
   })).filter((point) => point.at >= 0 && point.at <= clipLength(target));
   if (!timed.length) throw new Error("Đoạn đã theo dõi không trùng thời gian với lớp cần gắn.");
   const step = Math.max(1, Math.ceil(timed.length / 31));
@@ -891,7 +905,10 @@ export function followTrack(clips: Clip[], sourceKey: string, targetKey: string,
   if (chosen.at(-1) !== timed.at(-1)) chosen.push(timed.at(-1)!);
   const base = { ...defaultLook, ...target.look };
   const keyframes = chosen.filter((point, index) => index === 0 || point.at > chosen[index - 1].at).slice(0, 32).map((point) => ({
-    atMs: point.at, x: point.x, y: point.y, scale: Math.round(base.scale), rotate: Math.round(base.rotate), opacity: Math.round(base.opacity), smooth: true,
+    atMs: point.at, x: point.x, y: point.y,
+    scale: Math.max(10, Math.min(200, Math.round(base.scale * point.scale / 1000))),
+    rotate: ((Math.round(base.rotate + point.angle) + 540) % 360) - 180,
+    opacity: Math.round(base.opacity), smooth: true,
   }));
   return clips.map((clip) => clip.key === targetKey ? { ...clip, look: { ...base, x: keyframes[0].x, y: keyframes[0].y, keyframes } } : clip);
 }
@@ -901,4 +918,134 @@ export function clipsInBox(clips: Clip[], fromMs: number, toMs: number, lanes: {
   const [start, end] = fromMs <= toMs ? [fromMs, toMs] : [toMs, fromMs];
   return clips.filter((clip) => clipFinish(clip) > start && clip.positionMs < end
     && lanes.some((lane) => lane.track === clip.track && lane.layer === layerOf(clip))).map((clip) => clip.key);
+}
+
+// ---------------------------------------------------------------------------
+// Colour, adjustment layers, attributes, replace, freeze and reverse (0.6.0).
+
+/** Nine points of the tone curve. Same formula as `Look::tone_points` in timeline.rs. */
+export function tonePoints(look: Partial<ClipLook> | undefined): number[] | null {
+  const values = [look?.exposure, look?.highlights, look?.shadows, look?.whites, look?.blacks].map((value) => value ?? 0);
+  if (values.every((value) => value === 0)) return null;
+  const [exposure, highlights, shadows, whites, blacks] = values.map((value) => value / 100);
+  const bump = (x: number, centre: number) => Math.exp(-(((x - centre) / 0.18) ** 2));
+  return Array.from({ length: 9 }, (_, index) => {
+    const x = index / 8;
+    let y = x * 2 ** exposure;
+    y += shadows * 0.2 * bump(x, 0.25) + highlights * 0.2 * bump(x, 0.75);
+    y += blacks * 0.15 * (1 - x) ** 4 + whites * 0.15 * x ** 4;
+    return Math.round(Math.min(1, Math.max(0, y)) * 10_000) / 10_000;
+  });
+}
+
+export const colorKeys = ["brightness", "contrast", "saturation", "temperature", "exposure", "highlights", "shadows", "whites", "blacks", "tint", "hue", "vibrance"] as const;
+
+/** Adds an adjustment layer at a time on a text lane, 5 seconds or up to the end of the timeline. */
+export function addAdjustment(clips: Clip[], wantedMs: number, layer: number, look: Partial<ClipLook> = {}): Clip[] {
+  const end = Math.max(totalMs(clips), wantedMs + 1000);
+  const length = Math.max(MIN_CLIP_MS, Math.min(5000, end - wantedMs));
+  const positionMs = place(clips, "text", length, wantedMs, undefined, layer);
+  return [...clips, {
+    key: newKey(), assetId: 0, relativePath: ADJUSTMENT_NAME, kind: "adjustment", track: "text",
+    startMs: 0, endMs: length, positionMs, sourceMs: null, available: true, layer, look,
+  }];
+}
+
+/** Properties copied by Ctrl+Shift+C: appearance and sound, never timing or identity. */
+const attributeSkip = new Set(["speed", "speedCurve", "keyframes", "transition", "editGroup", "compound", "multicam",
+  "audioLink", "audioDetached", "disabled", "freezeAtMs", "reverse"]);
+
+export function copyAttributes(clip: Clip): Partial<ClipLook> | TitleStyle {
+  if (clip.title) {
+    const style: Partial<TitleStyle> = { ...clip.title };
+    delete style.text;
+    delete style.editGroup;
+    delete style.caption;
+    return style as TitleStyle;
+  }
+  return Object.fromEntries(Object.entries({ ...defaultLook, ...clip.look }).filter(([key]) => !attributeSkip.has(key)));
+}
+
+/** Pastes copied attributes onto every selected clip of the matching kind. */
+export function pasteAttributes(clips: Clip[], keys: ReadonlySet<string>, copied: Partial<ClipLook> | TitleStyle): Clip[] {
+  const titleStyle = "size" in copied && "color" in copied;
+  return clips.map((clip) => {
+    if (!keys.has(clip.key)) return clip;
+    if (clip.title) return titleStyle ? { ...clip, title: { ...clip.title, ...(copied as TitleStyle), text: clip.title.text, caption: clip.title.caption, editGroup: clip.title.editGroup } } : clip;
+    if (titleStyle) return clip;
+    return { ...clip, look: { ...clip.look, ...(copied as Partial<ClipLook>) } };
+  });
+}
+
+/** Swaps the media under a clip, keeping position, length (as far as the new media allows) and look. */
+export function replaceClip(clips: Clip[], key: string, media: MediaRef): Clip[] {
+  const clip = clips.find((item) => item.key === key);
+  if (!clip || clip.track === "text" || trackOf(media.kind) !== clip.track && !(clip.track === "audio" && media.kind === "video")) {
+    throw new Error("Chọn media cùng loại với clip (hình cho tầng video, âm thanh cho tầng âm thanh).");
+  }
+  const sourceNeeded = clip.endMs - clip.startMs;
+  const available = media.kind === "image" ? MAX_IMAGE_MS : media.durationMs ?? 0;
+  const span = Math.min(sourceNeeded, available);
+  if (span < MIN_CLIP_MS) throw new Error("Media mới quá ngắn để thay clip này.");
+  const look = { ...clip.look, freezeAtMs: undefined, reverse: media.kind === "image" ? undefined : clip.look?.reverse,
+    speed: media.kind === "image" ? 100 : clip.look?.speed, speedCurve: media.kind === "image" ? undefined : clip.look?.speedCurve,
+    transition: undefined, audioDetached: undefined, audioLink: undefined };
+  return clips.map((item) => item.key === key ? {
+    ...item, assetId: media.assetId, relativePath: media.relativePath, kind: media.kind, startMs: 0, endMs: span,
+    sourceMs: media.durationMs, width: media.width, height: media.height, hasThumbnail: media.hasThumbnail, available: true, look,
+  } : item);
+}
+
+/**
+ * Freeze frame at the playhead: splits the video clip and inserts a still of
+ * the current frame, pushing everything after it on the lane.
+ */
+export function freezeFrame(clips: Clip[], key: string, atMs: number, holdMs = 3000): Clip[] {
+  const clip = clips.find((item) => item.key === key);
+  if (!clip || clip.kind !== "video" || clip.track !== "video" || isStill(clip) || atMs < clip.positionMs || atMs >= clipFinish(clip)) {
+    throw new Error("Đặt playhead trên một clip video để tạo khung hình tĩnh.");
+  }
+  const offset = sourcePosition(clip, atMs - clip.positionMs).offset;
+  const frameMs = Math.round(clip.look?.reverse ? clip.endMs - offset : clip.startMs + offset);
+  const split = canSplit(clip, atMs) ? splitClip(clips, key, atMs) ?? clips : clips;
+  const before = split.find((item) => item.key === key)!;
+  const insertAt = atMs <= clip.positionMs ? clip.positionMs : clipFinish(before);
+  const hold: Clip = {
+    ...clip, key: newKey(), startMs: 0, endMs: holdMs, positionMs: insertAt,
+    look: { ...clip.look, freezeAtMs: frameMs, speed: 100, speedCurve: undefined, reverse: undefined, keyframes: undefined,
+      transition: undefined, audioDetached: undefined, audioLink: undefined, multicam: undefined },
+  };
+  return [...split.map((item) => sameLane(item, clip) && item.key !== key && item.positionMs >= insertAt
+    ? { ...item, positionMs: item.positionMs + holdMs } : item), hold];
+}
+
+export const MAX_REVERSE_MS = 60_000;
+
+export function toggleReverse(clips: Clip[], key: string): Clip[] {
+  const clip = clips.find((item) => item.key === key);
+  if (!clip || clip.track === "text" || isStill(clip)) throw new Error("Chỉ đảo ngược được clip video hoặc âm thanh.");
+  if (hasCurve(clip)) throw new Error("Gỡ đường cong tốc độ trước khi đảo ngược clip.");
+  if (clip.endMs - clip.startMs > MAX_REVERSE_MS) throw new Error("Chỉ đảo ngược đoạn nguồn dài tối đa 60 giây. Hãy cắt ngắn clip trước.");
+  return clips.map((item) => item.key === key ? { ...item, look: { ...item.look, reverse: item.look?.reverse ? undefined : true, keyframes: undefined } } : item);
+}
+
+/**
+ * Lines up angles by measured audio offsets before creating the multicam:
+ * \`offsets[key]\` is how much later a sound heard by the reference appears in that angle.
+ */
+export function alignByAudio(clips: Clip[], referenceKey: string, offsets: Record<string, number>): Clip[] {
+  const reference = clips.find((clip) => clip.key === referenceKey);
+  if (!reference) return clips;
+  return clips.map((clip) => {
+    const offset = offsets[clip.key];
+    if (offset === undefined || clip.key === referenceKey) return clip;
+    let positionMs = reference.positionMs - Math.round(offset / playbackRate(clip));
+    let startMs = clip.startMs;
+    if (positionMs < 0) {
+      startMs += Math.round(-positionMs * playbackRate(clip));
+      positionMs = 0;
+    }
+    if (clip.endMs - startMs < MIN_CLIP_MS) throw new Error("Một góc máy lệch quá xa nên không còn đoạn chung với góc chính.");
+    return { ...clip, startMs, positionMs };
+  });
 }

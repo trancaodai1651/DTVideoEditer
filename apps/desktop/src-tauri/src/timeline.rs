@@ -111,6 +111,85 @@ pub struct Look {
     pub multicam: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub speed_curve: Vec<SpeedPoint>,
+    // Colour grading on top of brightness/contrast/saturation/temperature.
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub exposure: i16,
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub highlights: i16,
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub shadows: i16,
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub whites: i16,
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub blacks: i16,
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub tint: i16,
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub hue: i16,
+    #[serde(skip_serializing_if = "is_zero_i16")]
+    pub vibrance: i16,
+    /// A .cube LUT stored in the luts table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lut: Option<i64>,
+    /// Shows one source frame for the clip's whole length, like a still image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub freeze_at_ms: Option<i64>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub reverse: bool,
+}
+
+fn is_zero_i16(value: &i16) -> bool {
+    *value == 0
+}
+
+pub const MAX_REVERSE_MS: i64 = 60_000;
+
+impl Look {
+    /// Nine points of the tone curve from exposure, shadows, highlights, whites and blacks.
+    /// The preview's SVG filter uses the same formula, so both show the same tones.
+    pub fn tone_points(&self) -> Option<[f64; 9]> {
+        if [
+            self.exposure,
+            self.highlights,
+            self.shadows,
+            self.whites,
+            self.blacks,
+        ]
+        .iter()
+        .all(|value| *value == 0)
+        {
+            return None;
+        }
+        let bump = |x: f64, centre: f64| (-((x - centre) / 0.18).powi(2)).exp();
+        let amount = |value: i16| f64::from(value) / 100.0;
+        let mut points = [0.0; 9];
+        for (index, point) in points.iter_mut().enumerate() {
+            let x = index as f64 / 8.0;
+            let mut y = x * 2f64.powf(amount(self.exposure));
+            y += amount(self.shadows) * 0.2 * bump(x, 0.25)
+                + amount(self.highlights) * 0.2 * bump(x, 0.75);
+            y += amount(self.blacks) * 0.15 * (1.0 - x).powi(4)
+                + amount(self.whites) * 0.15 * x.powi(4);
+            *point = (y.clamp(0.0, 1.0) * 10_000.0).round() / 10_000.0;
+        }
+        Some(points)
+    }
+
+    fn valid_color(&self) -> bool {
+        [
+            self.exposure,
+            self.highlights,
+            self.shadows,
+            self.whites,
+            self.blacks,
+            self.tint,
+            self.vibrance,
+        ]
+        .iter()
+        .all(|value| (-100..=100).contains(value))
+            && (-180..=180).contains(&self.hue)
+            && self.lut.is_none_or(|id| id > 0)
+    }
 }
 
 /// A point on a speed curve. `at` is the position in the source range in
@@ -247,6 +326,17 @@ impl Default for Look {
             compound: None,
             multicam: None,
             speed_curve: Vec::new(),
+            exposure: 0,
+            highlights: 0,
+            shadows: 0,
+            whites: 0,
+            blacks: 0,
+            tint: 0,
+            hue: 0,
+            vibrance: 0,
+            lut: None,
+            freeze_at_ms: None,
+            reverse: false,
         }
     }
 }
@@ -283,6 +373,8 @@ impl Look {
             && (MIN_SPEED..=MAX_SPEED).contains(&self.speed)
             && (self.speed_curve.is_empty() || self.speed == 100)
             && (self.speed_curve.is_empty() || self.valid_curve())
+            && self.valid_color()
+            && self.freeze_at_ms.is_none_or(|at| at >= 0)
             && self.compound.as_ref().is_none_or(|compound| {
                 let length = compound.name.chars().count();
                 (1..=60).contains(&length) && !compound.name.chars().any(char::is_control)
@@ -318,7 +410,7 @@ impl Aspect {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TitleEdit {
     pub text: String,
@@ -335,15 +427,127 @@ pub struct TitleEdit {
     pub background: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit_group: Option<u32>,
+    #[serde(default, skip_serializing_if = "TitleFont::is_default")]
+    pub font: TitleFont,
+    /// #rrggbb, overrides color when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke_width: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_opacity: Option<u8>,
+    #[serde(default, skip_serializing_if = "TitleAlign::is_default")]
+    pub align: TitleAlign,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub shadow: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_ms: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_spacing: Option<i8>,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleFont {
+    #[default]
+    Sans,
+    Bold,
+    Serif,
+    Mono,
+    Display,
+}
+
+impl TitleFont {
+    fn is_default(&self) -> bool {
+        *self == Self::Sans
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sans => "sans",
+            Self::Bold => "bold",
+            Self::Serif => "serif",
+            Self::Mono => "mono",
+            Self::Display => "display",
+        }
+    }
+
+    /// Font files tried in order: Windows (under %WINDIR%), macOS, Linux.
+    pub fn candidates(self) -> [&'static str; 3] {
+        match self {
+            Self::Sans => [
+                "Fonts/arial.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ],
+            Self::Bold => [
+                "Fonts/arialbd.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            ],
+            Self::Serif => [
+                "Fonts/times.ttf",
+                "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            ],
+            Self::Mono => [
+                "Fonts/cour.ttf",
+                "/System/Library/Fonts/Supplemental/Courier New.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            ],
+            Self::Display => [
+                "Fonts/impact.ttf",
+                "/System/Library/Fonts/Supplemental/Impact.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+}
+
+impl TitleAlign {
+    fn is_default(&self) -> bool {
+        *self == Self::Center
+    }
+}
+
+pub fn valid_hex(value: &str) -> bool {
+    value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// A layer without media that grades everything below it for its time span.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdjustmentEdit {
+    pub position_ms: i64,
+    pub duration_ms: i64,
+    pub layer: u8,
+    #[serde(default)]
+    pub look: Look,
+}
+
+pub const MAX_ADJUSTMENTS: usize = 100;
 
 fn is_false(value: &bool) -> bool {
     !value
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TitleColor {
+    #[default]
     White,
     Yellow,
     Cyan,
@@ -419,6 +623,8 @@ pub struct TimelineSnapshot {
         skip_serializing_if = "Option::is_none"
     )]
     pub export_range: Option<ExportRange>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjustments: Vec<AdjustmentEdit>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -472,6 +678,11 @@ impl TimelineSnapshot {
                     .iter()
                     .map(|title| title.position_ms.saturating_add(title.duration_ms)),
             )
+            .chain(
+                self.adjustments
+                    .iter()
+                    .map(|layer| layer.position_ms.saturating_add(layer.duration_ms)),
+            )
             .max()
             .unwrap_or(0)
     }
@@ -522,11 +733,37 @@ pub fn check_version(snapshot: &TimelineSnapshot) -> Result<()> {
                 || !(2..=24).contains(&title.size)
                 || !(-100..=100).contains(&title.x)
                 || !(-100..=100).contains(&title.y)
+                || [&title.color_hex, &title.stroke_hex, &title.background_hex]
+                    .iter()
+                    .any(|hex| hex.as_deref().is_some_and(|value| !valid_hex(value)))
+                || title.stroke_width.is_some_and(|width| width > 12)
+                || title
+                    .background_opacity
+                    .is_some_and(|opacity| opacity > 100)
+                || title.fade_ms.is_some_and(|ms| ms > 5000)
+                || title
+                    .line_spacing
+                    .is_some_and(|spacing| !(-20..=60).contains(&spacing))
         })
     {
         return Err(StudioError::Input(
             "Nội dung hoặc thời lượng chữ nằm ngoài giới hạn.",
         ));
+    }
+    if snapshot.adjustments.len() > MAX_ADJUSTMENTS
+        || snapshot.adjustments.iter().any(|layer| {
+            layer.position_ms < 0
+                || layer.duration_ms < MIN_CLIP_MS
+                || layer.position_ms.saturating_add(layer.duration_ms) > MAX_TIMELINE_MS
+                || layer.layer >= MAX_LAYERS
+                || !layer.look.valid()
+                || layer.look.freeze_at_ms.is_some()
+                || layer.look.reverse
+                || !layer.look.keyframes.is_empty()
+                || !layer.look.speed_curve.is_empty()
+        })
+    {
+        return Err(StudioError::Input("Lớp điều chỉnh nằm ngoài giới hạn."));
     }
     Ok(())
 }
@@ -546,6 +783,19 @@ pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()
         || !clip.look.valid()
         || (asset.kind == "image" && (clip.look.speed != 100 || !clip.look.speed_curve.is_empty()))
         || (track != "video" && (clip.look.audio_detached || clip.look.multicam.is_some()))
+        || clip.look.freeze_at_ms.is_some_and(|at| {
+            asset.kind != "video"
+                || track != "video"
+                || clip.start_ms != 0
+                || clip.look.speed != 100
+                || !clip.look.speed_curve.is_empty()
+                || clip.look.reverse
+                || asset.duration_ms.is_none_or(|duration| at > duration)
+        })
+        || (clip.look.reverse
+            && (asset.kind == "image"
+                || !clip.look.speed_curve.is_empty()
+                || clip.source_length_ms() > MAX_REVERSE_MS))
         || (track == "video" && clip.look.audio_link.is_some() && !clip.look.audio_detached)
         || (track == "audio" && !clip.look.keyframes.is_empty())
         || clip.look.transition.as_ref().is_some_and(|edit| {
@@ -586,6 +836,7 @@ pub fn check_clip(track: &str, clip: &ClipEdit, asset: &AssetFacts) -> Result<()
         ));
     }
     let source_limit = match (asset.kind, asset.duration_ms) {
+        _ if clip.look.freeze_at_ms.is_some() => MAX_IMAGE_MS,
         ("image", _) if clip.start_ms != 0 => -1,
         ("image", _) => MAX_IMAGE_MS,
         (_, Some(duration)) => duration,
@@ -639,6 +890,40 @@ mod tests {
             layer: 0,
             look: Look::default(),
         }
+    }
+
+    #[test]
+    fn tone_curve_matches_the_preview_and_freeze_rules_hold() {
+        assert_eq!(Look::default().tone_points(), None);
+        let bright = Look {
+            exposure: 100,
+            ..Look::default()
+        };
+        assert_eq!(
+            bright.tone_points(),
+            Some([0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0])
+        );
+        let video = AssetFacts {
+            kind: "video",
+            duration_ms: Some(6000),
+        };
+        let mut hold = clip(0, 3000, 0);
+        hold.look.freeze_at_ms = Some(2000);
+        assert!(check_clip("video", &hold, &video).is_ok());
+        hold.look.freeze_at_ms = Some(7000);
+        assert!(check_clip("video", &hold, &video).is_err());
+        let mut long_hold = clip(0, 9000, 0);
+        long_hold.look.freeze_at_ms = Some(1000);
+        assert!(
+            check_clip("video", &long_hold, &video).is_ok(),
+            "a still may outlast its source"
+        );
+        let mut back = clip(0, 6000, 0);
+        back.look.reverse = true;
+        assert!(check_clip("video", &back, &video).is_ok());
+        back.look.hue = 200;
+        assert!(check_clip("video", &back, &video).is_err());
+        assert!(valid_hex("#a0B1c2") && !valid_hex("#12345") && !valid_hex("123456z"));
     }
 
     #[test]
@@ -756,6 +1041,7 @@ mod tests {
             aspect: Aspect::Source,
             lanes: Vec::new(),
             export_range: None,
+            adjustments: Vec::new(),
         };
         assert!(check_version(&snapshot(2, &["video", "audio"])).is_ok());
         assert!(check_version(&snapshot(2, &["video"])).is_ok());

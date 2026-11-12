@@ -12,6 +12,7 @@ mod render;
 mod store;
 mod templates;
 mod timeline;
+mod voice;
 
 #[cfg(test)]
 mod smoke;
@@ -615,6 +616,134 @@ async fn detect_scenes(
 }
 
 #[tauri::command]
+async fn list_voices() -> CommandResult<Vec<voice::Voice>> {
+    blocking(voice::voices).await
+}
+
+/// Speaks text with a system voice into the app's voice-over folder and imports the WAV.
+#[tauri::command]
+async fn speak_text(
+    app: AppHandle,
+    text: String,
+    voice: String,
+    rate: i8,
+) -> CommandResult<library::ImportedFiles> {
+    blocking(move || {
+        let folder = app.state::<AppState>().data_dir.join("voiceovers");
+        let path = voice::speak(&folder, &text, &voice, rate)?;
+        import_local_files(&app, &[path])
+    })
+    .await
+}
+
+#[tauri::command]
+fn ai_key_status(state: State<AppState>) -> bool {
+    voice::has_ai_key(state.publisher.secrets.as_ref())
+}
+
+#[tauri::command]
+fn set_ai_key(state: State<AppState>, key: String) -> CommandResult<()> {
+    command(voice::set_ai_key(state.publisher.secrets.as_ref(), &key))
+}
+
+/// Sends caption lines to Claude only after the user agrees in a native dialog.
+#[tauri::command]
+async fn translate_captions(
+    app: AppHandle,
+    lines: Vec<String>,
+    language: String,
+) -> CommandResult<Option<Vec<String>>> {
+    blocking(move || {
+        let message = format!(
+            "{} câu phụ đề sẽ được gửi tới Anthropic (Claude API) bằng API key của bạn để dịch sang {}. Media không được gửi.",
+            lines.len(),
+            language.trim()
+        );
+        if !confirm(&app, "Dịch phụ đề bằng Claude", message, "Gửi và dịch")? {
+            return Ok(None);
+        }
+        let state = app.state::<AppState>();
+        voice::translate(state.publisher.secrets.as_ref(), &lines, &language, "https://api.anthropic.com").map(Some)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_lut(app: AppHandle) -> CommandResult<Option<model::LutEntry>> {
+    blocking(move || {
+        let window = app
+            .get_webview_window("main")
+            .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Nhập LUT .cube")
+            .add_filter("Cube LUT", &["cube"])
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        let path = file
+            .into_path()
+            .map_err(|_| StudioError::Input("Chỉ hỗ trợ tệp trên máy."))?;
+        if std::fs::metadata(&path)?.len() > 8 * 1024 * 1024 {
+            return Err(StudioError::Input("Tệp LUT lớn hơn 8 MB."));
+        }
+        let cube = std::fs::read_to_string(&path)
+            .map_err(|_| StudioError::Input("Tệp LUT phải là văn bản UTF-8."))?;
+        voice::validate_cube(&cube)?;
+        let name: String = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("LUT")
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(120)
+            .collect();
+        let name = if name.is_empty() {
+            "LUT".to_owned()
+        } else {
+            name
+        };
+        let state = app.state::<AppState>();
+        let id = state.store.insert_lut(&name, &cube)?;
+        Ok(Some(model::LutEntry { id, name }))
+    })
+    .await
+}
+
+#[tauri::command]
+fn list_luts(state: State<AppState>) -> CommandResult<Vec<model::LutEntry>> {
+    command(state.store.luts())
+}
+
+#[tauri::command]
+fn delete_lut(state: State<AppState>, id: i64) -> CommandResult<()> {
+    command(state.store.delete_lut(id))
+}
+
+#[tauri::command]
+async fn audio_offset(
+    app: AppHandle,
+    reference: i64,
+    reference_start_ms: i64,
+    other: i64,
+    other_start_ms: i64,
+) -> CommandResult<i64> {
+    blocking(move || {
+        analysis::audio_offset(
+            &app.state::<AppState>().store,
+            reference,
+            reference_start_ms,
+            other,
+            other_start_ms,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn track_motion(
     app: AppHandle,
     asset_id: i64,
@@ -891,6 +1020,15 @@ fn main() {
             audio_levels,
             detect_scenes,
             track_motion,
+            audio_offset,
+            list_voices,
+            speak_text,
+            ai_key_status,
+            set_ai_key,
+            translate_captions,
+            import_lut,
+            list_luts,
+            delete_lut,
             list_social_accounts,
             connect_social_account,
             disconnect_social_account,

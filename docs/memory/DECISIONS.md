@@ -31,3 +31,7 @@ Tách âm thanh, tắt clip, compound, multicam và speed curve là trường t�
 ## ADR-007 · 2026-11-11 · Cấp quyền từng tệp từ picker và native drop
 
 M1-H1 mở rộng ADR-002. Picker tệp và sự kiện thả từ hệ điều hành lưu canonical path với phạm vi đúng một tệp. Dùng bảng grant hiện tại để tái sử dụng thu hồi, ID nguồn và quan hệ SQLite. Cấp quyền thư mục vẫn cần hộp thoại chọn thư mục. Frontend nhận tọa độ thả và asset ID để quyết định chèn clip vào dự án đang mở. Preview, waveform, render, nhận dạng, phân tích mẫu và publishing dùng chung kiểm tra phạm vi nguồn. [Quyền media](SECURITY.md)
+
+## ADR-009 · 2026-11-12 · Màu, lớp điều chỉnh, giọng đọc và dịch
+
+Đường cong tông được dựng từ năm thanh ánh sáng bằng một công thức chung; preview dùng bảng `feComponentTransfer` 9 điểm, FFmpeg dùng `curves` với cùng 9 điểm, nên hai bên khớp tông. Tint, hue, vibrance dùng `colorbalance`, `hue`, `vibrance` khi xuất và ma trận/CSS gần đúng khi xem trước. LUT chỉ áp khi xuất vì WebView không có lut3d. Lớp điều chỉnh là danh sách riêng trong snapshot (như chữ), áp filter có `enable='between(t,..)'` lên ảnh ghép trước lớp chữ. Freeze dùng ngữ nghĩa ảnh tĩnh (`startMs = 0`, `endMs` là thời lượng) cộng `freezeAtMs`. Đồng bộ multicam dùng tương quan onset năng lượng 10 ms thay vì so dạng sóng, vì hai micro khác nhau vẫn trùng điểm bắt đầu âm. Lồng tiếng dùng giọng có sẵn của hệ điều hành để không cần mô hình hay mạng; dịch dùng Claude API qua HTTP thô vì Rust không có SDK chính thức.

@@ -21,8 +21,8 @@ use crate::{
     probe::{self, MediaFormat},
     store::Store,
     timeline::{
-        Aspect, ClipEdit, Effect, KeyColor, Look, Motion, TimelineSnapshot, TransformKey,
-        TransitionKind, check_version, curve_segments, transition_between,
+        Aspect, ClipEdit, Effect, KeyColor, Look, Motion, TimelineSnapshot, TitleAlign, TitleFont,
+        TransformKey, TransitionKind, check_version, curve_segments, transition_between,
     },
 };
 
@@ -47,6 +47,10 @@ pub struct Plan {
     pub output: PathBuf,
     titles: Vec<String>,
     graph_file: Option<OsString>,
+    /// Fonts the titles use, written next to the graph as font-<name>.ttf.
+    fonts: Vec<TitleFont>,
+    /// LUT ids referenced as lut-<id>.cube. `execute` fills in the file contents.
+    pub luts: Vec<(i64, String)>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -87,7 +91,17 @@ fn frame_size(snapshot: &TimelineSnapshot, sources: &HashMap<i64, Source>) -> (u
 
 fn push_input(args: &mut Vec<OsString>, source: &Source, clip: &ClipEdit) {
     args.extend(source.format.input_args().map(OsString::from));
-    if source.kind != "image" {
+    if let Some(at) = clip.look.freeze_at_ms {
+        args.extend(
+            [
+                "-ss".to_owned(),
+                seconds(at),
+                "-t".to_owned(),
+                "1".to_owned(),
+            ]
+            .map(OsString::from),
+        );
+    } else if source.kind != "image" {
         // Read a little past the out point. The filter graph makes the exact cut.
         args.extend(
             [
@@ -135,8 +149,9 @@ fn audio_chain(index: usize, clip: &ClipEdit) -> String {
     };
     let head = format!(
         "[{index}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,\
-         atrim=duration={},asetpts=PTS-STARTPTS",
-        seconds(clip.source_length_ms())
+         atrim=duration={},asetpts=PTS-STARTPTS{}",
+        seconds(clip.source_length_ms()),
+        if clip.look.reverse { ",areverse" } else { "" }
     );
     let tail = format!(
         "volume={volume}{fades},adelay={}:all=1[a{index}]",
@@ -202,12 +217,81 @@ fn curve_pts(clip: &ClipEdit) -> String {
     })
 }
 
+/// Tint, hue, vibrance, the tone curve and a LUT. `enable` limits them to a time span.
+fn color_filters(look: &Look, enable: &str) -> String {
+    let mut filters = String::new();
+    if look.temperature != 0 && !enable.is_empty() {
+        let heat = f64::from(look.temperature) / 500.0;
+        filters.push_str(&format!(
+            ",colorbalance=rm={heat:.3}:bm={:.3}:pl=1{enable}",
+            -heat
+        ));
+    }
+    if look.tint != 0 {
+        filters.push_str(&format!(
+            ",colorbalance=gm={:.3}:pl=1{enable}",
+            -f64::from(look.tint) / 250.0
+        ));
+    }
+    if look.hue != 0 {
+        filters.push_str(&format!(",hue=h={}{enable}", look.hue));
+    }
+    if look.vibrance != 0 {
+        filters.push_str(&format!(
+            ",vibrance=intensity={:.2}{enable}",
+            f64::from(look.vibrance) / 100.0
+        ));
+    }
+    if let Some(points) = look.tone_points() {
+        let curve: Vec<String> = points
+            .iter()
+            .enumerate()
+            .map(|(index, y)| format!("{}/{y:.4}", index as f64 / 8.0))
+            .collect();
+        filters.push_str(&format!(",curves=master='{}'{enable}", curve.join(" ")));
+    }
+    if let Some(id) = look.lut {
+        filters.push_str(&format!(",lut3d=file=lut-{id}.cube{enable}"));
+    }
+    filters
+}
+
+/// Everything an adjustment layer applies to the picture below it during its span.
+fn adjustment_filters(look: &Look, start_ms: i64, end_ms: i64) -> String {
+    let enable = format!(
+        ":enable='between(t,{},{})'",
+        seconds(start_ms),
+        seconds(end_ms)
+    );
+    let mut filters = String::new();
+    if look.brightness != 0 || look.contrast != 100 || look.saturation != 100 {
+        filters.push_str(&format!(
+            ",eq=brightness={:.2}:contrast={:.2}:saturation={:.2}{enable}",
+            f64::from(look.brightness) / 100.0,
+            f64::from(look.contrast) / 100.0,
+            f64::from(look.saturation) / 100.0
+        ));
+    }
+    filters.push_str(&color_filters(look, &enable));
+    filters.push_str(&match look.effect {
+        Effect::None => String::new(),
+        Effect::Blur => format!(",gblur=sigma=4{enable}"),
+        Effect::Vignette => format!(",vignette=PI/5{enable}"),
+        Effect::Grain => format!(",noise=alls=10:allf=t+u:all_seed=37{enable}"),
+    });
+    if look.sharpen {
+        filters.push_str(&format!(",unsharp=5:5:0.85:5:5:0{enable}"));
+    }
+    filters
+}
+
 fn grade_filters(look: &Look) -> String {
     let mut filters = String::new();
     if look.temperature != 0 {
         let heat = f64::from(look.temperature) / 500.0;
         filters.push_str(&format!(",colorbalance=rm={heat:.3}:bm={:.3}:pl=1", -heat));
     }
+    filters.push_str(&color_filters(look, ""));
     if look.denoise {
         filters.push_str(",hqdn3d=3:2:4:3");
     }
@@ -404,6 +488,19 @@ pub fn plan(
             ""
         };
         let flip = if look.flip { "hflip," } else { "" };
+        let freeze = if look.freeze_at_ms.is_some() {
+            "trim=end_frame=1,"
+        } else {
+            ""
+        };
+        let reverse = if look.reverse {
+            format!(
+                "trim=duration={},setpts=PTS-STARTPTS,reverse,",
+                seconds(clip.source_length_ms())
+            )
+        } else {
+            String::new()
+        };
         let timing = if look.speed_curve.len() >= 2 {
             format!("setpts='({})/TB',", curve_pts(clip))
         } else if look.speed == 100 {
@@ -428,8 +525,8 @@ pub fn plan(
             String::new()
         };
         graph.push(format!(
-            "[{index}:V:0]{stabilize}{flip}scale={fit_width}:{fit_height}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
-             setsar=1,{timing}{sampling},tpad=stop_mode=clone:stop_duration={length},trim=duration={length},setpts=PTS-STARTPTS,\
+            "[{index}:V:0]{freeze}{stabilize}{flip}scale={fit_width}:{fit_height}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
+             setsar=1,{reverse}{timing}{sampling},tpad=stop_mode=clone:stop_duration={length},trim=duration={length},setpts=PTS-STARTPTS,\
              eq=brightness={:.2}:contrast={:.2}:saturation={:.2}{grade}{join_colors}{alpha},format=yuva420p{fades}{join_alpha}{animated_scale}{hold_tail},setsar=1,setpts=PTS+{at}/TB[v{index}]",
             f64::from(look.brightness) / 100.0, f64::from(look.contrast) / 100.0,
             f64::from(look.saturation) / 100.0,
@@ -458,6 +555,7 @@ pub fn plan(
         if source.kind == "video"
             && source.has_audio
             && !look.audio_detached
+            && look.freeze_at_ms.is_none()
             && !snapshot
                 .lane("video", clip.layer)
                 .is_some_and(|lane| lane.muted)
@@ -472,6 +570,7 @@ pub fn plan(
         if source.kind == "video"
             && source.has_audio
             && !clip.look.audio_detached
+            && clip.look.freeze_at_ms.is_none()
             && !snapshot
                 .lane("video", clip.layer)
                 .is_some_and(|lane| lane.muted)
@@ -502,6 +601,36 @@ pub fn plan(
         index += 1;
     }
 
+    let mut adjustments: Vec<_> = snapshot.adjustments.iter().collect();
+    adjustments.sort_by_key(|layer| layer.layer);
+    let mut luts: Vec<i64> = snapshot
+        .tracks
+        .iter()
+        .flat_map(|track| &track.clips)
+        .filter(|clip| !clip.look.disabled)
+        .filter_map(|clip| clip.look.lut)
+        .collect();
+    for (index, layer) in adjustments.iter().enumerate() {
+        if snapshot
+            .lane("text", layer.layer)
+            .is_some_and(|lane| lane.hidden)
+        {
+            continue;
+        }
+        let filters = adjustment_filters(
+            &layer.look,
+            layer.position_ms,
+            layer.position_ms + layer.duration_ms,
+        );
+        if filters.is_empty() {
+            continue;
+        }
+        luts.extend(layer.look.lut);
+        graph.push(format!("{video}{}[adjust{index}]", &filters[1..]));
+        video = format!("[adjust{index}]");
+    }
+    luts.sort_unstable();
+    luts.dedup();
     let mut titles: Vec<_> = snapshot
         .titles
         .iter()
@@ -514,25 +643,59 @@ pub fn plan(
     titles.sort_by_key(|title| title.layer);
     for (index, title) in titles.iter().enumerate() {
         let label = format!("[title{index}]");
-        let color = title.color.name();
-        let border = if color == "black" { "white" } else { "black" };
-        let background = if title.background {
-            "box=1:boxcolor=black@0.66:boxborderw=8:"
+        let hex = |value: &Option<String>| value.as_deref().map(|hex| format!("0x{}", &hex[1..]));
+        let color = hex(&title.color_hex).unwrap_or_else(|| title.color.name().to_owned());
+        let default_border = if title.color.name() == "black" && title.color_hex.is_none() {
+            "white"
         } else {
-            ""
+            "black"
         };
+        let border = hex(&title.stroke_hex).unwrap_or_else(|| default_border.to_owned());
+        let border_width = title.stroke_width.unwrap_or(2);
+        let mut style = String::new();
+        if title.background || title.background_hex.is_some() {
+            style.push_str(&format!(
+                "box=1:boxcolor={}@{:.2}:boxborderw=8:",
+                hex(&title.background_hex).unwrap_or_else(|| "black".to_owned()),
+                f64::from(title.background_opacity.unwrap_or(66)) / 100.0
+            ));
+        }
+        if title.shadow {
+            style.push_str("shadowcolor=black@0.6:shadowx=3:shadowy=3:");
+        }
+        if let Some(spacing) = title.line_spacing {
+            style.push_str(&format!("line_spacing={spacing}:"));
+        }
+        style.push_str(match title.align {
+            TitleAlign::Left => "text_align=L:",
+            TitleAlign::Center => "text_align=C:",
+            TitleAlign::Right => "text_align=R:",
+        });
+        let (start, end) = (title.position_ms, title.position_ms + title.duration_ms);
+        if let Some(fade) = title.fade_ms.filter(|ms| *ms > 0) {
+            let fade = seconds(i64::from(fade).min(title.duration_ms / 2).max(1));
+            style.push_str(&format!(
+                "alpha='clip(min((t-{})/{fade},({}-t)/{fade}),0,1)':",
+                seconds(start),
+                seconds(end)
+            ));
+        }
         graph.push(format!(
-            "{video}drawtext=fontfile=font.ttf:textfile=title-{index}.txt:expansion=none:\
-             fontsize=h*{}/100:fontcolor={color}:borderw=2:bordercolor={border}:{background}\
+            "{video}drawtext=fontfile=font-{}.ttf:textfile=title-{index}.txt:expansion=none:\
+             fontsize=h*{}/100:fontcolor={color}:borderw={border_width}:bordercolor={border}:{style}\
              x=(w-tw)*{}/200:y=(h-th)*{}/200:enable='gte(t,{})*lt(t,{})'{label}",
+            title.font.name(),
             title.size,
             title.x + 100,
             title.y + 100,
-            seconds(title.position_ms),
-            seconds(title.position_ms + title.duration_ms),
+            seconds(start),
+            seconds(end),
         ));
         video = label;
     }
+    let mut fonts: Vec<TitleFont> = titles.iter().map(|title| title.font).collect();
+    fonts.sort_by_key(|font| font.name());
+    fonts.dedup();
     let (video_range, audio_range) = snapshot.export_range.map_or_else(
         || (String::new(), String::new()),
         |range| {
@@ -612,6 +775,8 @@ pub fn plan(
         output: output.to_path_buf(),
         titles: titles.into_iter().map(|title| title.text.clone()).collect(),
         graph_file,
+        fonts,
+        luts: luts.into_iter().map(|id| (id, String::new())).collect(),
     })
 }
 
@@ -636,32 +801,39 @@ pub fn run(
         .tempfile_in(folder)?
         .into_temp_path();
     let mut cmd = probe::command(ffmpeg);
-    let work = if plan.titles.is_empty() && plan.graph_file.is_none() {
+    let work = if plan.titles.is_empty() && plan.graph_file.is_none() && plan.luts.is_empty() {
         None
     } else {
         let work = tempfile::tempdir()?;
         if let Some(graph) = &plan.graph_file {
             fs::write(work.path().join("filters.txt"), graph.as_encoded_bytes())?;
         }
+        for (id, cube) in &plan.luts {
+            fs::write(work.path().join(format!("lut-{id}.cube")), cube)?;
+        }
         if !plan.titles.is_empty() {
-            let font = [
-                std::env::var_os("WINDIR")
-                    .map(PathBuf::from)
-                    .map(|dir| dir.join("Fonts/arial.ttf")),
-                Some(PathBuf::from(
-                    "/System/Library/Fonts/Supplemental/Arial.ttf",
-                )),
-                Some(PathBuf::from(
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                )),
-            ]
-            .into_iter()
-            .flatten()
-            .find(|path| path.is_absolute() && path.is_file())
-            .ok_or(StudioError::Input(
-                "Thiếu phông chữ Arial hoặc DejaVu Sans để xuất lớp chữ.",
-            ))?;
-            fs::copy(font, work.path().join("font.ttf"))?;
+            let find = |font: TitleFont| {
+                font.candidates()
+                    .into_iter()
+                    .filter_map(|candidate| {
+                        if candidate.starts_with('/') {
+                            Some(PathBuf::from(candidate))
+                        } else {
+                            std::env::var_os("WINDIR").map(|dir| PathBuf::from(dir).join(candidate))
+                        }
+                    })
+                    .find(|path| path.is_absolute() && path.is_file())
+            };
+            for font in &plan.fonts {
+                // A missing style falls back to the regular sans font.
+                let path =
+                    find(*font)
+                        .or_else(|| find(TitleFont::Sans))
+                        .ok_or(StudioError::Input(
+                            "Thiếu phông chữ Arial hoặc DejaVu Sans để xuất lớp chữ.",
+                        ))?;
+                fs::copy(path, work.path().join(format!("font-{}.ttf", font.name())))?;
+            }
             for (index, text) in plan.titles.iter().enumerate() {
                 fs::write(work.path().join(format!("title-{index}.txt")), text)?;
             }
@@ -852,7 +1024,10 @@ pub fn execute(store: &Store, job_id: i64, cancel: &AtomicBool) -> Result<Outcom
     };
     let sources = resolve(store, &task.snapshot, &ffprobe)?;
     let output = checked_output(Path::new(&task.output_path), &sources)?;
-    let plan = plan(&task.snapshot, &sources, &output)?;
+    let mut plan = plan(&task.snapshot, &sources, &output)?;
+    for (id, cube) in &mut plan.luts {
+        *cube = store.lut(*id)?;
+    }
     run(&ffmpeg, &plan, cancel, |progress| {
         let _ = store.set_render_progress(job_id, progress);
     })
@@ -923,6 +1098,7 @@ mod tests {
             aspect: Aspect::Source,
             lanes: Vec::new(),
             export_range: None,
+            adjustments: Vec::new(),
         };
         let output = sources[&1].path.with_file_name("out.mp4");
         let plan = plan(&snapshot, &sources, &output).unwrap();
@@ -979,6 +1155,7 @@ mod tests {
             aspect: Aspect::Source,
             lanes: Vec::new(),
             export_range: None,
+            adjustments: Vec::new(),
         };
         let output = sources[&1].path.with_file_name("out.mp4");
         let plan = plan(&snapshot, &sources, &output).unwrap();
@@ -1059,6 +1236,7 @@ mod tests {
             aspect: Aspect::Source,
             lanes: Vec::new(),
             export_range: None,
+            adjustments: Vec::new(),
         };
         assert!(plan(&empty, &sources, &output).is_err());
         let missing = TimelineSnapshot {
@@ -1071,6 +1249,7 @@ mod tests {
             aspect: Aspect::Source,
             lanes: Vec::new(),
             export_range: None,
+            adjustments: Vec::new(),
         };
         assert!(plan(&missing, &sources, &output).is_err());
 

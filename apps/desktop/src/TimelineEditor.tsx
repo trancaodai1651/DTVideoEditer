@@ -10,7 +10,9 @@ import {
   compoundOf, createCompound, createMulticam, deleteSelection, detachAudio, groupOf, groupSelection, hasCurve, laneControl, layerOf, mediaDropPlacement,
   moveClip, moveSelection, multicamAngles, pasteSelection, previousVisual, releaseCompound, releaseMulticam, renameCompound, restoreAudio, setDisabled,
   setSpeed, snap, speedCurvePresets, splitClip, switchAngle, totalMs, transitionBetween, trimClip,
+  addAdjustment, copyAttributes, freezeFrame, isStill, pasteAttributes, replaceClip, toggleReverse,
 } from "./timeline";
+import type { ClipLook, TitleStyle } from "./desktop";
 import type { Clip, MediaDropTarget, MediaRef } from "./timeline";
 import { frameTimecode, timecode, vi } from "./vi";
 
@@ -19,7 +21,7 @@ const MAX_SCALE = 0.96;
 const TICKS = [100, 200, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000];
 const SNAP_PX = 8;
 type Mode = "move" | "start" | "end" | "fadeIn" | "fadeOut";
-export type SmartAction = "scenes" | "silence" | "beats" | "track" | "speed";
+export type SmartAction = "scenes" | "silence" | "beats" | "track" | "speed" | "multicam";
 type Tool = "select" | "split" | "left" | "right";
 type SaveState = "saved" | "saving" | "error";
 
@@ -50,7 +52,9 @@ interface Props {
   range: ExportRange | undefined;
   onRange: (edge: "start" | "end" | "clear") => void;
   onNotify: (text: string, error: boolean) => void;
-  onSmart: (action: SmartAction, key: string) => void;
+  onSmart: (action: SmartAction, key: string, keys?: string[]) => void;
+  /** The media selected in the library, offered by "Replace clip". */
+  replaceMedia: MediaRef | null;
 }
 
 export type Lane = { track: EditorTrack; layer: number };
@@ -89,6 +93,9 @@ export function TimelineEditor(props: Props) {
   const [extra, setExtra] = useState({ text: 0, video: 1, audio: 1 });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
+  /** A compound opened as its own timeline: only its clips are shown and edited. */
+  const [focus, setFocus] = useState<{ id: number; name: string } | null>(null);
+  const attributes = useRef<Partial<ClipLook> | TitleStyle | null>(null);
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const boxStart = useRef<{ x: number; y: number; pointer: number } | null>(null);
   const lastPress = useRef({ target: "", at: 0 });
@@ -105,14 +112,15 @@ export function TimelineEditor(props: Props) {
   const canvas = useRef<HTMLDivElement>(null);
   const labels = useRef<HTMLDivElement>(null);
   const scrollAfterZoom = useRef<number | null>(null);
-  const shown = draft ?? clips;
+  const all = draft ?? clips;
+  const shown = focus ? all.filter((clip) => compoundOf(clip)?.id === focus.id) : all;
   const total = totalMs(shown);
   const width = Math.max(viewport.width, Math.round(Math.max(total + 1000, (pending?.at ?? 0) + (pending?.length ?? 0)) * scale));
   const tick = TICKS.find((ms) => ms * scale >= 64) ?? TICKS.at(-1)!;
   const firstTick = Math.floor(viewport.left / (tick * scale));
   const tickCount = Math.min(Math.floor(width / (tick * scale)) - firstTick + 1, Math.ceil(viewport.width / (tick * scale)) + 2);
   const zoomPercent = Math.round(100 * Math.log(scale / MIN_SCALE) / Math.log(MAX_SCALE / MIN_SCALE));
-  const blocks = compoundBlocks(shown).filter((block) => !expanded.has(block.id));
+  const blocks = focus ? [] : compoundBlocks(shown).filter((block) => !expanded.has(block.id));
   const folded = new Set(blocks.flatMap((block) => block.keys));
   const selected = clips.find((clip) => clip.key === selectedKey);
   const group = selected && groupOf(selected);
@@ -392,6 +400,14 @@ export function TimelineEditor(props: Props) {
       { label: "Xóa", shortcut: "Delete", danger: true, disabled: lockedLane, action: () => apply(() => deleteSelection(clips, members, magnet, linkage)) },
       "separator",
       { label: "Tách tại playhead", shortcut: "Ctrl+B", disabled: lockedLane || !canSplit(clip, playheadMs), action: () => apply(() => splitClip(clips, clip.key, playheadMs) ?? clips) },
+      { label: "Sao chép thuộc tính", shortcut: "Ctrl+Shift+C", action: () => { attributes.current = copyAttributes(clip); } },
+      { label: "Dán thuộc tính", shortcut: "Ctrl+Shift+V", disabled: lockedLane || !attributes.current, action: () => attributes.current && apply(() => pasteAttributes(clips, members, attributes.current!), "Đã dán thuộc tính.") },
+      { label: props.replaceMedia ? `Thay bằng ${fileName(props.replaceMedia.relativePath)}` : "Thay clip (chọn media trong thư viện trước)", disabled: lockedLane || !props.replaceMedia || clip.track === "text",
+        action: () => props.replaceMedia && apply(() => replaceClip(clips, clip.key, props.replaceMedia!), "Đã thay media, giữ vị trí và hiệu chỉnh.") },
+      ...(clip.kind === "video" && clip.track === "video" && !isStill(clip) ? [{ label: "Khung hình tĩnh tại playhead (3 giây)", disabled: lockedLane || playheadMs < clip.positionMs || playheadMs >= clipFinish(clip),
+        action: () => apply(() => freezeFrame(clips, clip.key, playheadMs), "Đã chèn khung hình tĩnh 3 giây.") }] : []),
+      ...(media && clip.kind !== "image" && !isStill(clip) && clip.kind !== "adjustment" ? [{ label: clip.look?.reverse ? "Bỏ đảo ngược" : "Đảo ngược", checked: !!clip.look?.reverse, disabled: lockedLane,
+        action: () => apply(() => toggleReverse(clips, clip.key)) }] : []),
       { label: anyDisabled ? "Bật lại clip" : "Tắt clip", shortcut: "V", disabled: lockedLane || !media, action: () => apply(() => setDisabled(clips, members, !anyDisabled)) },
     ];
     if (clip.track === "video" && clip.kind === "video") {
@@ -418,6 +434,7 @@ export function TimelineEditor(props: Props) {
     if (picked.some(groupOf)) items.push({ label: "Bỏ nhóm", shortcut: "Ctrl+Shift+G", action: () => apply(() => groupSelection(clips, members, true)) });
     if (compound) {
       items.push(
+        { label: "Mở timeline con của compound", action: () => { setFocus(compound); setMulti([]); onSelect(null); } },
         { label: expanded.has(compound.id) ? "Thu gọn compound" : "Mở compound", action: () => setExpanded((current) => {
           const next = new Set(current);
           if (next.has(compound.id)) next.delete(compound.id); else next.add(compound.id);
@@ -439,7 +456,8 @@ export function TimelineEditor(props: Props) {
         action: () => apply(() => switchAngle(clips, cam, index, playheadMs)) }));
       items.push({ label: "Gỡ multicam", action: () => apply(() => releaseMulticam(clips, cam)) });
     } else if (picked.filter((item) => item.track === "video" && item.kind === "video").length >= 2) {
-      items.push({ label: "Tạo multicam từ các clip đã chọn", action: () => apply(() => createMulticam(clips, members), "Đã đồng bộ góc máy. Nhấn 1–9 để chuyển góc tại playhead.") });
+      items.push({ label: "Tạo multicam (đồng bộ theo điểm đầu)", action: () => apply(() => createMulticam(clips, members), "Đã đồng bộ góc máy. Nhấn 1–9 để chuyển góc tại playhead.") });
+      items.push({ label: "Tạo multicam (đồng bộ theo âm thanh)", action: () => props.onSmart("multicam", clip.key, [...members]) });
     }
     if (media) {
       items.push("separator", { heading: "Công cụ thông minh" });
@@ -538,6 +556,8 @@ export function TimelineEditor(props: Props) {
       if (key === "b") split(event.shiftKey);
       else if (key === "a") { setMulti(clips.map((clip) => clip.key)); onSelect(clips[0]?.key ?? null); }
       else if (key === "g") onChange(groupSelection(clips, chosen, event.shiftKey));
+      else if (key === "c" && event.shiftKey && selected) attributes.current = copyAttributes(selected);
+      else if (key === "v" && event.shiftKey && attributes.current && chosen.size) apply(() => pasteAttributes(clips, chosen, attributes.current!), "Đã dán thuộc tính.");
       else if (key === "c" || key === "x") copy(key === "x");
       else if (key === "v") paste();
       else if (key === "d" && chosen.size) {
@@ -668,6 +688,8 @@ export function TimelineEditor(props: Props) {
         {kinds.map((track) => <button key={track} type="button" className="button secondary compact"
           disabled={locked || layerCount(track) >= MAX_LAYERS} onClick={() => addLane(track)}>+ Tầng {label[track].toLowerCase()}</button>)}
         <button type="button" className="button secondary compact" disabled={locked} onClick={props.onTitle}>+ Chữ tại playhead</button>
+        <button type="button" className="button secondary compact" disabled={locked}
+          onClick={() => apply(() => addAdjustment(clips, playheadMs, lane.track === "text" ? lane.layer : 0), "Đã thêm lớp điều chỉnh. Chỉnh màu trong Thuộc tính.")}>+ Lớp điều chỉnh</button>
         <button type="button" className="button secondary compact" disabled={locked || chosen.size < 2}
           onClick={() => onChange(groupSelection(clips, chosen))}>Nhóm</button>
         <button type="button" className="button secondary compact" disabled={locked || !clips.some((clip) => chosen.has(clip.key) && groupOf(clip))}
@@ -681,6 +703,10 @@ export function TimelineEditor(props: Props) {
         <span className="tl-save">{label[lane.track]} {lane.layer + 1} đang chọn</span>
       </div>
 
+      {focus && <div className="tl-breadcrumb" role="navigation" aria-label="Timeline con">
+        <button type="button" className="button secondary compact" onClick={() => { setFocus(null); setMulti([]); }}>← Timeline chính</button>
+        <span>Compound <strong>{focus.name}</strong> · chỉ hiện và sửa các clip trong compound</span>
+      </div>}
       <div className="tl" ref={scroll} onScroll={measure}>
         <div className="tl-labels" ref={labels}>
           <div className="tl-corner" />
@@ -782,7 +808,7 @@ export function TimelineEditor(props: Props) {
                   const [fadeIn, fadeOut] = track === "audio" ? audioFades(clip) : [0, 0];
                   return <div key={clip.key} role="button" tabIndex={0} aria-pressed={chosen.has(clip.key)}
                     aria-label={vi.clipLabel(name, timecode(clip.positionMs), timecode(clipLength(clip)))}
-                    className={`tl-clip ${track} ${chosen.has(clip.key) ? "selected" : ""} ${clip.available ? "" : "offline"}${clip.look?.disabled ? " disabled-clip" : ""}${compoundOf(clip) ? " in-compound" : ""}`}
+                    className={`tl-clip ${track} ${chosen.has(clip.key) ? "selected" : ""} ${clip.available ? "" : "offline"}${clip.look?.disabled ? " disabled-clip" : ""}${clip.kind === "adjustment" ? " adjustment" : ""}${compoundOf(clip) ? " in-compound" : ""}`}
                     style={{ left: clip.positionMs * scale, width: Math.max(clipLength(clip) * scale, 6) }}
                     title={clip.available ? clip.relativePath : vi.unavailable}
                     onKeyDown={(event) => { if (event.key === "Enter") { setMulti([]); onSelect(clip.key); } }}
@@ -821,6 +847,9 @@ export function TimelineEditor(props: Props) {
                     {(clip.look?.audioDetached || clip.look?.audioLink !== undefined) && <span className="tl-badge" title={clip.track === "audio" ? "Âm thanh đã tách từ video" : "Âm thanh đã tách"}>{clip.track === "audio" ? "⛓" : "🔇"}</span>}
                     {clip.look?.multicam !== undefined && <span className="tl-badge" title="Góc máy multicam">🎥{multicamAngles(shown, clip.look.multicam).indexOf(layerOf(clip)) + 1}</span>}
                     {hasCurve(clip) && <span className="tl-badge" title="Đường cong tốc độ">⏱</span>}
+                    {clip.look?.reverse && <span className="tl-badge" title="Đảo ngược">⇄</span>}
+                    {clip.look?.freezeAtMs !== undefined && <span className="tl-badge" title="Khung hình tĩnh">❄</span>}
+                    {clip.look?.lut !== undefined && <span className="tl-badge" title="Có LUT">◐</span>}
                     {compoundOf(clip) && <span className="tl-badge" title={`Thuộc compound ${compoundOf(clip)!.name}`}>▣</span>}</span>
                     {fadeIn > 0 && <span className="tl-fade in" aria-hidden="true" style={{ width: fadeIn * scale }} />}
                     {fadeOut > 0 && <span className="tl-fade out" aria-hidden="true" style={{ width: fadeOut * scale }} />}

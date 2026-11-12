@@ -29,6 +29,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/007_filmstrips.sql"),
     include_str!("../migrations/008_lane_controls.sql"),
     include_str!("../migrations/009_audio_levels.sql"),
+    include_str!("../migrations/010_color_layers.sql"),
 ];
 const RENDER_JOB: &str = "SELECT id, project_id, status, progress, output_path, duration_ms, error, created_at, finished_at FROM render_jobs";
 const NOT_GRANTED: StudioError = StudioError::Input("Thư mục đã bị thu hồi hoặc không tồn tại.");
@@ -399,6 +400,42 @@ impl Store {
             .optional()?)
     }
 
+    /// Stores a validated .cube LUT and returns its id.
+    pub fn insert_lut(&self, name: &str, cube: &str) -> Result<i64> {
+        let db = self.db()?;
+        db.execute(
+            "INSERT INTO luts(name, cube) VALUES (?, ?)",
+            params![name, cube],
+        )?;
+        Ok(db.last_insert_rowid())
+    }
+
+    pub fn luts(&self) -> Result<Vec<crate::model::LutEntry>> {
+        let db = self.db()?;
+        let mut statement = db.prepare("SELECT id, name FROM luts ORDER BY id")?;
+        let rows = statement.query_map([], |row| {
+            Ok(crate::model::LutEntry {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn lut(&self, id: i64) -> Result<String> {
+        self.db()?
+            .query_row("SELECT cube FROM luts WHERE id = ?", [id], |row| row.get(0))
+            .optional()?
+            .ok_or(StudioError::Input(
+                "Không tìm thấy LUT đã nhập. Hãy nhập lại tệp .cube.",
+            ))
+    }
+
+    pub fn delete_lut(&self, id: i64) -> Result<()> {
+        self.db()?.execute("DELETE FROM luts WHERE id = ?", [id])?;
+        Ok(())
+    }
+
     pub fn derived_preview(
         &self,
         asset_id: i64,
@@ -474,10 +511,10 @@ impl Store {
 
     pub fn timeline(&self, project_id: i64) -> Result<Timeline> {
         let db = self.db()?;
-        let (titles, aspect, lanes) = db.query_row(
-            "SELECT titles_json, aspect_json, lanes_json FROM timelines WHERE id = ?",
+        let (titles, aspect, lanes, adjustments) = db.query_row(
+            "SELECT titles_json, aspect_json, lanes_json, adjustments_json FROM timelines WHERE id = ?",
             [project_id],
-            |row| Ok((decode(row, 0)?, decode(row, 1)?, decode(row, 2)?)),
+            |row| Ok((decode(row, 0)?, decode(row, 1)?, decode(row, 2)?, decode(row, 3)?)),
         )?;
         let mut statement = db.prepare(
             "SELECT c.id, a.id, a.relative_path, a.kind, t.kind, c.start_ms, c.end_ms, c.position_ms,
@@ -511,6 +548,7 @@ impl Store {
             titles,
             aspect,
             lanes,
+            adjustments,
         })
     }
 
@@ -545,6 +583,7 @@ impl Store {
             aspect: timeline.aspect,
             lanes: timeline.lanes,
             export_range: None,
+            adjustments: timeline.adjustments,
         })
     }
 
@@ -571,12 +610,13 @@ impl Store {
             return Err(StudioError::Input("Không tìm thấy dự án."));
         }
         tx.execute(
-            "UPDATE timelines SET titles_json = ?2, aspect_json = ?3, lanes_json = ?4 WHERE id = ?1",
+            "UPDATE timelines SET titles_json = ?2, aspect_json = ?3, lanes_json = ?4, adjustments_json = ?5 WHERE id = ?1",
             params![
                 project_id,
                 encode(&snapshot.titles)?,
                 encode(&snapshot.aspect)?,
-                encode(&snapshot.lanes)?
+                encode(&snapshot.lanes)?,
+                encode(&snapshot.adjustments)?
             ],
         )?;
         tx.execute(

@@ -1,6 +1,16 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-050
+Snapshot: 2026-11-12/EDITOR-060
+
+## 2026-11-12 · Editor 0.6.0
+
+- Migration 010 thêm `adjustments_json` cho lớp điều chỉnh, bảng `luts` và xóa cache mức âm lượng cũ.
+- Chỉnh màu đầy đủ trong Thuộc tính với đường cong tông dùng chung công thức giữa SVG preview và FFmpeg `curves`; LUT .cube qua `lut3d`; lớp điều chỉnh áp lên ảnh ghép bằng các filter có `enable`.
+- Chữ có phông, màu hex, viền, nền, căn lề, bóng, hiện/ẩn dần và giãn dòng; FFmpeg chép phông theo kiểu vào thư mục tạm.
+- Sao chép/dán thuộc tính (`Ctrl+Shift+C/V`), thay clip bằng media đang chọn, khung hình tĩnh 3 giây, đảo ngược (`reverse`/`areverse`, tối đa 60 giây nguồn), timeline con của compound.
+- Multicam đồng bộ theo âm thanh bằng tương quan onset 10 ms; tracking thêm tỷ lệ và góc xoay từ hai nửa vùng.
+- Lồng tiếng qua System.Speech (Windows) hoặc `say` (macOS); dịch phụ đề bằng Claude API với key trong keychain.
+- Sửa: giải mã PCM để đo mức âm lượng và đồng bộ giờ giữ khoảng trống ở đầu luồng tiếng (`aresample=async=1:first_pts=0`).
 
 ## 2026-11-12 · Editor 0.5.0
 

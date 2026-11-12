@@ -80,6 +80,7 @@ pub struct Timeline {
     pub titles: Vec<crate::timeline::TitleEdit>,
     pub aspect: crate::timeline::Aspect,
     pub lanes: Vec<crate::timeline::LaneControl>,
+    pub adjustments: Vec<crate::timeline::AdjustmentEdit>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -109,4 +110,10 @@ pub struct ScanReport {
 pub struct MediaTools {
     pub ffprobe: bool,
     pub ffmpeg: bool,
+}
+
+#[derive(Serialize)]
+pub struct LutEntry {
+    pub id: i64,
+    pub name: String,
 }

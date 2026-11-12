@@ -1,12 +1,56 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-050
+Snapshot: 2026-11-12/EDITOR-060
 
 ## Điểm vào cho Claude Code hoặc Codex
 
 Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [module editor](modules/editor.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có giao diện, thao tác và chức năng tương đương CapCut Desktop, và đã cho phép push lên `origin`, chạy GitHub Actions và build bộ cài. DT_Edit dùng bố cục và luồng thao tác tương tự nhưng giao diện, tên và tài nguyên là của riêng dự án, không sao chép thương hiệu hay asset CapCut. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker, native drop hoặc phân tích media.
 
 Task tiếp theo là **M1-H8**: chạy các ca dưới đây trong cửa sổ Tauri thật, sửa lỗi phát hiện, rồi làm phần còn lại của M1-H8 và M1-H6 theo backlog.
+
+## Bản 0.6.0
+
+Người dùng yêu cầu làm tiếp: timeline con cho compound, đồng bộ multicam theo âm thanh, tracking theo tỷ lệ và góc xoay, sao chép/dán thuộc tính, thay clip, freeze, reverse, chữ phong phú, LUT, lớp điều chỉnh, chỉnh màu đầy đủ, và các tính năng AI cloud (xóa nền, avatar, lồng tiếng, dịch).
+
+| Mục | Đã làm | Còn lại |
+| --- | --- | --- |
+| Chỉnh màu | 12 thanh: phơi sáng, độ sáng, tương phản, vùng sáng, vùng tối, điểm trắng, điểm đen, nhiệt độ, sắc độ, tông, bão hòa, rực màu; đường cong tông; LUT .cube; nút đặt lại. [ColorPanel](../../apps/desktop/src/ColorPanel.tsx) | HSL theo từng màu, bánh xe màu, đường cong RGB vẽ tay, xem trước LUT |
+| Lớp điều chỉnh | Clip `adjustment` trên tầng chữ, màu + hiệu ứng + tăng nét cho mọi hình bên dưới, có preview | Mask cho lớp điều chỉnh |
+| Chữ phong phú | 5 phông, màu hex, viền, nền màu/độ đục, căn lề, bóng, hiện/ẩn dần, giãn dòng | Kiểu khác nhau trong cùng một dòng, hiệu ứng chữ chuyển động |
+| Sao chép/dán thuộc tính | `Ctrl+Shift+C/V` và menu; bỏ qua tốc độ, keyframe, nhóm, multicam | Chọn từng nhóm thuộc tính khi dán |
+| Thay clip | Thay bằng media đang chọn trong thư viện, giữ vị trí, độ dài (nếu đủ), hiệu chỉnh | |
+| Freeze | Chèn khung tĩnh 3 giây tại playhead, đẩy clip sau | Đổi độ dài mặc định |
+| Reverse | Hình và tiếng, nguồn tối đa 60 giây | Preview mượt hơn |
+| Compound | Timeline con: chỉ hiện và sửa clip của compound, nút quay lại | Xuất riêng một compound |
+| Multicam | Đồng bộ theo âm thanh (tương quan onset 10 ms, tìm lệch ±10 giây) hoặc theo điểm đầu | Lưới xem nhiều góc |
+| Tracking | Vị trí, tỷ lệ, góc xoay từ hai nửa vùng chọn | Mask bám theo |
+| Lồng tiếng | Giọng của Windows (System.Speech) hoặc macOS (`say`), nhập WAV vào tầng âm thanh | Clone giọng (OmniVoice, M2-B) |
+| Dịch phụ đề | Claude API `claude-opus-5-5`, key trong keychain, hỏi xác nhận trước khi gửi | Live test với key thật |
+| Xóa nền AI, avatar AI | Chưa làm: cần mô hình phân đoạn hoặc dịch vụ tạo người ảo | M2/M1-J |
+
+Source chính: [timeline.ts](../../apps/desktop/src/timeline.ts) phần "Colour, adjustment layers…", [ColorPanel](../../apps/desktop/src/ColorPanel.tsx), [ClipInspector](../../apps/desktop/src/ClipInspector.tsx) (`titleCss`, preview màu/freeze/reverse), [TimelineEditor](../../apps/desktop/src/TimelineEditor.tsx) (`focus`, menu mới), [EditorLibrary](../../apps/desktop/src/EditorLibrary.tsx) (`VoiceAndTranslate`), [App](../../apps/desktop/src/App.tsx) (`smart("multicam")`, `speakText`, `translateCaptions`, LUT), [timeline.rs](../../apps/desktop/src-tauri/src/timeline.rs) (`tone_points`, `AdjustmentEdit`, `TitleFont`), [render.rs](../../apps/desktop/src-tauri/src/render.rs) (`color_filters`, `adjustment_filters`, font/LUT files), [analysis.rs](../../apps/desktop/src-tauri/src/analysis.rs) (`track_pose`, `audio_offset`), [voice.rs](../../apps/desktop/src-tauri/src/voice.rs), [migration 010](../../apps/desktop/src-tauri/migrations/010_color_layers.sql). Schema `user_version = 10`, timeline JSON version 3.
+
+**Đã kiểm chứng trên Windows 11**
+
+- Lint, TypeScript, `cargo fmt --check`, 33 test Node (thêm [color.test.mjs](../../scripts/color.test.mjs)), 32 test Rust, 7 test FFmpeg thật, test giọng đọc Windows thật (`cargo test windows_speech -- --ignored`) tạo WAV, `context:check`, `skills:check`.
+- Test FFmpeg mới `real_ffmpeg_grades_freezes_reverses_and_syncs_audio`: độ lệch hai góc đo được 700 ms (±20); điểm ảnh cho thấy reverse bắt đầu bằng nửa xanh và kết thúc bằng đỏ, freeze giữ khung xanh, LUT đảo đỏ thành cyan, hue 120 chuyển đỏ sang lục, lớp điều chỉnh bão hòa 0 khử màu; xuất chữ phông đậm, màu hex, viền, nền, bóng, hiện dần, căn trái.
+- Phát hiện và sửa lỗi có từ 0.5.0: giải mã PCM bỏ mất khoảng trống ở đầu luồng tiếng nên lệch thời gian cho meter, xóa khoảng lặng và marker nhịp. Migration 010 xóa cache mức âm lượng cũ.
+- Giao diện production trong trình duyệt với IPC giả lập tạm (đã gỡ khỏi repo): thêm lớp điều chỉnh và kéo phơi sáng/bão hòa (preview nhận bảng tông giống khi xuất), khung hình tĩnh, multicam theo âm thanh, timeline con của compound, lồng tiếng, lưu key và dịch phụ đề, đổi phông/màu/bóng chữ.
+- Bản debug với dữ liệu riêng khởi động và nâng lên schema 10. Bộ cài NSIS 0.6.0 build tại máy.
+
+**Chưa kiểm chứng**
+
+- Cửa sổ Tauri thật, macOS, lệnh `say`. Chưa gọi Claude API thật (cần key của người dùng). Phông Impact/Courier trên macOS và Linux dùng đường dẫn ứng viên, chưa thử.
+
+**Ca chạy lại trong cửa sổ thật**
+
+1. Chọn clip video → Thuộc tính › Điều chỉnh: kéo Phơi sáng, Vùng tối, Tông màu; xem trình phát rồi xuất và so khung hình.
+2. Nhập một .cube (tab LUT), gán cho clip, xuất và kiểm tra màu. Thêm lớp điều chỉnh, giảm bão hòa, xuất.
+3. Chuột phải clip → Khung hình tĩnh, Đảo ngược, Sao chép/Dán thuộc tính, chọn media trong thư viện rồi Thay clip.
+4. Hai video quay cùng cảnh trên Video 1 và Video 2 → chọn cả hai → Tạo multicam (đồng bộ theo âm thanh); kiểm tra thông báo độ lệch và phát.
+5. Tạo compound → chuột phải → Mở timeline con → sửa → ← Timeline chính.
+6. Tab Thông minh: chọn giọng tiếng Việt, tạo lời đọc; nhập Anthropic API key, tạo phụ đề rồi dịch.
+7. Chữ: đổi phông, màu, viền, nền, căn lề, bóng, hiện dần; xuất và so với preview.
 
 ## Bản 0.5.0
 

@@ -28,6 +28,16 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 - Phím mới: `V`, `Q`/`W` xóa phần trước/sau playhead và dồn, `Ctrl+R` hoặc `Shift+B` mở Tốc độ, `Ctrl+Shift+S`, `Alt+G`, `Ctrl+D`, `1`–`9`.
 - Ba cột thư viện/trình phát/thuộc tính đổi rộng bằng vách chia, lưu trong `localStorage`.
 
+## Màu, chữ và chỉnh sửa (0.6.0)
+
+- **Màu** [ColorPanel](../../../apps/desktop/src/ColorPanel.tsx): Cơ bản (phơi sáng, độ sáng, tương phản, vùng sáng, vùng tối, điểm trắng, điểm đen, nhiệt độ, sắc độ, tông màu, bão hòa, rực màu), Đường cong (xem đường cong tông), LUT (.cube nhập qua hộp thoại). `tonePoints` trong [timeline.ts](../../../apps/desktop/src/timeline.ts) và `Look::tone_points` trong [timeline.rs](../../../apps/desktop/src-tauri/src/timeline.rs) phải giữ giống nhau.
+- **Lớp điều chỉnh** nằm trên tầng chữ (`kind: "adjustment"`), nút "+ Lớp điều chỉnh". Nó áp màu, làm mờ/tối viền/hạt và tăng nét lên mọi hình bên dưới trong khoảng của nó.
+- **Chữ phong phú**: phông Arial/Arial đậm/Times/Courier/Impact, màu hex, viền và độ dày, nền màu và độ đục, căn lề, đổ bóng, hiện/ẩn dần, giãn dòng.
+- **Menu clip** thêm Sao chép/Dán thuộc tính (`Ctrl+Shift+C/V`), Thay bằng media đang chọn trong thư viện (giữ vị trí, độ dài và hiệu chỉnh), Khung hình tĩnh tại playhead (chèn 3 giây và đẩy clip sau), Đảo ngược, Mở timeline con của compound, Tạo multicam theo âm thanh.
+- **Timeline con**: chỉ hiện và sửa các clip của compound, thanh "← Timeline chính" để quay lại.
+- **Tracking** trả cả tỷ lệ và góc xoay; keyframe nhân tỷ lệ gốc và cộng góc gốc.
+- **Tab Thông minh** thêm Lồng tiếng (giọng hệ điều hành, tốc độ −10…10, nhập WAV vào tầng âm thanh trống) và Dịch phụ đề bằng Claude (key lưu keychain, hỏi xác nhận).
+
 ## Render
 
 [render.rs](../../../apps/desktop/src-tauri/src/render.rs) dựng một lệnh FFmpeg từ snapshot và media đã qua kiểm tra grant.
@@ -37,7 +47,7 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 - Đầu ra H.264 (CRF 20, veryfast) và AAC 192 kb/s, `+faststart`.
 - FFmpeg ghi vào tệp tạm riêng trong thư mục đích và hoàn tất bằng thao tác chống ghi đè. Hủy hoặc lỗi dọn tệp tạm.
 
-Clip tắt bị bỏ khỏi graph. Clip video đã tách âm thanh không thêm nhánh audio. Speed curve dùng `setpts` theo từng đoạn và `asplit` → `atrim` → `atempo` → `concat` cho tiếng. `atempo` được nối khi tốc độ dưới 0,5×.
+Clip tắt bị bỏ khỏi graph. Freeze đọc một khung tại `freezeAtMs` rồi giữ bằng `tpad`; reverse dùng `trim,reverse` cho hình và `areverse` cho tiếng; màu dùng `colorbalance`, `hue`, `vibrance`, `curves`, `lut3d`; lớp điều chỉnh thêm chuỗi filter có `enable` sau các tầng hình. Chữ dùng `font-<kiểu>.ttf`, `text_align`, `shadow*`, `box*`, `line_spacing` và `alpha` cho hiện/ẩn dần. Clip video đã tách âm thanh không thêm nhánh audio. Speed curve dùng `setpts` theo từng đoạn và `asplit` → `atrim` → `atempo` → `concat` cho tiếng. `atempo` được nối khi tốc độ dưới 0,5×.
 
 `render_jobs` lưu snapshot, In–Out nếu được đặt, đích đã chọn trong hộp thoại native, tiến độ và lỗi. [ExportQueue](../../../apps/desktop/src/ExportQueue.tsx) chạy FIFO giữa các dự án. Lượt chờ giữ qua restart. Lượt bị gián đoạn được đánh dấu lỗi. Thử lại giữ snapshot và đích đã lưu.
 
@@ -51,6 +61,6 @@ Clip tắt bị bỏ khỏi graph. Clip video đã tách âm thanh không thêm 
 
 ## Giới hạn hiện tại
 
-Preview phụ thuộc codec WebView. Một số xử lý hình và tiếng nâng cao chỉ áp dụng đầy đủ khi xuất MP4. Gain dương bị giới hạn bởi volume WebView. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. Compound chưa có timeline con riêng. Multicam đồng bộ theo điểm đầu, chưa theo âm thanh. Tracking theo vị trí, chưa theo tỷ lệ hay góc xoay. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
+Preview phụ thuộc codec WebView. Một số xử lý hình và tiếng nâng cao chỉ áp dụng đầy đủ khi xuất MP4. Gain dương bị giới hạn bởi volume WebView. Mask theo đối tượng và keyframe riêng từng tham số thuộc M1-H. LUT chưa hiện trong preview. Tint/vibrance/hue trong preview là gần đúng. Tracking tỷ lệ/xoay cần vật thể có chi tiết ở hai nửa vùng chọn. Reverse xem trước bằng tua từng khung nên giật hơn bản xuất. Nhận dạng chữ, hiệu ứng và các lớp âm thanh của video mẫu thuộc M1-F. [Backlog](../TASK_BACKLOG.md)
 
 Kiểm tra bằng `pnpm test`, `pnpm test:native` và `pnpm test:media`.

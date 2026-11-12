@@ -10,6 +10,8 @@
 | Kho mẫu | [Giao diện](../../apps/desktop/src/TemplateLibrary.tsx) · [Phân tích](../../apps/desktop/src-tauri/src/templates.rs) | Mẫu dựng sẵn và mẫu local theo điểm cắt, gán media theo cảnh |
 | Không gian biên tập | [Thư viện](../../apps/desktop/src/EditorLibrary.tsx) · [Player](../../apps/desktop/src/EditorPlayer.tsx) · [Inspector](../../apps/desktop/src/ClipInspector.tsx) · [Menu chuột phải](../../apps/desktop/src/ContextMenu.tsx) · [Tốc độ](../../apps/desktop/src/SpeedPanel.tsx) | Preset và tài nguyên gốc, chỉnh clip, phát timeline, meter, vẽ khung tracking, speed curve, tab Thông minh, ba cột đổi rộng |
 | Phụ đề | [SRT và Whisper](../../apps/desktop/src-tauri/src/captions.rs) | Chữ có thể sửa, nhập/xuất SRT UTF-8, nhận dạng cục bộ |
+| Màu, LUT, lớp điều chỉnh | [ColorPanel](../../apps/desktop/src/ColorPanel.tsx) · [Migration 010](../../apps/desktop/src-tauri/migrations/010_color_layers.sql) | Chỉnh màu cơ bản, đường cong tông, LUT .cube, lớp điều chỉnh; preview SVG/CSS và FFmpeg dùng cùng công thức tông |
+| Giọng đọc và dịch | [voice.rs](../../apps/desktop/src-tauri/src/voice.rs) | Lồng tiếng System.Speech/say, dịch phụ đề bằng Claude API, kiểm tra tệp .cube |
 | Phân tích cục bộ | [analysis.rs](../../apps/desktop/src-tauri/src/analysis.rs) · [Migration 009](../../apps/desktop/src-tauri/migrations/009_audio_levels.sql) | Mức RMS 50 ms có cache, dò cảnh, tracking block matching; dùng cho meter, xóa khoảng lặng, marker nhịp, tách cảnh và bám chuyển động |
 | Editor đầy đủ | [Backlog](TASK_BACKLOG.md) | M1-C, M1-D, M1-H và M5 |
 | AI script và voice | [Tích hợp](API_INTEGRATIONS.md) | M2 |

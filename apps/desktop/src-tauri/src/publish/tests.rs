@@ -1170,6 +1170,7 @@ fn drafts_from_exports_wait_for_a_finished_render() {
         aspect: Default::default(),
         lanes: Vec::new(),
         export_range: None,
+        adjustments: Vec::new(),
     };
     let render = bench
         .store

@@ -39,6 +39,7 @@ fn snapshot(video: Vec<ClipEdit>, audio: Vec<ClipEdit>) -> TimelineSnapshot {
         aspect: Default::default(),
         lanes: Vec::new(),
         export_range: None,
+        adjustments: Vec::new(),
     }
 }
 
@@ -729,6 +730,7 @@ fn real_ffmpeg_analyzes_cuts_and_exports_layers_with_text_and_color() {
         caption: false,
         background: false,
         edit_group: None,
+        ..Default::default()
     });
     let project = store
         .create_project_with_timeline("Bản dựng", Some(&edits))
@@ -903,6 +905,7 @@ fn real_ffmpeg_exports_speed_keying_stickers_and_captions() {
         caption: true,
         background: true,
         edit_group: None,
+        ..Default::default()
     });
     let project = store
         .create_project_with_timeline("Thử thư viện", Some(&edits))
@@ -1330,4 +1333,189 @@ fn real_ffmpeg_measures_tracks_and_exports_curves_with_detached_audio() {
         .unwrap();
     let audio_length: f64 = audio["duration"].as_str().unwrap().parse().unwrap();
     assert!((audio_length - expected).abs() < 0.1, "{audio_length}");
+}
+
+#[test]
+#[ignore = "requires FFmpeg with drawtext and FFprobe installed on PATH"]
+fn real_ffmpeg_grades_freezes_reverses_and_syncs_audio() {
+    use crate::analysis::audio_offset;
+    use crate::timeline::{AdjustmentEdit, Look, TitleAlign, TitleEdit, TitleFont};
+
+    let dir = tempfile::tempdir().unwrap();
+    let ffmpeg = find_tool("ffmpeg").expect("ffmpeg on PATH");
+    let ffprobe = find_tool("ffprobe").expect("ffprobe on PATH");
+    let make = |name: &str, graph: &str, seconds: &str| {
+        let path = dir.path().join(name);
+        let status = Command::new(&ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-filter_complex",
+                graph,
+                "-map",
+                "[v]",
+                "-map",
+                "[a]",
+            ])
+            .args([
+                "-c:v", "libx264", "-threads", "1", "-pix_fmt", "yuv444p", "-crf", "8", "-c:a",
+                "aac", "-t", seconds,
+            ])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name}");
+        path
+    };
+    // Red for the first second, blue for the second.
+    let colours = make(
+        "colours.mp4",
+        "color=red:s=320x180:r=30:d=1[r];color=blue:s=320x180:r=30:d=1[b];[r][b]concat=n=2:v=1:a=0[v];sine=frequency=440:duration=2[a]",
+        "2",
+    );
+    // The same beep pattern, the second take starting 0.7 s later.
+    let beeps = "sine=frequency=880:duration=6,volume='between(t,0.3,0.4)+between(t,1.0,1.08)+between(t,2.2,2.35)+between(t,2.6,2.65)+between(t,4.1,4.3)':eval=frame";
+    let take_a = make(
+        "take-a.mp4",
+        &format!("color=gray:s=320x180:r=30:d=6[v];{beeps}[a]"),
+        "6",
+    );
+    let take_b = make(
+        "take-b.mp4",
+        &format!("color=gray:s=320x180:r=30:d=6[v];{beeps},adelay=700:all=1[a]"),
+        "6",
+    );
+    let store = Store::open(&dir.path().join("test.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: ffprobe.clone(),
+        ffmpeg: None,
+    };
+    let imported =
+        crate::library::import_files(&store, &[colours, take_a, take_b], &probe).unwrap();
+    let id = |name: &str| {
+        imported
+            .assets
+            .iter()
+            .find(|asset| asset.relative_path.ends_with(name))
+            .unwrap()
+            .id
+    };
+    let (colours, take_a, take_b) = (id("colours.mp4"), id("take-a.mp4"), id("take-b.mp4"));
+
+    let offset = audio_offset(&store, take_a, 0, take_b, 0).unwrap();
+    assert!((offset - 700).abs() <= 20, "offset {offset}");
+
+    // An inverting LUT turns red into cyan.
+    let mut cube = String::from("LUT_3D_SIZE 2\n");
+    for index in 0..8 {
+        cube.push_str(&format!(
+            "{} {} {}\n",
+            1 - (index & 1),
+            1 - ((index >> 1) & 1),
+            1 - ((index >> 2) & 1)
+        ));
+    }
+    crate::voice::validate_cube(&cube).unwrap();
+    let lut = store.insert_lut("Đảo màu", &cube).unwrap();
+
+    let mut reversed = clip(colours, 0, 2000, 0);
+    reversed.look.reverse = true;
+    let mut frozen = clip(colours, 0, 1000, 2000);
+    frozen.look.freeze_at_ms = Some(1500);
+    let mut inverted = clip(colours, 0, 1000, 3000);
+    inverted.look.lut = Some(lut);
+    let mut bright = clip(colours, 0, 1000, 4000);
+    bright.look.exposure = 100;
+    bright.look.hue = 120;
+    let mut edits = snapshot(vec![reversed, frozen, inverted, bright], vec![]);
+    edits.adjustments.push(AdjustmentEdit {
+        position_ms: 4500,
+        duration_ms: 500,
+        layer: 0,
+        look: Look {
+            saturation: 0,
+            ..Look::default()
+        },
+    });
+    edits.titles.push(TitleEdit {
+        text: "Chữ đậm".into(),
+        position_ms: 0,
+        duration_ms: 1000,
+        size: 8,
+        y: 80,
+        font: TitleFont::Bold,
+        color_hex: Some("#00ff00".into()),
+        stroke_hex: Some("#000000".into()),
+        stroke_width: Some(4),
+        background_hex: Some("#202020".into()),
+        background_opacity: Some(70),
+        align: TitleAlign::Left,
+        shadow: true,
+        fade_ms: Some(200),
+        line_spacing: Some(4),
+        ..Default::default()
+    });
+    let project = store.create_project("Màu sắc").unwrap();
+    store.save_timeline(project.id, &edits).unwrap();
+    let saved = store.snapshot(project.id).unwrap();
+    assert_eq!(saved.adjustments.len(), 1);
+    assert_eq!(saved.titles[0].font, TitleFont::Bold);
+    let output = dunce::canonicalize(dir.path()).unwrap().join("grade.mp4");
+    let job = store
+        .create_render_job(project.id, &saved, output.to_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        execute(&store, job.id, &AtomicBool::new(false)).unwrap(),
+        Outcome::Done
+    );
+
+    let frame = |seconds: &str| {
+        let result = Command::new(&ffmpeg)
+            .args(["-v", "error", "-ss", seconds, "-i"])
+            .arg(&output)
+            .args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ])
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        result.stdout
+    };
+    let pixel =
+        |bytes: &[u8]| -> [u8; 3] { bytes[(40 * 320 + 160) * 3..][..3].try_into().unwrap() };
+    let near = |[r, g, b]: [u8; 3], [er, eg, eb]: [u8; 3]| {
+        (i32::from(r) - i32::from(er)).abs() < 50
+            && (i32::from(g) - i32::from(eg)).abs() < 50
+            && (i32::from(b) - i32::from(eb)).abs() < 50
+    };
+    let start = pixel(&frame("0.2"));
+    assert!(
+        near(start, [0, 0, 255]),
+        "reverse starts on the blue half: {start:?}"
+    );
+    let late = pixel(&frame("1.7"));
+    assert!(near(late, [255, 0, 0]), "and ends on red: {late:?}");
+    for at in ["2.1", "2.9"] {
+        let held = pixel(&frame(at));
+        assert!(
+            near(held, [0, 0, 255]),
+            "freeze holds the blue frame at {at}: {held:?}"
+        );
+    }
+    let cyan = pixel(&frame("3.4"));
+    assert!(near(cyan, [0, 255, 255]), "LUT inverts red: {cyan:?}");
+    let shifted = pixel(&frame("4.2"));
+    assert!(
+        shifted[1] > 150 && shifted[0] < 120,
+        "hue 120 moves red towards green: {shifted:?}"
+    );
+    let grey = pixel(&frame("4.7"));
+    let spread = grey.iter().max().unwrap() - grey.iter().min().unwrap();
+    assert!(spread < 25, "the adjustment layer removes colour: {grey:?}");
 }

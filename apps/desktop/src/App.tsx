@@ -1,12 +1,13 @@
 import { useCallback, useDeferredValue, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent } from "react";
 import { api, desktop, fileName } from "./desktop";
-import type { TrackRegion } from "./desktop";
+import type { LutEntry, TrackRegion } from "./desktop";
 import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, LaneControl, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
 import { Icon } from "./Icon";
 import { Gallery, Preview, selectAsset } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
 import type { Selection } from "./MediaPanels";
+import { alignByAudio, createMulticam } from "./timeline";
 import { detachAudio, restoreAudio, clipBeatMarkers, clipLevelAt, followTrack, removeSilences, sourcePosition, splitAtSourceTimes } from "./timeline";
 import { MAX_LAYERS, addCaptions, addClip, addDroppedMedia, addTitle, changeLayer, changesLockedLane, clipFinish, clipLane, commit, defaultLook, fromTimeline, laneControl, layerOf, lookAt, newHistory, playbackRate, previousVisual, redo, setTransformKey, setTransition, subtitleCues, toSnapshot, totalMs, trackOf, transformProperties, undo, updateAppearance } from "./timeline";
 import type { Clip, History, MediaDropTarget, MediaRef } from "./timeline";
@@ -31,7 +32,7 @@ const isActive = (job: RenderJob) => job.status === "queued" || job.status === "
 
 /** The preview target for a clip, seeked to the source frame under the playhead. */
 function clipSelection(clip: Clip, playheadMs: number): Selection | null {
-  if (clip.kind === "text") return null;
+  if (clip.kind === "text" || clip.kind === "adjustment") return null;
   const inside = playheadMs >= clip.positionMs && playheadMs < clipFinish(clip);
   return {
     assetId: clip.assetId, relativePath: clip.relativePath, kind: clip.kind, durationMs: clip.sourceMs,
@@ -94,6 +95,7 @@ export function App() {
   const [loadedTimeline, setLoadedTimeline] = useState<{ id: number; revision: number } | null>(null);
   const [revokeId, setRevokeId] = useState<number | null>(null);
   const [tracking, setTracking] = useState<{ sourceKey: string; targetKey: string } | null>(null);
+  const [luts, setLuts] = useState<LutEntry[]>([]);
   const levels = useRef(new Map<number, number[] | "failed" | "loading">());
   const [levelsVersion, setLevelsVersion] = useState(0);
   const [libraryWidth, setLibraryWidth] = useState(() => storedNumber("dt-edit-library-width", 34, 20, 50));
@@ -154,9 +156,31 @@ export function App() {
     }
   }
 
-  function smart(action: SmartAction, key: string) {
+  function smart(action: SmartAction, key: string, keys: string[] = []) {
     const clip = clips.find((item) => item.key === key);
     if (!clip) return;
+    if (action === "multicam") {
+      const angles = clips.filter((item) => keys.includes(item.key) && item.track === "video" && item.kind === "video")
+        .sort((a, b) => layerOf(a) - layerOf(b));
+      if (angles.length < 2) { notify("Chọn ít nhất hai clip video trên các tầng khác nhau.", true); return; }
+      const [reference, ...others] = angles;
+      void run("Đang so âm thanh giữa các góc máy…", async () => {
+        try {
+          const offsets: Record<string, number> = {};
+          for (const angle of others) {
+            offsets[angle.key] = await api.audioOffset(reference.assetId, reference.startMs, angle.assetId, angle.startMs);
+          }
+          const aligned = alignByAudio(history.present, reference.key, offsets);
+          const next = createMulticam(aligned, new Set(angles.map((angle) => angle.key)), true);
+          if (edit(commit(history, next))) {
+            success(`Đã đồng bộ theo âm thanh: ${others.map((angle) => `${offsets[angle.key]} ms`).join(", ")}. Nhấn 1–9 để chuyển góc.`);
+          }
+        } catch (error) {
+          notify(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+      return;
+    }
     const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
     if (action === "speed") {
       selectClip(key);
@@ -202,6 +226,32 @@ export function App() {
     });
   }
 
+  function speakText(text: string, voice: string, rate: number) {
+    void run("Đang tạo lời đọc bằng giọng của hệ điều hành…", async () => {
+      const report = await api.speak(text, voice, rate);
+      await refreshLibrary();
+      const asset = report.assets[0];
+      if (!asset) { notify("Không nhập được tệp lời đọc.", true); return; }
+      const free = clips.filter((clip) => clip.track === "audio").reduce((layer, clip) => Math.max(layer, layerOf(clip) + 1), 0);
+      addMedia(selectAsset(asset), playheadMs, { track: "audio", layer: Math.min(MAX_LAYERS - 1, free) });
+    });
+  }
+
+  function translateCaptions(language: string) {
+    const lines = clips.filter((clip) => clip.title?.caption).sort((a, b) => a.positionMs - b.positionMs);
+    if (!lines.length) { notify("Chưa có phụ đề để dịch. Tạo phụ đề trước.", true); return; }
+    void run("Đang dịch phụ đề…", async () => {
+      const translated = await api.translateCaptions(lines.map((clip) => clip.title!.text), language);
+      if (!translated) return;
+      const byKey = new Map(lines.map((clip, index) => [clip.key, translated[index]]));
+      const next = history.present.map((clip) => {
+        const text = byKey.get(clip.key)?.trim();
+        return text && clip.title ? { ...clip, relativePath: text, title: { ...clip.title, text: text.slice(0, 600) } } : clip;
+      });
+      if (edit(commit(history, next))) success(`Đã dịch ${lines.length} câu phụ đề.`);
+    });
+  }
+
   function trackRegion(region: TrackRegion) {
     const job = tracking;
     setTracking(null);
@@ -237,6 +287,7 @@ export function App() {
       setTools(capabilities);
       setJobs(queue);
       setReady(true);
+      void api.luts().then((list) => { if (current) setLuts(list); }).catch(() => undefined);
     }).catch((error: unknown) => {
       if (current) setNotice({ text: String(error), error: true });
     });
@@ -795,6 +846,7 @@ export function App() {
                   if (edit(commit(history, next))) success(target.look?.audioLink !== undefined ? "Đã gộp âm thanh về clip video." : "Đã tách âm thanh sang tầng âm thanh.");
                 } catch (error) { notify(error instanceof Error ? error.message : String(error), true); }
               }}
+              onSpeak={speakText} onTranslate={translateCaptions} hasCaptionLines={captions.length > 0}
               tab={tool} onTab={openTool} busy={disabled} catalog={catalog} catalogFailed={catalogFailed}
               onRetryCatalog={() => { setCatalogFailed(false); setCatalogRetry((value) => value + 1); }}
               hasProject={!!project && !editsDisabled} hasVisual={selectedClip?.track === "video" && !editsDisabled}
@@ -838,7 +890,22 @@ export function App() {
               onPointerDown={(event) => { if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId); }}
               onPointerMove={(event) => resizeColumn(event, "inspector")} onDoubleClick={() => setInspectorWidth(31)}
               onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setInspectorWidth((width) => Math.max(18, Math.min(45, width + (event.key === "ArrowLeft" ? 2 : -2)))); } }} />
-            <ClipInspector clip={selectedClip} aspect={aspect} disabled={editsDisabled || !project || !!(selectedClip && clipLane(laneControls, selectedClip)?.locked)}
+            <ClipInspector luts={luts}
+              onImportLut={() => void run("Đang nhập LUT…", async () => {
+                const added = await api.importLut();
+                if (!added) return;
+                setLuts(await api.luts());
+                if (selectedClip && selectedClip.track !== "audio" && !selectedClip.title) {
+                  changeClip({ ...selectedClip, look: { ...defaultLook, ...selectedClip.look, lut: added.id } });
+                }
+                success(`Đã nhập LUT ${added.name}.`);
+              })}
+              onDeleteLut={(id) => void run(vi.working, async () => {
+                if (clips.some((clip) => clip.look?.lut === id)) { notify("LUT đang được dùng trên timeline. Bỏ LUT khỏi các clip trước.", true); return; }
+                await api.deleteLut(id);
+                setLuts(await api.luts());
+              })}
+              clip={selectedClip} aspect={aspect} disabled={editsDisabled || !project || !!(selectedClip && clipLane(laneControls, selectedClip)?.locked)}
               name={project?.name} total={total} playheadMs={playheadMs} tab={inspectorTab} onTab={setInspectorTab}
               onKeyframe={toggleTransformKey} onSeek={movePlayhead}
               onAspect={(value) => edit(history, value)}
@@ -862,7 +929,9 @@ export function App() {
             saveState={saveState} lane={lane} laneControls={laneControls} onLaneControl={toggleLane} onLane={setLane} onTitle={() => insertTitle()}
             onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead} onPlay={togglePlayback}
             onDropMedia={dropMedia} onUndo={() => edit(undo(history))} onRedo={() => edit(redo(history))}
-            onExport={startRender} range={exportRange} onRange={markRange} onNotify={notify} onSmart={smart} />
+            onExport={startRender} range={exportRange} onRange={markRange} onNotify={notify} onSmart={smart}
+            replaceMedia={selection && !selection.seekMs && selection.assetId ? { assetId: selection.assetId, relativePath: selection.relativePath, kind: selection.kind,
+              durationMs: selection.durationMs, width: selection.width, height: selection.height, hasThumbnail: selection.hasThumbnail } : null} />
         </div> : view === "queue" ? <ExportQueue jobs={jobs} projects={projects} busy={disabled}
           onRun={() => void run(vi.working, async () => { await api.runRenderQueue(); setJobs(await api.renderQueue()); })}
           onRetry={retryRender} onCancel={cancelRender}

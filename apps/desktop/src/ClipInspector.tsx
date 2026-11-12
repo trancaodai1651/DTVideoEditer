@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
 import { fileName, mediaUrl } from "./desktop";
-import type { Aspect, ClipLook, LaneControl, TitleColor } from "./desktop";
+import type { Aspect, ClipLook, LaneControl, LutEntry, TitleColor, TitleFont, TitleStyle } from "./desktop";
 import { MAX_LAYERS, audioFades, clipFinish, clipLane, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, previousVisual, sourcePosition, transformProperties, transitionBetween } from "./timeline";
 import type { Clip } from "./timeline";
 import { timecode } from "./vi";
 import { SpeedPanel } from "./SpeedPanel";
+import { ColorFilter, ColorPanel, cssColor } from "./ColorPanel";
 
 export const aspectNames: Record<Aspect, string> = {
   source: "Theo video nguồn", landscape: "16:9 · Ngang", portrait: "9:16 · Dọc", square: "1:1 · Vuông",
@@ -64,7 +65,39 @@ const inspectorTabs = [
 ] as const;
 export type InspectorTab = (typeof inspectorTabs)[number][0];
 
-export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs, tab, onTab, onAspect, onLayer, onClip, onKeyframe, onSeek }: {
+export const fontFamily: Record<TitleFont, string> = {
+  sans: "Arial, Helvetica, sans-serif", bold: "Arial, Helvetica, sans-serif", serif: "'Times New Roman', Times, serif",
+  mono: "'Courier New', Courier, monospace", display: "Impact, 'Arial Black', sans-serif",
+};
+const namedColor: Record<TitleColor, string> = { white: "#ffffff", yellow: "#ffd400", cyan: "#00ffff", black: "#000000" };
+
+/** CSS for a title in the preview, matching the drawtext options used on export. */
+export function titleCss(title: TitleStyle, elapsed: number, length: number) {
+  const color = title.colorHex ?? namedColor[title.color];
+  const stroke = title.strokeHex ?? (title.color === "black" && !title.colorHex ? "#ffffff" : "#000000");
+  const width = title.strokeWidth ?? 2;
+  const fade = title.fadeMs ? Math.min(title.fadeMs, length / 2) : 0;
+  const opacity = fade ? Math.max(0, Math.min(1, elapsed / fade, (length - elapsed) / fade)) : 1;
+  const background = title.background || title.backgroundHex
+    ? hexAlpha(title.backgroundHex ?? "#000000", (title.backgroundOpacity ?? 66) / 100) : undefined;
+  return {
+    color, opacity, fontFamily: fontFamily[title.font ?? "sans"], fontWeight: title.font === "bold" ? 700 : 400,
+    textAlign: title.align ?? "center", lineHeight: 1.15 + (title.lineSpacing ?? 0) / 40,
+    WebkitTextStroke: width ? `${width / 3}px ${stroke}` : undefined,
+    textShadow: title.shadow ? "3px 3px 2px rgba(0,0,0,.6)" : undefined,
+    background,
+  } as CSSProperties;
+}
+
+function hexAlpha(hex: string, alpha: number) {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `rgba(${value >> 16}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+}
+
+export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs, tab, onTab, onAspect, onLayer, onClip, onKeyframe, onSeek, luts, onImportLut, onDeleteLut }: {
+  luts: LutEntry[];
+  onImportLut: () => void;
+  onDeleteLut: (id: number) => void;
   clip: Clip | undefined;
   aspect: Aspect;
   disabled: boolean;
@@ -88,15 +121,18 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
   const lookEdit = (changes: Partial<ClipLook>) => {
     if (clip) onClip({ ...clip, look: { ...look, ...changes } }, transformProperties.some((property) => property in changes));
   };
-  const visibleTabs = inspectorTabs.filter(([id]) => clip?.track === "audio"
-    ? id === "audio" || id === "speed"
-    : clip?.kind === "image" ? id !== "audio" && id !== "speed" : true);
+  const adjustment = clip?.kind === "adjustment";
+  const frozen = clip?.look?.freezeAtMs !== undefined;
+  const visibleTabs = inspectorTabs.filter(([id]) => adjustment ? id === "adjust"
+    : clip?.track === "audio" ? id === "audio" || id === "speed"
+    : clip?.kind === "image" || frozen ? id !== "audio" && id !== "speed" : true);
+  const titleEdit = (changes: Partial<TitleStyle>) => { if (clip && title) onClip({ ...clip, title: { ...title, ...changes } }); };
   const current = visibleTabs.some(([id]) => id === tab) ? tab : visibleTabs[0][0];
   const field = (label: string, key: "scale" | "opacity" | "volume" | "brightness" | "contrast" | "saturation" | "temperature" | "speed", min: number, max: number) =>
     <Slider key={`${key}-${Math.round(look[key])}`} label={label} value={Math.round(look[key])} min={min} max={max}
       onChange={(value) => lookEdit({ [key]: value })} />;
   return <section className="studio-pane inspector" aria-label="Thuộc tính">
-    <div className="pane-heading"><h2>{clip ? title ? "Thuộc tính chữ" : "Thuộc tính clip" : "Chi tiết dự án"}</h2>
+    <div className="pane-heading"><h2>{clip ? title ? "Thuộc tính chữ" : adjustment ? "Lớp điều chỉnh" : "Thuộc tính clip" : "Chi tiết dự án"}</h2>
       {clip && <small title={clip.relativePath}>{title?.text ?? fileName(clip.relativePath)}</small>}</div>
     {clip && !title && <nav className="inspector-tabs" aria-label="Nhóm thuộc tính">
       {visibleTabs.map(([id, label]) => <button type="button" key={id} aria-pressed={current === id}
@@ -138,7 +174,42 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
         <NumberField label="Cỡ chữ (% cao)" value={title.size} min={2} max={24} onChange={(size) => onClip({ ...clip, title: { ...title, size } })} />
         <NumberField label="Vị trí ngang" value={title.x} min={-100} max={100} onChange={(x) => onClip({ ...clip, title: { ...title, x } })} />
         <NumberField label="Vị trí dọc" value={title.y} min={-100} max={100} onChange={(y) => onClip({ ...clip, title: { ...title, y } })} />
-        <Toggle label="Nền chữ" checked={!!title.background} onChange={(background) => onClip({ ...clip, title: { ...title, background } })} />
+        <label className="edit-field">Phông chữ
+          <select value={title.font ?? "sans"} onChange={(event) => titleEdit({ font: event.target.value as TitleFont })}>
+            <option value="sans">Arial</option><option value="bold">Arial đậm</option><option value="serif">Times New Roman</option>
+            <option value="mono">Courier New</option><option value="display">Impact</option>
+          </select>
+        </label>
+        <div className="inspector-pair">
+          <label className="edit-field">Màu tùy chọn
+            <input type="color" value={title.colorHex ?? namedColor[title.color]} onChange={(event) => titleEdit({ colorHex: event.target.value })} />
+          </label>
+          <label className="edit-field">Căn lề
+            <select value={title.align ?? "center"} onChange={(event) => titleEdit({ align: event.target.value as TitleStyle["align"] })}>
+              <option value="left">Trái</option><option value="center">Giữa</option><option value="right">Phải</option>
+            </select>
+          </label>
+        </div>
+        <div className="inspector-pair">
+          <label className="edit-field">Màu viền
+            <input type="color" value={title.strokeHex ?? "#000000"} onChange={(event) => titleEdit({ strokeHex: event.target.value })} />
+          </label>
+          <NumberField label="Độ dày viền" value={title.strokeWidth ?? 2} min={0} max={12} onChange={(strokeWidth) => titleEdit({ strokeWidth })} />
+        </div>
+        <Toggle label="Nền chữ" checked={!!title.background || !!title.backgroundHex} onChange={(background) => titleEdit({ background, backgroundHex: background ? title.backgroundHex : undefined })} />
+        {(title.background || title.backgroundHex) && <div className="inspector-pair">
+          <label className="edit-field">Màu nền
+            <input type="color" value={title.backgroundHex ?? "#000000"} onChange={(event) => titleEdit({ backgroundHex: event.target.value, background: true })} />
+          </label>
+          <NumberField label="Độ đục nền (%)" value={title.backgroundOpacity ?? 66} min={0} max={100} onChange={(backgroundOpacity) => titleEdit({ backgroundOpacity })} />
+        </div>}
+        <Toggle label="Đổ bóng" checked={!!title.shadow} onChange={(shadow) => titleEdit({ shadow })} />
+        <div className="inspector-pair">
+          <NumberField label="Hiện dần/ẩn dần (ms)" value={title.fadeMs ?? 0} min={0} max={5000} onChange={(fadeMs) => titleEdit({ fadeMs: fadeMs || undefined })} />
+          <NumberField label="Giãn dòng" value={title.lineSpacing ?? 0} min={-20} max={60} onChange={(lineSpacing) => titleEdit({ lineSpacing: lineSpacing || undefined })} />
+        </div>
+        <button type="button" className="button secondary compact" onClick={() => titleEdit({ colorHex: undefined, strokeHex: undefined, strokeWidth: undefined,
+          backgroundHex: undefined, backgroundOpacity: undefined, align: undefined, shadow: undefined, fadeMs: undefined, lineSpacing: undefined, font: undefined })}>Đặt lại kiểu chữ</button>
         <Toggle label="Đánh dấu là phụ đề" checked={!!title.caption} onChange={(caption) => onClip({ ...clip, title: { ...title, caption } })} />
       </>}
       {clip && !title && current === "video" && <>
@@ -179,7 +250,9 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
         <Toggle label="Khử nhiễu âm thanh" checked={look.cleanAudio} onChange={(cleanAudio) => lookEdit({ cleanAudio })} />
       </>}
       {clip && !title && current === "speed" && <>
-        <SpeedPanel key={clip.key} clip={clip} onSpeed={(speed, speedCurve) => lookEdit({ speed, speedCurve: speedCurve.length ? speedCurve : undefined, keyframes: undefined })} />
+        <SpeedPanel key={clip.key} clip={clip} onSpeed={(speed, speedCurve) => lookEdit({ speed, speedCurve: speedCurve.length ? speedCurve : undefined, keyframes: undefined, reverse: speedCurve.length ? undefined : look.reverse })} />
+        <Toggle label="Đảo ngược (tối đa 60 giây nguồn)" checked={!!look.reverse} disabled={!!look.speedCurve?.length || clip.endMs - clip.startMs > 60_000}
+          onChange={(reverse) => lookEdit({ reverse: reverse || undefined, keyframes: undefined })} />
         {clip.kind === "video" && <Toggle label="Nội suy chuyển động" checked={look.opticalFlow} onChange={(opticalFlow) => lookEdit({ opticalFlow })} />}
       </>}
       {clip && !title && current === "animation" && <>
@@ -192,11 +265,17 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
         <NumberField label="Fade hai đầu (ms)" value={look.fadeMs} min={0} max={3000} onChange={(fadeMs) => lookEdit({ fadeMs })} />
       </>}
       {clip && !title && current === "adjust" && <>
-        {field("Sáng", "brightness", -100, 100)}
-        {field("Tương phản (%)", "contrast", 0, 200)}
-        {field("Bão hòa (%)", "saturation", 0, 300)}
-        {field("Nhiệt độ màu", "temperature", -100, 100)}
-        <button type="button" className="button secondary compact" onClick={() => lookEdit({ ...grades.natural, temperature: 0 })}>Đặt lại màu</button>
+        <ColorPanel look={look} luts={luts} onLook={lookEdit} onImportLut={onImportLut} onDeleteLut={onDeleteLut} />
+        {adjustment && <>
+          <h3>Hiệu ứng cho các lớp bên dưới</h3>
+          <label className="edit-field">Hiệu ứng
+            <select value={look.effect} onChange={(event) => lookEdit({ effect: event.target.value as ClipLook["effect"] })}>
+              <option value="none">Không</option><option value="blur">Làm mờ</option><option value="vignette">Tối viền</option><option value="grain">Hạt phim</option>
+            </select>
+          </label>
+          <Toggle label="Tăng nét" checked={look.sharpen} onChange={(sharpen) => lookEdit({ sharpen })} />
+          <p className="inspector-help">Lớp điều chỉnh áp màu và hiệu ứng lên mọi hình bên dưới trong khoảng thời gian của nó, trước lớp chữ.</p>
+        </>}
       </>}
       {clip && !title && current === "advanced" && <>
         <h3>Chất lượng hình</h3>
@@ -219,8 +298,13 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
 
 function useMediaClock(clip: Clip, at: number, playing: boolean, revision: number) {
   const player = useRef<HTMLMediaElement | null>(null);
-  const { offset, rate } = sourcePosition(clip, at);
-  const time = (clip.startMs + offset) / 1000;
+  const position = sourcePosition(clip, at);
+  const still = clip.look?.freezeAtMs !== undefined;
+  const reverse = !!clip.look?.reverse;
+  const rate = position.rate;
+  const time = still ? clip.look!.freezeAtMs! / 1000
+    : reverse ? (clip.endMs - position.offset) / 1000 : (clip.startMs + position.offset) / 1000;
+  const runs = playing && !still && !reverse;
   const [fadeIn, fadeOut] = audioFades(clip);
   const gain = Math.min(1, fadeIn ? at / fadeIn : 1, fadeOut ? (clipLength(clip) - at) / fadeOut : 1);
   const baseGain = clip.look?.gainDb === undefined ? (clip.look?.volume ?? 100) / 100 : 10 ** (clip.look.gainDb / 20);
@@ -230,22 +314,23 @@ function useMediaClock(clip: Clip, at: number, playing: boolean, revision: numbe
     if (!element) return;
     const seek = () => {
       if (!Number.isFinite(element.duration)) return;
-      if (Math.abs(element.currentTime - time) > (playing ? 0.18 : 0.008)) element.currentTime = Math.min(time, element.duration);
+      if (Math.abs(element.currentTime - time) > (runs ? 0.18 : 0.008)) element.currentTime = Math.min(time, element.duration);
       element.playbackRate = rate;
       element.volume = volume;
-      if (playing && element.paused) void element.play().catch(() => undefined);
-      else if (!playing) element.pause();
+      if (runs && element.paused) void element.play().catch(() => undefined);
+      else if (!runs) element.pause();
     };
     if (element.readyState >= 1) seek();
     element.addEventListener("loadedmetadata", seek);
     return () => element.removeEventListener("loadedmetadata", seek);
-  }, [time, revision, playing, rate, volume]);
+  }, [time, revision, runs, rate, volume]);
   return player;
 }
 
 type TransformMode = "move" | "scale" | "rotate";
 
-function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable, selected, onTransform, live, blend, shade }: {
+function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable, selected, onTransform, live, blend, shade, adjust }: {
+  adjust: string;
   clip: Clip; at: number; revision: number; playing: boolean; aspectRatio: number; editable: boolean; selected: boolean;
   onTransform: (event: PointerEvent<HTMLElement>, clip: Clip, mode: TransformMode) => void;
   live: boolean;
@@ -262,8 +347,6 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
   const slideX = look.motion === "slide" ? -travel : look.motion === "slide_right" ? travel : 0;
   const slideY = look.motion === "rise" ? travel : 0;
   const effect = look.effect === "blur" ? " blur(3px)" : "";
-  const color = look.temperature > 0 ? ` sepia(${look.temperature / 250})`
-    : look.temperature < 0 ? ` sepia(${-look.temperature / 350}) hue-rotate(160deg)` : "";
   const sourceRatio = clip.width && clip.height ? clip.width / clip.height : aspectRatio;
   const bounds = {
     left: `${50 + look.x + slideX}%`, top: `${50 + look.y + slideY}%`,
@@ -271,14 +354,16 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
     height: `${look.scale * Math.min(1, aspectRatio / sourceRatio)}%`,
     transform: `translate(-50%, -50%) rotate(${look.rotate}deg)`,
   };
+  const filterId = `cf-${clip.key}`;
   const style = {
-    opacity, filter: `brightness(${1 + look.brightness / 100}) contrast(${look.contrast}%) saturate(${look.saturation}%)${color}${effect} brightness(${shade})`,
+    opacity, filter: `${cssColor(look, filterId)}${effect} brightness(${shade})${adjust}`,
     transform: look.flip ? "scaleX(-1)" : undefined,
     clipPath: look.ellipse ? "ellipse(50% 50%)" : undefined,
   };
   return <div className={`frame-object ${editable ? "editable" : ""} ${selected && editable ? "frame-selected" : ""}`}
     style={bounds} data-key={clip.key} title={editable ? fileName(clip.relativePath) : undefined}
     onPointerDown={editable ? (event) => onTransform(event, { ...clip, look }, "move") : undefined}>
+    <ColorFilter id={filterId} look={look} />
     {clip.kind === "image" ? <img className="frame-layer" src={src} style={style} alt="" draggable={false} />
       : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} muted={muted} playsInline preload="auto" />}
     {editable && selected && <>
@@ -318,6 +403,12 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
   const visuals = [...active.filter((clip) => clip.track === "video"), ...held]
     .filter((clip) => !clipLane(laneControls, clip)?.hidden)
     .sort((a, b) => layerOf(a) - layerOf(b) || a.positionMs - b.positionMs);
+  const adjustments = active.filter((clip) => clip.kind === "adjustment" && !clipLane(laneControls, clip)?.hidden)
+    .sort((a, b) => layerOf(a) - layerOf(b));
+  const adjustCss = adjustments.map((clip) => {
+    const look = clip.look ?? {};
+    return " " + cssColor(look, `af-${clip.key}`) + (look.effect === "blur" ? " blur(3px)" : "");
+  }).join("");
   const source = aspect === "source" ? clips.reduce<Clip | undefined>((first, clip) =>
     clip.track === "video" && clip.width && clip.height && (!first || clip.positionMs < first.positionMs) ? clip : first, undefined) : undefined;
   const size = source?.width && source.height ? source.width / source.height : ratio[aspect];
@@ -382,6 +473,7 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
     aria-label="Khung hình tại playhead" onPointerMove={(event) => transform(event, false)}
     onPointerUp={(event) => transform(event, true)} onPointerCancel={cancel} onLostPointerCapture={cancel}
     onPointerDown={(event) => { if (editable && event.target === event.currentTarget) onSelect(null); }}>
+    {adjustments.map((clip) => <ColorFilter key={clip.key} id={`af-${clip.key}`} look={clip.look ?? {}} />)}
     {visuals.map((clip) => {
       const controls = clipLane(laneControls, clip);
       const frozen = at >= clipFinish(clip);
@@ -391,7 +483,7 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
       const blend = incoming?.kind === "dissolve" ? Math.min(1, elapsed / incoming.durationMs) : 1;
       const shade = Math.min(1, incoming?.kind === "black" ? 2 * elapsed / incoming.durationMs : 1,
         outgoing ? 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 1);
-      return <VisualFrame key={clip.key} clip={clip} at={elapsed} revision={revision} playing={playing && !frozen}
+      return <VisualFrame key={clip.key} clip={clip} at={elapsed} revision={revision} playing={playing && !frozen} adjust={adjustCss}
         muted={frozen || !!controls?.muted || !!clip.look?.audioDetached} aspectRatio={size} editable={editable && !playing && !frozen && !controls?.locked} selected={clip.key === selectedKey}
         onTransform={begin} live={draft?.key === clip.key} blend={blend} shade={shade} />;
     })}
@@ -407,7 +499,7 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
       const y = (title.y + 100) / 2;
       return <span key={clip.key} className={`frame-title ${title.background ? "with-background" : ""} ${canEdit ? "editable" : ""} ${clip.key === selectedKey && canEdit ? "frame-selected" : ""}`} style={{
         left: `${x}%`, top: `${y}%`, transform: `translate(-${x}%, -${y}%)`, fontSize: `${title.size}cqh`,
-        color: title.color, textShadow: title.color === "black" ? "0 0 3px white" : undefined,
+        ...titleCss(title, at - clip.positionMs, clipLength(clip)), whiteSpace: "pre-wrap",
       }} onPointerDown={(event) => begin(event, clip, "move")}>{title.text}</span>;
     })}
   </div>;

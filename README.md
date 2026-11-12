@@ -42,6 +42,10 @@ Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Có thể
 - `Alt+G` gom các clip đã chọn thành compound; nhấp đúp để mở hoặc thu gọn. Chọn 2–9 video trên các tầng khác nhau rồi chọn **Tạo multicam**, sau đó nhấn `1`–`9` khi phát để chuyển góc.
 - `Ctrl+R` mở **Tốc độ**: tốc độ cố định 0,1–10× hoặc **Đường cong** với preset và đồ thị kéo điểm. Kéo hai núm tròn trên clip âm thanh để chỉnh fade. Meter cạnh thời gian trình phát hiển thị mức tiếng tại playhead.
 - Tab **Thông minh** chạy trên máy: dò cảnh và tách, xóa khoảng lặng, đánh dấu nhịp nhạc, bám theo chuyển động (vẽ khung quanh vật thể trên trình phát) và phụ đề Whisper. Kéo vách giữa ba cột để đổi chiều rộng.
+- **Màu**: chọn clip → Thuộc tính › Điều chỉnh có Cơ bản (phơi sáng, vùng sáng/tối, điểm trắng/đen, nhiệt độ, sắc độ, tông, bão hòa, rực màu), Đường cong và LUT (nhập tệp .cube). Bấm **+ Lớp điều chỉnh** để chỉnh màu cho mọi hình bên dưới trong một khoảng thời gian.
+- **Chữ**: chọn lớp chữ để đổi phông, màu, viền, nền, căn lề, bóng, hiện/ẩn dần và giãn dòng.
+- **Menu chuột phải trên clip** có sao chép/dán thuộc tính (`Ctrl+Shift+C/V`), thay bằng media đang chọn trong thư viện, khung hình tĩnh, đảo ngược, mở timeline con của compound và tạo multicam đồng bộ theo âm thanh.
+- **Lồng tiếng và dịch** trong tab Thông minh: tạo lời đọc bằng giọng của Windows/macOS; dịch toàn bộ phụ đề bằng Claude API (dán Anthropic API key một lần, ứng dụng hỏi xác nhận trước mỗi lần gửi chữ).
 
 ## Đăng bài lên mạng xã hội
 

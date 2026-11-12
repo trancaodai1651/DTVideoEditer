@@ -415,3 +415,22 @@ textarea { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); borde
 .speed-curve circle:focus-visible { outline: none; stroke: #5ee0ff; stroke-width: 3; }
 .speed-grid { stroke: #34383f; stroke-dasharray: 3 3; }
 .speed-curve text { fill: var(--muted); font-size: 9px; }
+
+/* Colour grading */
+.color-panel { display: grid; gap: 8px; }
+.color-group { display: grid; gap: 4px; }
+.color-group h3 { margin: 6px 0 2px; }
+.color-slider { display: grid; grid-template-columns: minmax(92px, 38%) 1fr 34px; align-items: center; gap: 6px; font-size: 11px; color: var(--soft); }
+.color-slider input { min-height: 0; padding: 0; }
+.color-slider output { text-align: right; font: 10px ui-monospace, monospace; color: var(--muted); }
+.tone-curve { width: 100%; max-width: 260px; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; background: #17191c; }
+.tone-curve line { stroke: #30343b; stroke-width: .4; }
+.tone-curve polyline { fill: none; stroke: var(--accent); stroke-width: 1.4; }
+.tone-curve .tone-identity { stroke: #4a4f58; stroke-dasharray: 2 2; stroke-width: .6; }
+.color-filter-defs { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+input[type="color"] { min-height: 30px; padding: 2px; }
+
+/* Adjustment layers and compound sub-timeline */
+.tl-clip.adjustment { background: repeating-linear-gradient(90deg, #3a2f52, #3a2f52 10px, #43375e 10px, #43375e 20px); border-color: #b39cff; }
+.tl-breadcrumb { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-bottom: 1px solid var(--line); background: #2a2440; color: #ddd4ff; font-size: 12px; }
+.editor-workspace > .timeline:has(.tl-breadcrumb) { grid-template-rows: auto auto auto auto minmax(0, 1fr); }

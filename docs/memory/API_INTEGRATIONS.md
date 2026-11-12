@@ -3,6 +3,8 @@
 | Adapter | Mode và quyền | Kiểm chứng cần có |
 | --- | --- | --- |
 | FFprobe và FFmpeg | Chạy binary local từ PATH, chỉ tệp trong grant, không dùng token | Smoke test trên video, WAV, ảnh và tệp hỏng |
+| Claude API (dịch phụ đề) | Đã có. HTTP thô tới `/v1/messages`, model `claude-opus-5-5`, effort `low`, `fallbacks: "default"` với beta `server-side-fallback-2026-07-01`, `anthropic-version: 2026-10-21`. Key trong keychain, hỏi xác nhận mỗi lần gửi | Chưa gọi thật. Cần key để live test, kiểm tra lỗi 401/429 và refusal |
+| Giọng đọc hệ điều hành | Đã có. Windows System.Speech, macOS `say`. Không cần mạng | Đã chạy thật trên Windows 11. macOS chưa thử |
 | Gemini, Claude, OpenAI | M2. User cung cấp key trong OS keychain, chọn provider/model, đồng ý với dữ liệu gửi | Schema validation và lỗi auth/rate limit. Live test theo quyền và quota hiện hành |
 | Codex và Claude CLI/SDK | M2. User tự cài, đăng nhập và chọn opt-in | Kiểm tra điều khoản và capability. Tách auth CLI khỏi billing API |
 | OmniVoice | M2. Xác minh upstream `k2-fsa/OmniVoice`, Python worker localhost, quyền với giọng tham chiếu | Xác minh license và runtime, chất lượng tiếng Việt, fallback khi máy không đủ khả năng |

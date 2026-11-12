@@ -113,10 +113,27 @@ export interface ClipLook {
   /** Clips sharing a multicam id are camera angles of one take. */
   multicam?: number;
   speedCurve?: SpeedPoint[];
+  exposure?: number;
+  highlights?: number;
+  shadows?: number;
+  whites?: number;
+  blacks?: number;
+  tint?: number;
+  hue?: number;
+  vibrance?: number;
+  /** Id of an imported .cube LUT. */
+  lut?: number;
+  /** Shows the source frame at this time for the clip's whole length. */
+  freezeAtMs?: number;
+  reverse?: boolean;
 }
+export type TitleFont = "sans" | "bold" | "serif" | "mono" | "display";
+export interface LutEntry { id: number; name: string }
+export interface Voice { name: string; language: string }
+export interface AdjustmentEdit { positionMs: number; durationMs: number; layer: number; look: Partial<ClipLook> }
 /** `at` is the position in the source range in thousandths, `speed` a percentage. */
 export interface SpeedPoint { at: number; speed: number }
-export interface TrackPoint { atMs: number; x: number; y: number }
+export interface TrackPoint { atMs: number; x: number; y: number; scale?: number; angle?: number }
 export interface TrackRegion { x: number; y: number; width: number; height: number }
 export type TransitionKind = "black" | "dissolve";
 export interface ClipTransition {
@@ -143,6 +160,17 @@ export interface TitleStyle {
   caption?: boolean;
   background?: boolean;
   editGroup?: number;
+  font?: TitleFont;
+  /** #rrggbb, overrides color. */
+  colorHex?: string;
+  strokeHex?: string;
+  strokeWidth?: number;
+  backgroundHex?: string;
+  backgroundOpacity?: number;
+  align?: "left" | "center" | "right";
+  shadow?: boolean;
+  fadeMs?: number;
+  lineSpacing?: number;
 }
 export interface Cue { startMs: number; endMs: number; text: string }
 export interface CatalogItem { title: string; group: "music" | "sound" | "sticker"; asset: Asset }
@@ -160,6 +188,7 @@ export interface Timeline {
   version: number;
   clips: TimelineClip[];
   titles: TitleEdit[];
+  adjustments?: AdjustmentEdit[];
   aspect: Aspect;
   lanes: LaneControl[];
 }
@@ -327,6 +356,18 @@ export const api = {
     invoke<number[]>("detect_scenes", { assetId, startMs, endMs, threshold }),
   trackMotion: (assetId: number, startMs: number, endMs: number, region: TrackRegion) =>
     invoke<TrackPoint[]>("track_motion", { assetId, startMs, endMs, region }),
+  /** Milliseconds later that a sound at referenceStartMs appears in the other recording. */
+  audioOffset: (reference: number, referenceStartMs: number, other: number, otherStartMs: number) =>
+    invoke<number>("audio_offset", { reference, referenceStartMs, other, otherStartMs }),
+  voices: () => invoke<Voice[]>("list_voices"),
+  speak: (text: string, voice: string, rate: number) => invoke<ImportedFiles>("speak_text", { text, voice, rate }),
+  aiKeyStatus: () => invoke<boolean>("ai_key_status"),
+  setAiKey: (key: string) => invoke<void>("set_ai_key", { key }),
+  /** Null when the user declines sending the lines in the native dialog. */
+  translateCaptions: (lines: string[], language: string) => invoke<string[] | null>("translate_captions", { lines, language }),
+  importLut: () => invoke<LutEntry | null>("import_lut"),
+  luts: () => invoke<LutEntry[]>("list_luts"),
+  deleteLut: (id: number) => invoke<void>("delete_lut", { id }),
   accounts: () => invoke<SocialAccount[]>("list_social_accounts"),
   connectAccount: (input: ConnectInput) => invoke<SocialAccount>("connect_social_account", { input }),
   disconnectAccount: (accountId: number) => invoke<void>("disconnect_social_account", { accountId }),

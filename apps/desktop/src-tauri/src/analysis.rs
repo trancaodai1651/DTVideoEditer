@@ -93,7 +93,18 @@ pub fn levels(store: &Store, asset_id: i64) -> Result<Vec<u8>> {
         .arg("-i")
         .arg(&path)
         .args([
-            "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "4000", "-f", "s16le", "pipe:1",
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-af",
+            "aresample=async=1:first_pts=0",
+            "-ac",
+            "1",
+            "-ar",
+            "4000",
+            "-f",
+            "s16le",
+            "pipe:1",
         ]);
     let limit = (duration as usize / 1000 + 2) * LEVEL_RATE * 2;
     let samples = probe::capture_limited(command, Duration::from_secs(180), limit).ok_or(
@@ -185,6 +196,166 @@ pub struct TrackPoint {
     pub at_ms: i64,
     pub x: u16,
     pub y: u16,
+    /// Size relative to the first frame, in thousandths.
+    pub scale: u16,
+    /// Rotation relative to the first frame, in degrees.
+    pub angle: i16,
+}
+
+/// Position, scale and rotation of a region. The whole region gives the
+/// position; its left and right halves are followed separately, and the line
+/// between their centres gives scale (length) and rotation (direction).
+pub fn track_pose(
+    frames: &[Vec<u8>],
+    width: usize,
+    height: usize,
+    region: Region,
+) -> Vec<(u16, u16, u16, i16)> {
+    let centres = track_frames(frames, width, height, region);
+    let half = (region.width / 2).max(1);
+    let left = track_frames(
+        frames,
+        width,
+        height,
+        Region {
+            width: half,
+            ..region
+        },
+    );
+    let right = track_frames(
+        frames,
+        width,
+        height,
+        Region {
+            x: region.x + half,
+            width: region.width - half,
+            ..region
+        },
+    );
+    // Work in pixels so a non-square frame does not skew the angle.
+    let vector = |index: usize| {
+        let dx = (f64::from(right[index].0) - f64::from(left[index].0)) * width as f64 / 1000.0;
+        let dy = (f64::from(right[index].1) - f64::from(left[index].1)) * height as f64 / 1000.0;
+        (dx, dy)
+    };
+    let (dx0, dy0) = vector(0);
+    let length0 = dx0.hypot(dy0).max(1.0);
+    let angle0 = dy0.atan2(dx0);
+    centres
+        .iter()
+        .enumerate()
+        .map(|(index, (x, y))| {
+            let (dx, dy) = vector(index);
+            let scale = (dx.hypot(dy) / length0 * 1000.0)
+                .round()
+                .clamp(250.0, 4000.0) as u16;
+            let mut angle = (dy.atan2(dx) - angle0).to_degrees();
+            if angle > 180.0 {
+                angle -= 360.0;
+            } else if angle < -180.0 {
+                angle += 360.0;
+            }
+            (*x, *y, scale, angle.round() as i16)
+        })
+        .collect()
+}
+
+/// Window over which two recordings are compared, and the largest shift searched.
+const SYNC_MS: i64 = 120_000;
+const SYNC_STEP_MS: i64 = 10;
+const MAX_SHIFT_MS: i64 = 10_000;
+
+/// Loudness onsets every 10 ms: rises in RMS energy, which line up between
+/// microphones even when their tone differs.
+pub fn onsets(samples: &[u8]) -> Vec<f64> {
+    let window = LEVEL_RATE * SYNC_STEP_MS as usize / 1000;
+    let energy: Vec<f64> = samples
+        .chunks_exact(2)
+        .map(|pair| f64::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+        .collect::<Vec<_>>()
+        .chunks(window)
+        .map(|chunk| {
+            (chunk.iter().map(|value| value * value).sum::<f64>() / chunk.len() as f64).sqrt()
+        })
+        .collect();
+    energy
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).max(0.0))
+        .collect()
+}
+
+/// The shift, in steps, that best lines `other` up with `reference`:
+/// `other[i + lag]` matches `reference[i]`.
+pub fn best_lag(reference: &[f64], other: &[f64], max_lag: i64) -> Option<i64> {
+    let mut best: Option<(f64, i64)> = None;
+    for lag in -max_lag..=max_lag {
+        let mut score = 0.0;
+        for (index, value) in reference.iter().enumerate() {
+            let at = index as i64 + lag;
+            if at >= 0 && (at as usize) < other.len() {
+                score += value * other[at as usize];
+            }
+        }
+        if best.is_none_or(|(top, _)| score > top) {
+            best = Some((score, lag));
+        }
+    }
+    best.filter(|(score, _)| *score > 0.0).map(|(_, lag)| lag)
+}
+
+fn pcm(path: &std::path::Path, format: &MediaFormat, start_ms: i64) -> Result<Vec<u8>> {
+    let mut command = ffmpeg()?;
+    command
+        .args(format.input_args())
+        .args(["-ss", &seconds(start_ms), "-t", &seconds(SYNC_MS), "-i"])
+        .arg(path)
+        .args([
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-af",
+            "aresample=async=1:first_pts=0",
+            "-ac",
+            "1",
+            "-ar",
+            "4000",
+            "-f",
+            "s16le",
+            "pipe:1",
+        ]);
+    probe::capture_limited(
+        command,
+        Duration::from_secs(120),
+        (SYNC_MS as usize / 1000 + 2) * LEVEL_RATE * 2,
+    )
+    .filter(|bytes| !bytes.is_empty())
+    .ok_or(StudioError::Input(
+        "FFmpeg chưa đọc được âm thanh để đồng bộ.",
+    ))
+}
+
+/// How many milliseconds later a sound at `reference_start_ms` in the
+/// reference appears in the other recording, relative to `other_start_ms`.
+pub fn audio_offset(
+    store: &Store,
+    reference: i64,
+    reference_start_ms: i64,
+    other: i64,
+    other_start_ms: i64,
+) -> Result<i64> {
+    let (_, reference_path, reference_format) = source(store, reference, &["video", "audio"])?;
+    let (_, other_path, other_format) = source(store, other, &["video", "audio"])?;
+    let a = onsets(&pcm(
+        &reference_path,
+        &reference_format,
+        reference_start_ms.max(0),
+    )?);
+    let b = onsets(&pcm(&other_path, &other_format, other_start_ms.max(0))?);
+    best_lag(&a, &b, MAX_SHIFT_MS / SYNC_STEP_MS)
+        .map(|lag| lag * SYNC_STEP_MS)
+        .ok_or(StudioError::Input(
+            "Không tìm thấy âm thanh chung giữa hai góc máy.",
+        ))
 }
 
 fn sad(
@@ -333,13 +504,15 @@ pub fn track(
     if frames.len() < 2 {
         return Err(StudioError::Input("Đoạn video quá ngắn để theo dõi."));
     }
-    Ok(track_frames(&frames, width, height, region)
+    Ok(track_pose(&frames, width, height, region)
         .into_iter()
         .enumerate()
-        .map(|(index, (x, y))| TrackPoint {
+        .map(|(index, (x, y, scale, angle))| TrackPoint {
             at_ms: start_ms + index as i64 * 1000 / TRACK_FPS,
             x,
             y,
+            scale,
+            angle,
         })
         .collect())
 }
@@ -369,6 +542,80 @@ mod tests {
         assert_eq!(cut_times(output, 1000, 5000), [2500]);
         assert_eq!(cut_times(output, 0, 10_000), [1500, 3900]);
         assert!(cut_times("", 0, 1000).is_empty());
+    }
+
+    #[test]
+    fn pose_tracking_measures_scale_and_rotation_from_two_halves() {
+        let (width, height) = (160usize, 120usize);
+        let blob = |frame: &mut Vec<u8>, cx: f64, cy: f64, bright: bool| {
+            for y in 0..10 {
+                for x in 0..10 {
+                    let (px, py) = (
+                        (cx - 5.0).round() as usize + x,
+                        (cy - 5.0).round() as usize + y,
+                    );
+                    frame[py * width + px] = if bright {
+                        if (x + y) % 2 == 0 { 255 } else { 180 }
+                    } else if x < 5 {
+                        10
+                    } else {
+                        90
+                    };
+                }
+            }
+        };
+        let frames: Vec<Vec<u8>> = (0..12)
+            .map(|index| {
+                let mut frame: Vec<u8> = (0..width * height)
+                    .map(|pixel| ((pixel * 13) % 17) as u8 + 120)
+                    .collect();
+                // The pair spreads from 40 px to 62 px apart and turns by 2 degrees a frame.
+                let half = 20.0 + index as f64;
+                let angle = (index as f64 * 2.0).to_radians();
+                let (dx, dy) = (half * angle.cos(), half * angle.sin());
+                blob(&mut frame, 80.0 - dx, 60.0 - dy, false);
+                blob(&mut frame, 80.0 + dx, 60.0 + dy, true);
+                frame
+            })
+            .collect();
+        let region = Region {
+            x: 250,
+            y: 333,
+            width: 500,
+            height: 334,
+        };
+        let pose = track_pose(&frames, width, height, region);
+        assert_eq!(pose[0].2, 1000);
+        assert_eq!(pose[0].3, 0);
+        let (_, _, scale, angle) = pose[11];
+        assert!((scale as i64 - 1550).abs() <= 120, "scale {scale}");
+        assert!((angle as i64 - 22).abs() <= 5, "angle {angle}");
+    }
+
+    #[test]
+    fn onset_correlation_finds_the_shift_between_recordings() {
+        let pulse = |delay: usize| -> Vec<u8> {
+            (0..4000 * 6)
+                .flat_map(|index: usize| {
+                    let t = index as f64 / 4000.0;
+                    let at = (index as i64 - delay as i64) as f64 / 4000.0;
+                    let beat = [0.4, 1.3, 1.7, 2.9, 3.4, 4.6];
+                    let loud =
+                        at >= 0.0 && beat.iter().any(|start| at >= *start && at < start + 0.08);
+                    let value = if loud {
+                        (t * 2200.0).sin() * 20000.0
+                    } else {
+                        0.0
+                    };
+                    (value as i16).to_le_bytes()
+                })
+                .collect()
+        };
+        let reference = onsets(&pulse(0));
+        let later = onsets(&pulse(1000));
+        assert_eq!(best_lag(&reference, &later, 300), Some(25));
+        assert_eq!(best_lag(&later, &reference, 300), Some(-25));
+        assert_eq!(best_lag(&reference, &[0.0; 10], 5), None);
     }
 
     #[test]

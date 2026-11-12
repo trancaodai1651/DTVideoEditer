@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ComponentProps, CSSProperties, ReactNode } from "react";
-import { mediaUrl } from "./desktop";
+import { api, desktop, mediaUrl } from "./desktop";
+import type { Voice } from "./desktop";
 import type { Asset, CatalogItem, ClipLook, ClipTransition, TitleStyle, TransitionKind } from "./desktop";
 import { Icon } from "./Icon";
 import { grades } from "./ClipInspector";
@@ -76,10 +77,73 @@ const titles = [
 
 export interface SmartTarget { key: string; kind: string; track: string; layer: number; detached: boolean; linked: boolean }
 
-export function EditorLibrary({ smartTarget, onSmartTool, tab, onTab, media, templates, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
+/** Voice-over with system voices and caption translation with Claude. */
+function VoiceAndTranslate({ busy, hasProject, hasCaptionLines, onSpeak, onTranslate }: {
+  busy: boolean; hasProject: boolean; hasCaptionLines: boolean;
+  onSpeak: (text: string, voice: string, rate: number) => void;
+  onTranslate: (language: string) => void;
+}) {
+  const [voices, setVoices] = useState<Voice[] | null>(null);
+  const [voice, setVoice] = useState("");
+  const [rate, setRate] = useState(0);
+  const [text, setText] = useState("");
+  const [language, setLanguage] = useState("English");
+  const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [key, setKey] = useState("");
+  useEffect(() => {
+    if (!desktop) return;
+    let current = true;
+    void api.voices().then((list) => {
+      if (!current) return;
+      setVoices(list);
+      setVoice((chosen) => chosen || list.find((item) => item.language.toLowerCase().startsWith("vi"))?.name || "");
+    }).catch(() => { if (current) setVoices([]); });
+    void api.aiKeyStatus().then((status) => { if (current) setHasKey(status); }).catch(() => undefined);
+    return () => { current = false; };
+  }, []);
+  return <>
+    <div className="tool-detail"><h3>Lồng tiếng bằng giọng trên máy</h3>
+      <p>Dùng giọng đọc cài trong Windows hoặc macOS, không gửi nội dung ra ngoài. Tệp WAV được nhập vào thư viện và đặt ở tầng âm thanh tại playhead.</p>
+      <label className="edit-field">Giọng
+        <select value={voice} onChange={(event) => setVoice(event.target.value)} disabled={!voices?.length}>
+          <option value="">Giọng mặc định</option>
+          {voices?.map((item) => <option key={item.name} value={item.name}>{item.name} · {item.language}</option>)}
+        </select>
+      </label>
+      {voices && !voices.some((item) => item.language.toLowerCase().startsWith("vi")) && <p className="inspector-help">Chưa thấy giọng tiếng Việt. Trên Windows, thêm gói giọng nói tiếng Việt trong Cài đặt › Thời gian và ngôn ngữ › Giọng nói.</p>}
+      <label className="edit-field">Tốc độ đọc ({rate > 0 ? "+" : ""}{rate})
+        <input type="range" min={-10} max={10} value={rate} onChange={(event) => setRate(Number(event.target.value))} />
+      </label>
+      <label className="edit-field">Nội dung
+        <textarea rows={4} maxLength={5000} value={text} onChange={(event) => setText(event.target.value)} placeholder="Nhập lời đọc…" />
+      </label>
+      <button type="button" className="button primary" disabled={busy || !hasProject || !text.trim()} onClick={() => onSpeak(text, voice, rate)}>Tạo lời đọc</button>
+    </div>
+    <div className="tool-detail"><h3>Dịch phụ đề bằng Claude</h3>
+      <p>Gửi chữ của các câu phụ đề (không gửi media) tới Anthropic bằng API key của bạn. Ứng dụng hỏi xác nhận trước mỗi lần gửi.</p>
+      {hasKey ? <div className="inspector-inline"><span className="inspector-help">Đã lưu API key trong keychain.</span>
+        <button type="button" className="button secondary compact" onClick={() => void api.setAiKey("").then(() => setHasKey(false))}>Xóa key</button></div>
+        : <div className="inspector-inline">
+          <input type="password" value={key} placeholder="Anthropic API key" aria-label="Anthropic API key" onChange={(event) => setKey(event.target.value)} />
+          <button type="button" className="button secondary compact" disabled={!key.trim()}
+            onClick={() => void api.setAiKey(key).then(() => { setKey(""); setHasKey(true); })}>Lưu key</button>
+        </div>}
+      <label className="edit-field">Dịch sang
+        <input list="translate-languages" value={language} maxLength={40} onChange={(event) => setLanguage(event.target.value)} />
+        <datalist id="translate-languages">{["Tiếng Việt", "English", "日本語", "한국어", "中文", "Français", "Español", "Deutsch", "ไทย"].map((name) => <option key={name} value={name} />)}</datalist>
+      </label>
+      <button type="button" className="button primary" disabled={busy || !hasKey || !hasCaptionLines || !language.trim()} onClick={() => onTranslate(language)}>Dịch toàn bộ phụ đề</button>
+    </div>
+  </>;
+}
+
+export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarget, onSmartTool, tab, onTab, media, templates, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
   tab: LibraryTab;
   onTab: (tab: LibraryTab) => void;
   smartTarget: SmartTarget | null;
+  onSpeak: (text: string, voice: string, rate: number) => void;
+  onTranslate: (language: string) => void;
+  hasCaptionLines: boolean;
   onSmartTool: (tool: "scenes" | "silence" | "beats" | "track" | "speed" | "detach", key: string) => void;
   media: ReactNode;
   templates: ReactNode;
@@ -185,8 +249,9 @@ export function EditorLibrary({ smartTarget, onSmartTool, tab, onTab, media, tem
             <strong>Phụ đề tự động</strong><small>Whisper trên máy, sửa được từng câu</small>
           </button>
         </div>
-        <div className="tool-detail"><h3>Chưa có trong bản cục bộ</h3>
-          <p>Xóa nền bằng AI, avatar AI, lồng tiếng và dịch bằng dịch vụ cloud cần mô hình hoặc tài khoản bên ngoài. Các mục này nằm trong backlog M2 và M1-J.</p>
+        <VoiceAndTranslate busy={busy} hasProject={hasProject} hasCaptionLines={hasCaptionLines} onSpeak={onSpeak} onTranslate={onTranslate} />
+        <div className="tool-detail"><h3>Chưa có trong bản này</h3>
+          <p>Xóa nền bằng AI và avatar AI cần mô hình phân đoạn hoặc dịch vụ tạo người ảo mà ứng dụng chưa tích hợp. Với nền xanh, dùng Xóa nền xanh lá trong tab Nâng cao.</p>
         </div>
       </div>}
       {tab === "transitions" && <div className="library-section">
