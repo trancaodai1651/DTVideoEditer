@@ -21,7 +21,8 @@
 | M1-H8 | P1 | Đang làm | M1-H2, M1-H3, M1-J | Đã có menu clip/tầng/timeline, kéo vách chia, chọn bằng khung, copy/paste thuộc tính, thay clip, freeze/reverse, menu thẻ media và trình phát, lọc theo loại và sidebar Âm thanh/Chữ. Đã thử cửa sổ Tauri 1280×720 và trên màn hình 2560×1440. Còn preset và điều khiển trong khảo sát và thao tác editor trên macOS. |
 | M1-I | P1 | Xong | M1-G | Kéo media từ thư viện lên timeline, di chuyển clip giữa các tầng cùng loại, zoom timeline và preview, kéo vị trí/đổi cỡ/xoay hình trên preview và lưu qua undo/redo. |
 | M1-J | P1 | Đang làm | M1-I | Kiểm kê thao tác CapCut Desktop có ca tái lập và ghi phạm vi theo bản, tài khoản, nền tảng. Đã có khảo sát Windows khi chưa đăng nhập. Còn ca Pro, cloud, macOS và các dòng ghi Cần thử. |
-| M1-K | P0 | Đang kiểm chứng | M1-B, M1-C | Hai chế độ dựng từ timeline đã chạy trên Tauri Windows với MP4/PNG/WAV tổng hợp. Đo chất lượng highlight trên dữ liệu video có cảnh được đánh dấu và thử thêm bài nhạc/âm thanh thực tế. |
+| M1-K | P0 | Đang kiểm chứng | M1-B, M1-C | 0.8.0 giữ nhiều nguồn và nguồn phân tích lỗi, quét đủ đoạn timeline qua GPU/CPU, dựng theo một hoặc nhiều clip âm thanh. Đo highlight theo cảnh đánh dấu và thử trên tệp camera, nhạc, lời thoại thực. |
+| M1-L | P1 | Đang kiểm chứng | M1-B | Lưu/mở `.dtedit` ở vị trí chọn, có timeline, LUT và tham chiếu nguồn qua grant. Còn gán lại nguồn đã di chuyển và liên kết tệp cho tự lưu trực tiếp. |
 | M2-A | P1 | Chờ | M1-A, key khi test live | Gemini adapter thật, model/quota theo thời điểm cấu hình, OpenAI và Claude adapters qua cùng contract, keychain, consent khi gửi tài liệu, schema cảnh, outline/VO/shot list/on-screen text/caption/hashtags/title, sửa cảnh và version history. Chi phí/quota chỉ hiển thị nếu có dữ liệu. |
 | M2-B | P1 | Đang làm | M2-A, quyền giọng mẫu khi cloning | Xác minh OmniVoice upstream và license, worker localhost có capability check, phát âm tiếng Việt, audio reference có xác nhận, preset theo khả năng, TTS queue/cache/regenerate đoạn, fallback opt-in, chèn asset vào timeline. |
 | M2-C | P2 | Chờ | M2-A | Tùy chọn tích hợp CLI/SDK khi user đã tự cài và đăng nhập, điều khoản đã kiểm tra. Test phân biệt quyền thuê bao và API, lỗi quota và fallback. |
@@ -32,7 +33,7 @@
 | M4-A | P1 | Chờ | M1-B | Export package + cover/caption/hashtag theo platform với hướng dẫn đăng thủ công, validation per-target và lỗi có thể xử lý. |
 | M4-B | P1 | Đang làm | M4-A, OAuth/app review | Kết nối Facebook Pages, Instagram Professional, Threads, TikTok bằng API chính thức. Lưu credential an toàn, scope/account type/review status, refresh/revoke và live test ở môi trường được cấp quyền. |
 | M4-C | P1 | Đang làm | M4-B | Campaign có caption/hashtag/privacy/format/cover/title/CTA/lịch theo target. Approval trước upload, state machine, retry/backoff/idempotency, URL bài đăng và audit. Lịch local khi app mở, worker opt-in khi app đóng. |
-| M5-A | P2 | Chờ | M1–M4 | Proxy và keyframes, HEVC/hardware tùy khả năng, hiệu năng thư viện lớn, phục hồi queue khi crash, migration và backup khôi phục được, rà soát bảo mật/riêng tư và accessibility. |
+| M5-A | P2 | Đang làm | M1–M4 | Proxy 720p có sẵn từ 0.8.0. Còn đo hiệu năng dự án lớn, keyframes, HEVC/hardware tùy khả năng, quản lý cache, phục hồi queue, backup và rà soát accessibility. |
 | M5-B | P1 | Đang làm | M5-A, ký phát hành | Build/test Windows 10/11 và macOS Universal, xác minh cả hai kiến trúc, ký/notarize, cập nhật và rà soát phân phối FFmpeg. |
 
 ## Tiến độ các mục đang làm

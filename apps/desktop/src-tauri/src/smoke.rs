@@ -48,6 +48,7 @@ fn snapshot(video: Vec<ClipEdit>, audio: Vec<ClipEdit>) -> TimelineSnapshot {
 fn real_rembg_segments_photo_and_short_video() {
     let fixture = std::env::var_os("DT_EDIT_REMBG_FIXTURE").unwrap();
     let temp = tempfile::tempdir().unwrap();
+    let resources = std::env::var_os("DT_EDIT_REMBG_RESOURCES").map(std::path::PathBuf::from);
     let image = temp.path().join("portrait.png");
     fs::copy(fixture, &image).unwrap();
     let video = temp.path().join("portrait.mp4");
@@ -90,6 +91,7 @@ fn real_rembg_segments_photo_and_short_video() {
             asset.id,
             0,
             500,
+            resources.as_deref().map(|path| (path, temp.path())),
         )
         .unwrap();
         let info = Command::new(find_tool("ffprobe").unwrap())
@@ -130,6 +132,176 @@ impl MediaProbe for CountingProbe {
             thumbnail: None,
         })
     }
+}
+
+#[test]
+fn saves_project_to_chosen_file_and_reopens_with_remapped_asset_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.mp4");
+    let other = temp.path().join("other.mp4");
+    fs::write(&source, b"source").unwrap();
+    fs::write(&other, b"other").unwrap();
+    let probe = CountingProbe(Cell::new(0));
+    let origin = Store::open(&temp.path().join("origin.sqlite3")).unwrap();
+    let asset = crate::library::import_files(&origin, std::slice::from_ref(&source), &probe)
+        .unwrap()
+        .assets
+        .pop()
+        .unwrap();
+    let project = origin
+        .create_project_with_timeline(
+            "Lưu dự án",
+            Some(&snapshot(vec![clip(asset.id, 100, 900, 50)], vec![])),
+        )
+        .unwrap();
+    let document = temp.path().join("Dự án mẫu.dtedit");
+    crate::project_file::save(&origin, &project, &document).unwrap();
+    let target = Store::open(&temp.path().join("target.sqlite3")).unwrap();
+    assert!(crate::project_file::open(&target, &document).is_err());
+    let imported = crate::library::import_files(&target, &[other, source], &probe).unwrap();
+    let matching = &imported.assets[1];
+    assert_ne!(asset.id, matching.id);
+    let reopened = crate::project_file::open(&target, &document).unwrap();
+    assert_eq!(reopened.name, project.name);
+    assert_eq!(
+        target.snapshot(reopened.id).unwrap().tracks[0].clips,
+        vec![clip(matching.id, 100, 900, 50)]
+    );
+    target.revoke(matching.folder_id).unwrap();
+    assert!(crate::project_file::open(&target, &document).is_err());
+}
+
+#[test]
+#[ignore = "requires FFmpeg and FFprobe installed on PATH"]
+fn real_ffmpeg_analyzes_4k_and_reads_proxy_byte_ranges() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("video-4k.mp4");
+    let ffmpeg = find_tool("ffmpeg").unwrap();
+    let ffprobe = find_tool("ffprobe").unwrap();
+    let status = Command::new(&ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=3840x2160:rate=30",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880",
+            "-t",
+            "2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-threads",
+            "4",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+        ])
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let store = Store::open(&temp.path().join("index.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: ffprobe.clone(),
+        ffmpeg: None,
+    };
+    let asset = crate::library::import_files(&store, &[path], &probe)
+        .unwrap()
+        .assets
+        .pop()
+        .unwrap();
+    let scan = crate::analysis::analyze_shots(&store, asset.id, 0, 2000).unwrap();
+    assert_eq!(scan.scanned_ms, 2000);
+    assert!(!scan.shots.is_empty());
+    println!("4K analysis hardware chunks: {}", scan.hardware_chunks);
+    let proxy = temp.path().join("proxies");
+    crate::proxy::build(&store, &proxy, asset.id).unwrap();
+    let file = crate::proxy::ready(&store, &proxy, asset.id).unwrap();
+    let meta = probe
+        .inspect(&file, &MediaFormat::for_path(&file).unwrap())
+        .unwrap();
+    assert_eq!(
+        (meta.width, meta.height, meta.duration_ms),
+        (Some(1280), Some(720), Some(2000))
+    );
+    assert!(crate::probe::has_audio(
+        &ffprobe,
+        &file,
+        &MediaFormat::for_path(&file).unwrap()
+    ));
+    let request = || {
+        Request::builder()
+            .uri(format!("/proxy-{}", asset.id))
+            .header(header::RANGE, "bytes=0-511")
+            .body(Vec::new())
+            .unwrap()
+    };
+    let response = crate::preview::serve_with_review(&store, request(), None, Some(&proxy));
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(&response.body()[4..8], b"ftyp");
+    store.revoke(asset.folder_id).unwrap();
+    let denied = crate::preview::serve_with_review(&store, request(), None, Some(&proxy));
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+#[ignore = "requires FFmpeg and FFprobe installed on PATH"]
+fn real_ffmpeg_highlight_reaches_the_end_of_multiple_analysis_chunks() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("long.mp4");
+    let ffmpeg = find_tool("ffmpeg").unwrap();
+    let status = Command::new(&ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=128x72:r=4:d=122",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=green:s=128x72:r=4:d=3",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0",
+            "-c:v",
+            "libx264",
+            "-threads",
+            "2",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let store = Store::open(&temp.path().join("index.sqlite3")).unwrap();
+    let probe = Ffprobe {
+        binary: find_tool("ffprobe").unwrap(),
+        ffmpeg: None,
+    };
+    let asset = crate::library::import_files(&store, &[path], &probe)
+        .unwrap()
+        .assets
+        .pop()
+        .unwrap();
+    let scan = crate::analysis::analyze_shots(&store, asset.id, 0, 125000).unwrap();
+    assert_eq!(scan.scanned_ms, 125000);
+    let shots = serde_json::to_value(scan.shots).unwrap();
+    assert!(
+        shots
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|shot| shot["startMs"] == 122000 && shot["endMs"] == 125000)
+    );
 }
 
 #[test]
@@ -1474,7 +1646,8 @@ fn real_ffmpeg_grades_freezes_reverses_and_syncs_audio() {
     };
     let (colours, take_a, take_b) = (id("colours.mp4"), id("take-a.mp4"), id("take-b.mp4"));
     let shots = crate::analysis::analyze_shots(&store, colours, 250, 2000).unwrap();
-    let shots = serde_json::to_value(shots).unwrap();
+    assert_eq!(shots.scanned_ms, 1750);
+    let shots = serde_json::to_value(shots.shots).unwrap();
     assert_eq!(shots[0]["startMs"], 250);
     assert_eq!(shots[0]["endMs"], 1000);
     assert_eq!(shots[1]["startMs"], 1000);
@@ -1596,6 +1769,7 @@ fn real_ffmpeg_grades_freezes_reverses_and_syncs_audio() {
             .body(Vec::new())
             .unwrap(),
         Some(&review),
+        None,
     );
     assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
     assert_eq!(&response.body()[4..8], b"ftyp");

@@ -29,11 +29,18 @@ jobs:
         with:
           node-version: '24'
       - uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: runner.os == 'macOS'
+        run: /usr/bin/arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
+      - name: Package offline background removal
+        run: python scripts/package-rembg.py
       - run: rustup toolchain install stable --profile minimal
       - if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: pnpm install --frozen-lockfile
-      - run: pnpm tauri build --ci ${{ matrix.args }}
+      - run: pnpm tauri build --ci --config src-tauri/target/rembg.bundle.json ${{ matrix.args }}
       - if: runner.os == 'macOS'
         shell: bash
         run: |

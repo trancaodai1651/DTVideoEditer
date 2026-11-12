@@ -236,6 +236,7 @@ textarea { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); borde
 .studio-project-menu summary { padding: 5px 9px; border-radius: 5px; background: #35393c; cursor: pointer; white-space: nowrap; }
 .project-popover { position: absolute; top: calc(100% + 8px); left: 0; width: 260px; display: grid; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); box-shadow: 0 12px 28px #0008; }
 .project-popover form { display: grid; gap: 8px; }
+.project-file-actions { display: grid; gap: 5px; }
 .studio-project-title { flex: 1; min-width: 0; color: var(--soft); text-align: center; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; font-size: 12px; font-weight: 650; }
 .studio-navigation { display: flex; align-items: center; gap: 3px; }
 .studio-navigation button { padding: 6px 8px; color: var(--soft); border-radius: 5px; font-size: 11px; white-space: nowrap; }

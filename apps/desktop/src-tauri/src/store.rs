@@ -400,9 +400,61 @@ impl Store {
             .optional()?)
     }
 
+    pub fn asset_at_path(&self, path: &Path) -> Result<Option<i64>> {
+        let (Some(full), Some(name)) = (
+            path.to_str(),
+            path.file_name().and_then(|name| name.to_str()),
+        ) else {
+            return Ok(None);
+        };
+        if !path.is_absolute() {
+            return Ok(None);
+        }
+        let db = self.db()?;
+        let mut find = db.prepare("SELECT a.id FROM assets a JOIN folder_grants g ON g.id = a.folder_id
+            WHERE g.root = ?1 AND a.relative_path = ?2 AND g.file_only = ?3 AND a.available = 1 LIMIT 1")?;
+        let exact = find
+            .query_row(params![full, name, true], |row| row.get(0))
+            .optional()?;
+        if exact.is_some() {
+            return Ok(exact);
+        }
+        for parent in path.ancestors().skip(1) {
+            let Some(relative) = path.strip_prefix(parent).ok().and_then(Path::to_str) else {
+                continue;
+            };
+            let found = find
+                .query_row(params![parent.to_str(), relative, false], |row| row.get(0))
+                .optional()?;
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+        Ok(None)
+    }
+
     /// Stores a validated .cube LUT and returns its id.
     pub fn insert_lut(&self, name: &str, cube: &str) -> Result<i64> {
         let db = self.db()?;
+        db.execute(
+            "INSERT INTO luts(name, cube) VALUES (?, ?)",
+            params![name, cube],
+        )?;
+        Ok(db.last_insert_rowid())
+    }
+
+    pub fn find_or_insert_lut(&self, name: &str, cube: &str) -> Result<i64> {
+        let db = self.db()?;
+        if let Some(id) = db
+            .query_row(
+                "SELECT id FROM luts WHERE name = ?1 AND cube = ?2 LIMIT 1",
+                params![name, cube],
+                |row| row.get(0),
+            )
+            .optional()?
+        {
+            return Ok(id);
+        }
         db.execute(
             "INSERT INTO luts(name, cube) VALUES (?, ?)",
             params![name, cube],

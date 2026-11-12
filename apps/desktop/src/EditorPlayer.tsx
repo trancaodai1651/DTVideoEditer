@@ -9,7 +9,14 @@ import { ContextMenu } from "./ContextMenu";
 import type { MenuState } from "./ContextMenu";
 
 export function EditorPlayer({ source, clips, laneControls, aspect, at, total, revision, frameMode, playing, onMode, onPlay, onSeek, onAspect,
-  disabled, selectedKey, onSelect, onTransform, meterDb, tracking, trackingSource, onTrackRegion, onCancelTracking, reviewUrl, onReview, onCloseReview }: {
+  disabled, selectedKey, onSelect, onTransform, meterDb, tracking, trackingSource, onTrackRegion, onCancelTracking, reviewUrl, onReview, onCloseReview,
+  proxyAssets, proxyEnabled, proxyBuilding, proxyCurrent, onToggleProxy, onBuildProxy }: {
+  proxyAssets: ReadonlySet<number>;
+  proxyEnabled: boolean;
+  proxyBuilding: boolean;
+  proxyCurrent: boolean;
+  onToggleProxy: () => void;
+  onBuildProxy?: () => void;
   reviewUrl?: string;
   onReview: () => void;
   onCloseReview: () => void;
@@ -102,6 +109,8 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
       { label: "Xem nguồn", checked: !frameMode, action: () => { onCloseReview(); onMode(false); } },
       { label: "Xem timeline", checked: frameMode && !reviewUrl, action: () => { onCloseReview(); onMode(true); } },
       { label: "Xem màu và hiệu ứng khi xuất", disabled: disabled || total < 100, action: onReview },
+      { label: "Dùng proxy xem trước", checked: proxyEnabled, action: onToggleProxy },
+      { label: "Tạo proxy cho video đang chọn", disabled: !onBuildProxy || proxyBuilding, action: () => onBuildProxy?.() },
       "separator", { label: "Vừa khung", disabled: !!reviewUrl || !frameMode, action: () => setZoom(100) },
       { label: "Toàn màn hình", action: fullscreen },
     ] });
@@ -111,6 +120,7 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
         <button type="button" aria-pressed={!frameMode} onClick={() => { onCloseReview(); onMode(false); }}>Nguồn</button>
         <button type="button" aria-pressed={frameMode && !reviewUrl} onClick={() => { onCloseReview(); onMode(true); }}>Bản dựng</button>
         <button type="button" aria-pressed={!!reviewUrl} disabled={disabled || total < 100} onClick={onReview} title="Dùng bộ máy xuất để xem tối đa 20 giây từ playhead">Xem bản xuất</button>
+        <button type="button" aria-pressed={proxyEnabled} onClick={onToggleProxy} title="Tự tạo proxy 720p cho video nặng đang xem">{proxyBuilding ? "Đang tạo proxy…" : proxyCurrent && proxyEnabled ? "Proxy 720p" : "Proxy"}</button>
       </div>
     </div>
     {reviewUrl ? <div className="studio-stage rendered-review" ref={stage}>
@@ -118,7 +128,7 @@ export function EditorPlayer({ source, clips, laneControls, aspect, at, total, r
     </div> : frameMode ? <div className="studio-stage" ref={stage} style={{ "--viewer-zoom": zoom / 100 } as CSSProperties}>
       <div className="studio-stage-inner">
         {clips.length ? <CompositionFrame clips={clips} laneControls={laneControls} aspect={aspect} at={Math.min(at, Math.max(0, total - 1))} revision={revision} playing={playing}
-          selectedKey={selectedKey} editable={!disabled} onSelect={onSelect} onTransform={onTransform} />
+          selectedKey={selectedKey} editable={!disabled} onSelect={onSelect} onTransform={onTransform} proxyAssets={proxyAssets} />
           : <div className="player-empty"><Icon name="play" size={34} /><span>Thêm media để xem bản dựng</span></div>}
       </div>
       {tracking && <div className="track-overlay" onPointerDown={trackDown} onPointerMove={trackMove} onPointerUp={trackUp}

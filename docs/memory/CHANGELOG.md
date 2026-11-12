@@ -1,6 +1,13 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-070
+Snapshot: 2026-11-12/EDITOR-080
+
+## 2026-11-12 · Editor 0.8.0
+
+- M1-K quét toàn đoạn video trên timeline theo khối, giải mã/thu nhỏ bằng CUDA hoặc VideoToolbox khi hỗ trợ, có đường giải mã phần mềm. Giữ nguồn nếu phân tích không đủ, phân bổ thời lượng cho nhiều tệp trước và giữ một hoặc nhiều lớp âm thanh của bản dựng theo nhịp.
+- M5-A có proxy H.264 720p tự tạo nền khi xem video nặng và bỏ filter CSS trung tính khỏi trình phát. Render và Xem bản xuất đọc nguồn gốc.
+- M1-L có Lưu/Mở tệp dự án `.dtedit` tại thư mục người dùng chọn, giữ timeline và LUT, đối chiếu lại nguồn theo thư viện và grant.
+- M5-B đóng gói runtime `rembg` 2.0.87 và model `u2netp` cho Windows x64, Mac arm64 và Mac x86_64. Giữ schema SQLite 10 và timeline v3.
 
 ## 2026-11-12 · Editor 0.7.0
 

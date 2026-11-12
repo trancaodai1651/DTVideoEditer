@@ -263,6 +263,41 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+pub(crate) fn has_alpha(binary: &Path, path: &Path, format: &MediaFormat) -> bool {
+    let mut cmd = command(binary);
+    cmd.args(["-v", "error"])
+        .args(format.input_args())
+        .args([
+            "-select_streams",
+            "V:0",
+            "-show_entries",
+            "stream=pix_fmt:stream_tags=alpha_mode",
+            "-of",
+            "csv=p=0",
+            "-i",
+        ])
+        .arg(path);
+    capture(cmd, PROBE_TIMEOUT).is_some_and(|bytes| {
+        let text = String::from_utf8_lossy(&bytes);
+        let mut fields = text.trim().split(',');
+        let pixel = fields.next().unwrap_or_default();
+        ["yuva", "rgba", "bgra", "argb", "abgr", "gbrap", "ya"]
+            .iter()
+            .any(|prefix| pixel.starts_with(prefix))
+            || fields.any(|tag| tag == "1")
+    })
+}
+
+pub(crate) fn hardware_decoder() -> Option<&'static str> {
+    if cfg!(target_os = "windows") {
+        Some("d3d11va")
+    } else if cfg!(target_os = "macos") {
+        Some("videotoolbox")
+    } else {
+        None
+    }
+}
+
 pub fn tool_ready(path: Option<&Path>) -> bool {
     path.is_some_and(|path| {
         let mut cmd = command(path);

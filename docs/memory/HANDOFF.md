@@ -1,12 +1,30 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-070
+Snapshot: 2026-11-12/EDITOR-080
 
 ## Điểm vào cho Claude Code hoặc Codex
 
 Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [module editor](modules/editor.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có giao diện, thao tác và chức năng tương đương CapCut Desktop, và đã cho phép push lên `origin`, chạy GitHub Actions và build bộ cài. DT_Edit dùng bố cục và luồng thao tác tương tự nhưng giao diện, tên và tài nguyên là của riêng dự án, không sao chép thương hiệu hay asset CapCut. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker, native drop hoặc phân tích media.
 
 Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu, thử các ca còn mở trong [backlog](TASK_BACKLOG.md) và mục bên dưới trên Windows/macOS.
+
+## Bản 0.8.0
+
+- **M1-K.** Bản 0.7.0 bỏ clip khi FFmpeg báo lỗi và một cảnh ưu tiên có thể dùng hết thời lượng. Bản mới quét từng khối 120 giây cho đến hết khoảng video trên timeline, trả số mili giây đã đọc và số khối dùng giải mã GPU. Ưu tiên CUDA hoặc VideoToolbox để giải mã/thu nhỏ, rồi thử giải mã GPU với resize CPU và cuối cùng CPU hoàn toàn. Xếp điểm bằng chuyển động, ánh sáng và RMS. Nếu còn đoạn chưa đọc, app giữ clip và hiện thông báo. Dành thời lượng cho nhiều asset khác nhau trước khi thêm cảnh từ cùng nguồn. Chế độ **Dựng theo âm thanh** lấy nhịp từ một clip hoặc các clip đang phát trên track âm thanh, giữ overlap và layer. Giới hạn 96 clip hình đầu vào, 120 giây đầu ra. [Analysis](../../apps/desktop/src-tauri/src/analysis.rs) · [Montage](../../apps/desktop/src/montage.ts)
+- **M5-A.** Proxy mặc định bật, chạy nền khi nguồn đang xem rộng ≥2560 hoặc cao ≥1440. Tạo thủ công từ menu chuột phải của trình phát. Proxy H.264 720p/30fps giữ tiếng AAC và cache theo ID/kích thước/mtime. Kiểm tra lại grant khi đọc byte range. Kết xuất và phân tích dùng nguồn gốc. Video alpha dùng nguồn gốc. [Proxy](../../apps/desktop/src-tauri/src/proxy.rs)
+- **M1-L.** Menu **Dự án** có **Lưu dự án thành tệp…** và **Mở tệp dự án…**. Bản `.dtedit` chứa timeline v3, LUT và đường dẫn nguồn tại thời điểm lưu. Bản mở tạo dự án mới và remap asset ID khi đã cấp quyền cho đúng tệp. SQLite vẫn là nơi tự lưu bản đang biên tập. [Project file](../../apps/desktop/src-tauri/src/project_file.rs)
+- **M5-B.** Bộ cài đóng gói Python riêng, `rembg` 2.0.87 và `u2netp.onnx`, giải nén runtime theo kiến trúc khi xóa nền lần đầu. Windows x64 và cả hai kiến trúc macOS có tar riêng. Bản phát triển vẫn nhận CLI trên PATH. FFmpeg/FFprobe vẫn dùng cài đặt của máy. [Packaging](../../scripts/package-rembg.py) · [Workflow](../../.github/workflows/installers.yml)
+
+**Kiểm chứng**
+
+- `pnpm test:native` có 34 test đạt và `pnpm test:media` có 9 test đạt. Thêm ca nguồn 125 giây có cảnh cuối bắt đầu 122 giây, proxy 4K có 720p và AAC cùng thời lượng, media protocol trả 206/404 trước/sau thu hồi, tệp `.dtedit` remap ID và từ chối nguồn đã thu hồi.
+- Test montage Node kiểm tra clip phân tích lỗi vẫn có đoạn đầu ra, ba tệp có mặt với ngân sách 3,2 giây, một WAV và ba lớp tiếng chồng/đặt lệch.
+- GPU Windows RTX 2070 SUPER chạy `scale_cuda` trên video 3840×2160. Tệp proxy 720p được FFprobe kiểm tra riêng. Đây là fixture, chưa đo tốc độ của tệp gốc trong ảnh báo lỗi.
+
+**Còn mở**
+
+- Đo độ mượt proxy trên dự án 4K nhiều lớp và macOS, chạy trên tệp camera/VFR hoặc HDR thực, thêm quản lý dung lượng cache. M1-H8 còn preset và thao tác trong khảo sát. Live test Claude/HeyGen vẫn cần API key.
+- Tệp `.dtedit` tham chiếu đúng đường dẫn nguồn. Nếu media đã được chuyển sang thư mục khác thì cần luồng gán lại đường dẫn ở phiên sau.
 
 ## Bản 0.7.0
 

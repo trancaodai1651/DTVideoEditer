@@ -99,7 +99,9 @@ export const hasSvgColor = (look: Partial<ClipLook>) => !!tonePoints(look) || !!
 export function cssColor(look: Partial<ClipLook>, filterId?: string) {
   const temperature = look.temperature ?? 0;
   const parts = [
-    `brightness(${1 + (look.brightness ?? 0) / 100})`, `contrast(${look.contrast ?? 100}%)`, `saturate(${look.saturation ?? 100}%)`,
+    look.brightness ? `brightness(${1 + look.brightness / 100})` : "",
+    look.contrast !== undefined && look.contrast !== 100 ? `contrast(${look.contrast}%)` : "",
+    look.saturation !== undefined && look.saturation !== 100 ? `saturate(${look.saturation}%)` : "",
     temperature > 0 ? `sepia(${temperature / 250})` : temperature < 0 ? `sepia(${-temperature / 350}) hue-rotate(160deg)` : "",
     look.hue ? `hue-rotate(${look.hue}deg)` : "",
     filterId && hasSvgColor(look) ? `url(#${filterId})` : "",

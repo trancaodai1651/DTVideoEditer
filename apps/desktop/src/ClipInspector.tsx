@@ -296,7 +296,7 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
   </section>;
 }
 
-function useMediaClock(clip: Clip, at: number, playing: boolean, revision: number) {
+function useMediaClock(clip: Clip, at: number, playing: boolean, revision: number, proxy = false) {
   const player = useRef<HTMLMediaElement | null>(null);
   const position = sourcePosition(clip, at);
   const still = clip.look?.freezeAtMs !== undefined;
@@ -323,13 +323,14 @@ function useMediaClock(clip: Clip, at: number, playing: boolean, revision: numbe
     if (element.readyState >= 1) seek();
     element.addEventListener("loadedmetadata", seek);
     return () => element.removeEventListener("loadedmetadata", seek);
-  }, [time, revision, runs, rate, volume]);
+  }, [time, revision, runs, rate, volume, proxy]);
   return player;
 }
 
 type TransformMode = "move" | "scale" | "rotate";
 
-function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable, selected, onTransform, live, blend, shade, adjust }: {
+function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable, selected, onTransform, live, blend, shade, adjust, proxy }: {
+  proxy: boolean;
   adjust: string;
   clip: Clip; at: number; revision: number; playing: boolean; aspectRatio: number; editable: boolean; selected: boolean;
   onTransform: (event: PointerEvent<HTMLElement>, clip: Clip, mode: TransformMode) => void;
@@ -338,8 +339,8 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
   blend: number;
   shade: number;
 }) {
-  const player = useMediaClock(clip, at, playing, revision);
-  const src = mediaUrl("source", clip.assetId, revision);
+  const player = useMediaClock(clip, at, playing, revision, proxy);
+  const src = mediaUrl(proxy ? "proxy" : "source", clip.assetId, revision);
   const look = live ? { ...defaultLook, ...clip.look } : lookAt(clip, at);
   const fade = Math.min(look.fadeMs, clipLength(clip) / 2);
   const opacity = look.opacity / 100 * blend * (fade ? Math.min(1, at / fade, (clipLength(clip) - at) / fade) : 1);
@@ -356,7 +357,7 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
   };
   const filterId = `cf-${clip.key}`;
   const style = {
-    opacity, filter: `${cssColor(look, filterId)}${effect} brightness(${shade})${adjust}`,
+    opacity, filter: `${cssColor(look, filterId)}${effect}${shade === 1 ? "" : ` brightness(${shade})`}${adjust}`.trim() || undefined,
     transform: look.flip ? "scaleX(-1)" : undefined,
     clipPath: look.ellipse ? "ellipse(50% 50%)" : undefined,
   };
@@ -380,7 +381,8 @@ function AudioFrame({ clip, at, revision, playing }: { clip: Clip; at: number; r
   return <audio ref={(element) => { player.current = element; }} src={mediaUrl("source", clip.assetId, revision)} preload="auto" />;
 }
 
-export function CompositionFrame({ clips, laneControls, aspect, at, revision, playing, selectedKey, editable, onSelect, onTransform }: {
+export function CompositionFrame({ clips, laneControls, aspect, at, revision, playing, selectedKey, editable, onSelect, onTransform, proxyAssets }: {
+  proxyAssets: ReadonlySet<number>;
   clips: Clip[]; laneControls: LaneControl[]; aspect: Aspect; at: number; revision: number; playing: boolean; selectedKey: string | null; editable: boolean;
   onSelect: (key: string | null) => void; onTransform: (clip: Clip) => void;
 }) {
@@ -484,6 +486,7 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
       const shade = Math.min(1, incoming?.kind === "black" ? 2 * elapsed / incoming.durationMs : 1,
         outgoing ? 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 1);
       return <VisualFrame key={clip.key} clip={clip} at={elapsed} revision={revision} playing={playing && !frozen} adjust={adjustCss}
+        proxy={clip.kind === "video" && proxyAssets.has(clip.assetId)}
         muted={frozen || !!controls?.muted || !!clip.look?.audioDetached} aspectRatio={size} editable={editable && !playing && !frozen && !controls?.locked} selected={clip.key === selectedKey}
         onTransform={begin} live={draft?.key === clip.key} blend={blend} shade={shade} />;
     })}

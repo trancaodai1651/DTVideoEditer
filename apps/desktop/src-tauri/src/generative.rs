@@ -208,6 +208,7 @@ pub fn remove_background(
     asset_id: i64,
     start_ms: i64,
     end_ms: i64,
+    runtime: Option<(&Path, &Path)>,
 ) -> Result<PathBuf> {
     let asset = store
         .source(asset_id, false)?
@@ -232,9 +233,7 @@ pub fn remove_background(
             "Trim video thành đoạn từ 0,5 đến 8 giây để xóa nền trên máy.",
         ));
     }
-    let binary = probe::find_tool("rembg").ok_or(StudioError::Input(
-        "Cài rembg[cpu,cli] và thêm rembg vào PATH để xóa nền trên máy.",
-    ))?;
+    let engine = Segmenter::open(runtime)?;
     std::fs::create_dir_all(folder)?;
     let folder = dunce::canonicalize(folder)?;
     let output = tempfile::Builder::new()
@@ -243,13 +242,9 @@ pub fn remove_background(
         .tempfile_in(folder)?
         .into_temp_path();
     if video {
-        segment_video(&binary, &source, &output, start_ms, end_ms)?;
+        segment_video(&engine, &source, &output, start_ms, end_ms)?;
     } else {
-        let mut cmd = probe::command(binary);
-        cmd.args(["i", "-m", "u2netp"])
-            .arg(&source)
-            .arg(output.as_os_str())
-            .env("OMP_NUM_THREADS", "2");
+        let cmd = engine.command("i", &source, &output);
         probe::capture_limited(cmd, Duration::from_secs(180), 4096).ok_or(StudioError::Input(
             "rembg không tạo được ảnh. Kiểm tra mô hình U²-Net và cấu hình CLI.",
         ))?;
@@ -272,8 +267,96 @@ pub fn remove_background(
     output.keep().map_err(|error| error.error.into())
 }
 
+enum Segmenter {
+    Bundled {
+        python: PathBuf,
+        driver: PathBuf,
+        cache: PathBuf,
+    },
+    Cli(PathBuf),
+}
+
+impl Segmenter {
+    fn open(runtime: Option<(&Path, &Path)>) -> Result<Self> {
+        if let Some((resources, data)) = runtime {
+            let system = if cfg!(windows) { "windows" } else { "macos" };
+            let target = format!("{system}-{}", std::env::consts::ARCH);
+            let archive = resources.join("rembg").join(format!("{target}.tar.gz"));
+            if archive.is_file() {
+                let root = data.join(format!("rembg-2.0.87-v1-{target}"));
+                let python_path = if cfg!(windows) {
+                    "python/python.exe"
+                } else {
+                    "python/bin/python3.12"
+                };
+                if !root.join(python_path).is_file() || !root.join("driver.py").is_file() {
+                    std::fs::create_dir_all(data)?;
+                    let stage = tempfile::Builder::new()
+                        .prefix("rembg-install-")
+                        .tempdir_in(data)?;
+                    let tar = if cfg!(windows) {
+                        PathBuf::from(
+                            std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()),
+                        )
+                        .join("System32/tar.exe")
+                    } else {
+                        PathBuf::from("/usr/bin/tar")
+                    };
+                    let mut extract = probe::command(tar);
+                    extract.arg("-xzf").arg(archive).arg("-C").arg(stage.path());
+                    if probe::capture_limited(extract, Duration::from_secs(180), 4096).is_none()
+                        || !stage.path().join(python_path).is_file()
+                        || !stage.path().join("driver.py").is_file()
+                        || !stage.path().join("models/u2netp/u2netp.onnx").is_file()
+                    {
+                        return Err(StudioError::Input(
+                            "Không giải nén được mô hình xóa nền đi kèm bản cài.",
+                        ));
+                    }
+                    std::fs::rename(stage.path(), &root)?;
+                }
+                return Ok(Self::Bundled {
+                    python: root.join(python_path),
+                    driver: root.join("driver.py"),
+                    cache: root.join("cache"),
+                });
+            }
+        }
+        probe::find_tool("rembg")
+            .map(Self::Cli)
+            .ok_or(StudioError::Input(
+                "Cài bản đóng gói có rembg hoặc thêm rembg[cpu,cli] vào PATH cho bản phát triển.",
+            ))
+    }
+
+    fn command(&self, mode: &str, source: &Path, output: &Path) -> std::process::Command {
+        let mut command = match self {
+            Self::Bundled {
+                python,
+                driver,
+                cache,
+            } => {
+                let mut command = probe::command(python);
+                command
+                    .args(["-I", "-B"])
+                    .arg(driver)
+                    .arg(mode)
+                    .env("NUMBA_CACHE_DIR", cache);
+                command
+            }
+            Self::Cli(binary) => {
+                let mut command = probe::command(binary);
+                command.args([mode, "-m", "u2netp"]);
+                command
+            }
+        };
+        command.arg(source).arg(output).env("OMP_NUM_THREADS", "2");
+        command
+    }
+}
+
 fn segment_video(
-    binary: &Path,
+    engine: &Segmenter,
     source: &Path,
     output: &Path,
     start_ms: i64,
@@ -298,12 +381,7 @@ fn segment_video(
     probe::capture_limited(extract, Duration::from_secs(45), 4096).ok_or(StudioError::Input(
         "FFmpeg chưa đọc được khung hình để xóa nền.",
     ))?;
-    let mut rembg = probe::command(binary);
-    rembg
-        .args(["p", "-m", "u2netp"])
-        .arg(&frames)
-        .arg(&masks)
-        .env("OMP_NUM_THREADS", "2");
+    let rembg = engine.command("p", &frames, &masks);
     probe::capture_limited(rembg, Duration::from_secs(240), 64 * 1024).ok_or(
         StudioError::Input("rembg không tạo được các khung trong suốt."),
     )?;

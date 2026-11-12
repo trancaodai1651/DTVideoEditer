@@ -62,13 +62,17 @@ fn seconds(ms: i64) -> String {
 pub fn level_bytes(samples: &[u8]) -> Vec<u8> {
     let window = LEVEL_RATE * LEVEL_STEP_MS as usize / 1000;
     samples
-        .chunks_exact(2)
-        .map(|pair| f64::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
-        .collect::<Vec<_>>()
-        .chunks(window)
+        .chunks(window * 2)
+        .filter(|chunk| chunk.len() >= 2)
         .map(|chunk| {
-            let power =
-                chunk.iter().map(|sample| sample * sample).sum::<f64>() / chunk.len() as f64;
+            let power = chunk
+                .chunks_exact(2)
+                .map(|pair| {
+                    let sample = f64::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0;
+                    sample * sample
+                })
+                .sum::<f64>()
+                / (chunk.len() / 2) as f64;
             let db = 10.0 * power.max(1e-12).log10();
             ((db + 60.0) / 60.0 * 255.0).round().clamp(0.0, 255.0) as u8
         })
@@ -190,7 +194,15 @@ pub struct Shot {
 const SHOT_STEP_MS: i64 = 250;
 const SHOT_PIXELS: usize = 64 * 36 * 3;
 const SHOT_WINDOW_MS: i64 = 5000;
-pub const MAX_SHOT_SCAN_MS: i64 = 30 * 60 * 1000;
+const SHOT_CHUNK_MS: i64 = 120_000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShotAnalysis {
+    pub shots: Vec<Shot>,
+    pub scanned_ms: i64,
+    pub hardware_chunks: usize,
+}
 
 fn shots_from_frames(frames: &[u8], scanned_ms: i64, levels: &[u8]) -> Vec<Shot> {
     let mut shots = Vec::new();
@@ -223,9 +235,14 @@ fn shots_from_frames(frames: &[u8], scanned_ms: i64, levels: &[u8]) -> Vec<Shot>
         count += 1;
         previous = Some(frame);
     }
-    let end = scanned_ms.min((frames.len() / SHOT_PIXELS) as i64 * SHOT_STEP_MS);
-    if end - start >= 500 && count > 0 {
-        shots.push(scored_shot(start, end, motion, exposure, count, levels));
+    if count > 0 {
+        if scanned_ms - start >= crate::timeline::MIN_CLIP_MS {
+            shots.push(scored_shot(
+                start, scanned_ms, motion, exposure, count, levels,
+            ));
+        } else if let Some(last) = shots.last_mut() {
+            last.end_ms = scanned_ms;
+        }
     }
     shots
 }
@@ -261,21 +278,129 @@ pub fn analyze_shots(
     asset_id: i64,
     start_ms: i64,
     end_ms: i64,
-) -> Result<Vec<Shot>> {
+) -> Result<ShotAnalysis> {
     let (asset, path, format) = source(store, asset_id, &["video"])?;
     if start_ms < 0
         || end_ms > asset.duration_ms.unwrap_or(0)
-        || end_ms.saturating_sub(start_ms) < 500
+        || end_ms.saturating_sub(start_ms) < crate::timeline::MIN_CLIP_MS
     {
         return Err(StudioError::Input(
-            "Video cần dài từ 0,5 giây để chọn cảnh.",
+            "Khoảng thời gian phân tích nằm ngoài clip nguồn.",
         ));
     }
-    let duration = (end_ms - start_ms).min(MAX_SHOT_SCAN_MS);
-    let mut command = ffmpeg()?;
+    let Some(binary) = probe::find_tool("ffmpeg") else {
+        return Err(StudioError::Input(
+            "Cần FFmpeg trong PATH để phân tích cảnh.",
+        ));
+    };
+    let audio = levels(store, asset_id).unwrap_or_default();
+    let mut analysis = ShotAnalysis {
+        shots: Vec::new(),
+        scanned_ms: 0,
+        hardware_chunks: 0,
+    };
+    let mut scaled_hardware = if cfg!(windows) {
+        Some("cuda")
+    } else if cfg!(target_os = "macos") {
+        Some("videotoolbox_vld")
+    } else {
+        None
+    };
+    let mut hardware = probe::hardware_decoder();
+    let mut at = start_ms;
+    while at < end_ms {
+        let duration = (end_ms - at).min(SHOT_CHUNK_MS);
+        let scaled = scaled_hardware
+            .and_then(|decoder| shot_frames(&binary, &path, &format, at, duration, Some(decoder)));
+        if scaled.is_none() {
+            scaled_hardware = None;
+        }
+        let fast = scaled.or_else(|| {
+            hardware.and_then(|decoder| {
+                shot_frames(&binary, &path, &format, at, duration, Some(decoder))
+            })
+        });
+        let frames = if let Some(frames) = fast {
+            analysis.hardware_chunks += 1;
+            Some(frames)
+        } else {
+            hardware = None;
+            shot_frames(&binary, &path, &format, at, duration, None)
+        };
+        if let Some(frames) = frames {
+            let sampled = (frames.len() / SHOT_PIXELS) as i64 * SHOT_STEP_MS;
+            let covered = if sampled + SHOT_STEP_MS >= duration {
+                duration
+            } else {
+                sampled
+            };
+            let first_level = (at / LEVEL_STEP_MS) as usize;
+            let mut shots = shots_from_frames(
+                &frames,
+                covered,
+                audio.get(first_level..).unwrap_or_default(),
+            );
+            for shot in &mut shots {
+                shot.start_ms += at;
+                shot.end_ms += at;
+            }
+            analysis.scanned_ms += covered;
+            analysis.shots.extend(shots);
+        }
+        at += duration;
+    }
+    let current = store
+        .source(asset_id, false)?
+        .ok_or(StudioError::Input("Đã thu hồi media trong lúc phân tích."))?;
+    if authorized_asset(&current)?.0 != path {
+        return Err(StudioError::Input("Nguồn media đã thay đổi."));
+    }
+    Ok(analysis)
+}
+
+fn shot_frames(
+    binary: &std::path::Path,
+    path: &std::path::Path,
+    format: &MediaFormat,
+    start: i64,
+    duration: i64,
+    decoder: Option<&str>,
+) -> Option<Vec<u8>> {
+    let mut command = probe::command(binary);
+    command.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-filter_threads",
+        "2",
+        "-threads",
+        "4",
+    ]);
+    let filter = match decoder {
+        Some("cuda") => {
+            command.args(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]);
+            "scale_cuda=64:36:format=yuv420p,hwdownload,format=yuv420p,fps=4,format=rgb24"
+        }
+        Some("videotoolbox_vld") => {
+            command.args([
+                "-hwaccel",
+                "videotoolbox",
+                "-hwaccel_output_format",
+                "videotoolbox_vld",
+            ]);
+            "scale_vt=w=64:h=36:format=nv12,hwdownload,format=nv12,fps=4,format=rgb24"
+        }
+        decoder => {
+            if let Some(decoder) = decoder {
+                command.args(["-hwaccel", decoder]);
+            }
+            "fps=4,scale=64:36:flags=area,format=rgb24"
+        }
+    };
     command
         .args(format.input_args())
-        .args(["-ss", &seconds(start_ms), "-i"])
+        .args(["-ss", &seconds(start), "-i"])
         .arg(path)
         .args([
             "-map",
@@ -286,7 +411,7 @@ pub fn analyze_shots(
             "-t",
             &seconds(duration),
             "-vf",
-            "fps=4,scale=64:36:flags=area,format=rgb24",
+            filter,
             "-threads",
             "1",
             "-f",
@@ -294,24 +419,8 @@ pub fn analyze_shots(
             "pipe:1",
         ]);
     let limit = (duration.div_euclid(SHOT_STEP_MS) as usize + 2) * SHOT_PIXELS;
-    let frames = probe::capture_limited(command, Duration::from_secs(180), limit).ok_or(
-        StudioError::Input("FFmpeg không đọc được hình để chọn cảnh."),
-    )?;
-    let audio = levels(store, asset_id).unwrap_or_default();
-    let first_level = (start_ms / LEVEL_STEP_MS) as usize;
-    let mut shots = shots_from_frames(
-        &frames,
-        duration,
-        audio.get(first_level..).unwrap_or_default(),
-    );
-    for shot in &mut shots {
-        shot.start_ms += start_ms;
-        shot.end_ms += start_ms;
-    }
-    if shots.is_empty() {
-        return Err(StudioError::Input("Không tìm thấy đoạn hình đủ dài."));
-    }
-    Ok(shots)
+    probe::capture_limited(command, Duration::from_secs(180), limit)
+        .filter(|frames| frames.len() >= SHOT_PIXELS)
 }
 
 /// The area to follow, in thousandths of the frame.

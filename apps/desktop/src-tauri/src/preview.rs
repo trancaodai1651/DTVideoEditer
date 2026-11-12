@@ -70,13 +70,14 @@ pub fn render_review(store: &Store, project_id: i64, start_ms: i64) -> Result<Re
 
 #[cfg(test)]
 pub fn serve(store: &Store, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    serve_with_review(store, request, None)
+    serve_with_review(store, request, None, None)
 }
 
 pub fn serve_with_review(
     store: &Store,
     request: Request<Vec<u8>>,
     review: Option<&RenderedReview>,
+    proxy_root: Option<&Path>,
 ) -> Response<Vec<u8>> {
     let origin = request
         .headers()
@@ -90,7 +91,7 @@ pub fn serve_with_review(
     }) {
         return empty(StatusCode::FORBIDDEN);
     }
-    let mut response = media_response(store, &request, review);
+    let mut response = media_response(store, &request, review, proxy_root);
     if let Some(origin) = request.headers().get(header::ORIGIN) {
         response
             .headers_mut()
@@ -106,6 +107,7 @@ fn media_response(
     store: &Store,
     request: &Request<Vec<u8>>,
     review: Option<&RenderedReview>,
+    proxy_root: Option<&Path>,
 ) -> Response<Vec<u8>> {
     let head = *request.method() == Method::HEAD;
     if !head && *request.method() != Method::GET {
@@ -142,7 +144,11 @@ fn media_response(
     }
     let thumbnail = route == "thumbnail";
     if asset_id < 1
-        || (!thumbnail && !matches!(route, "source" | "render" | "waveform" | "filmstrip"))
+        || (!thumbnail
+            && !matches!(
+                route,
+                "source" | "proxy" | "render" | "waveform" | "filmstrip"
+            ))
     {
         return empty(StatusCode::NOT_FOUND);
     }
@@ -194,6 +200,11 @@ fn media_response(
     let Some(format) = MediaFormat::for_path(&path) else {
         return empty(StatusCode::NOT_FOUND);
     };
+    if route == "proxy"
+        && let Some(proxy) = proxy_root.and_then(|root| crate::proxy::ready(store, root, asset_id))
+    {
+        return file_response(&proxy, "video/mp4", head, request);
+    }
     file_response(&path, format.mime(&source.kind), head, request)
 }
 

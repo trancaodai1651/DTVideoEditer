@@ -23,7 +23,7 @@ import { TemplateLibrary } from "./TemplateLibrary";
 import { MontagePanel } from "./MontagePanel";
 import { AvatarPanel } from "./AvatarPanel";
 import { montageSnapshot } from "./montage";
-import type { MontageSource, MontageStyle } from "./montage";
+import type { MontageSound, MontageSource, MontageStyle } from "./montage";
 import { vi } from "./vi";
 
 type View = "library" | "queue" | "publish" | "settings";
@@ -33,6 +33,8 @@ const viewName: Record<View, string> = {
 type Notice = { text: string; error: boolean };
 const EMPTY_PAGE: AssetPage = { items: [], total: 0, pageSize: 48 };
 const isActive = (job: RenderJob) => job.status === "queued" || job.status === "running";
+const needsProxy = (media: { kind: string; width?: number | null; height?: number | null }) =>
+  media.kind === "video" && ((media.width ?? 0) >= 2560 || (media.height ?? 0) >= 1440);
 
 /** The preview target for a clip, seeked to the source frame under the playhead. */
 function clipSelection(clip: Clip, playheadMs: number): Selection | null {
@@ -95,6 +97,10 @@ export function App() {
   const [review, setReview] = useState<{ id: number; projectId: number; history: History; aspect: Aspect; lanes: LaneControl[]; revision: number } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [libraryRevision, setLibraryRevision] = useState(0);
+  const [proxyEnabled, setProxyEnabled] = useState(() => storedNumber("dt-edit-proxy", 1, 0, 1) === 1);
+  const [proxyResults, setProxyResults] = useState<Record<number, { revision: number; ready: boolean }>>({});
+  const [proxyBuilding, setProxyBuilding] = useState(false);
+  const proxyWorking = useRef(false);
   const [timelineRevision, setTimelineRevision] = useState(0);
   const [ready, setReady] = useState(false);
   const [loadedTimeline, setLoadedTimeline] = useState<{ id: number; revision: number } | null>(null);
@@ -111,6 +117,42 @@ export function App() {
     && (loadedTimeline?.id !== projectId || loadedTimeline.revision !== timelineRevision));
   const clips = history.present;
   const selectedClip = clips.find((clip) => clip.key === selectedKey);
+  const proxyAssets = new Set(proxyEnabled ? Object.keys(proxyResults).map(Number)
+    .filter((id) => proxyResults[id].revision === libraryRevision && proxyResults[id].ready) : []);
+  const activeVideos = frameMode ? clips.filter((clip) => clip.kind === "video" && clip.track === "video" && clip.available
+    && !clip.look?.disabled && !clipLane(laneControls, clip)?.hidden && clip.positionMs <= playheadMs && clipFinish(clip) > playheadMs)
+    : selection ? [selection] : [];
+  const nextProxy = activeVideos.find((clip) => needsProxy(clip) && proxyResults[clip.assetId]?.revision !== libraryRevision)?.assetId;
+  const proxyTarget = frameMode ? (selectedClip?.kind === "video" ? selectedClip.assetId : activeVideos[0]?.assetId)
+    : selection?.kind === "video" ? selection.assetId : undefined;
+
+  function toggleProxy() {
+    const enabled = !proxyEnabled;
+    setProxyEnabled(enabled);
+    try { localStorage.setItem("dt-edit-proxy", enabled ? "1" : "0"); } catch { /* session preference still applies */ }
+  }
+
+  function requestProxy(assetId: number, manual = false) {
+    if (!desktop || proxyWorking.current) return;
+    proxyWorking.current = true;
+    setProxyBuilding(true);
+    if (manual && !proxyEnabled) toggleProxy();
+    void api.prepareProxy(assetId).then(() => {
+      setProxyResults((items) => ({ ...items, [assetId]: { revision: libraryRevision, ready: true } }));
+      if (manual) setNotice({ text: "Proxy 720p đã sẵn sàng trong trình phát.", error: false });
+    }).catch((error: unknown) => {
+      setProxyResults((items) => ({ ...items, [assetId]: { revision: libraryRevision, ready: false } }));
+      setNotice({ text: `${manual ? "Không tạo được proxy" : "Đang dùng video gốc"}. ${String(error)}`, error: manual });
+    }).finally(() => {
+      proxyWorking.current = false;
+      setProxyBuilding(false);
+    });
+  }
+
+  const autoProxy = useEffectEvent((id: number) => requestProxy(id));
+  useEffect(() => {
+    if (proxyEnabled && nextProxy !== undefined && !proxyBuilding) autoProxy(nextProxy);
+  }, [proxyEnabled, nextProxy, proxyBuilding]);
   const total = totalMs(clips);
   const marks = rangeMarks?.projectId === projectId ? rangeMarks : null;
   const exportRange: ExportRange | undefined = marks
@@ -259,28 +301,52 @@ export function App() {
 
   const montageInputs = clips.filter((clip) => clip.track === "video" && clip.available && !clip.look?.disabled
     && !clipLane(laneControls, clip)?.hidden && (clip.kind === "image" || clip.kind === "video"));
-  const montageAudio = clips.filter((clip) => clip.track === "audio" && clip.kind === "audio" && clip.available && !clip.look?.disabled);
+  const montageAudio = clips.filter((clip) => clip.track === "audio" && clip.available && !clip.look?.disabled
+    && !clipLane(laneControls, clip)?.muted && (clip.kind === "audio" || (clip.kind === "video" && clip.look?.audioLink)));
 
-  function buildMontage(style: MontageStyle, seconds: number, sound?: Clip) {
+  function buildMontage(style: MontageStyle, seconds: number, sounds: Clip[]) {
     if (editsDisabled || !project || !montageInputs.length) return;
     if (montageInputs.length > 96) { notify("Chia tư liệu thành các timeline có tối đa 96 clip hình để dựng tự động.", true); return; }
     const inputs = [...montageInputs].sort((a, b) => a.positionMs - b.positionMs || layerOf(a) - layerOf(b));
     void run("Đang phân tích hình và âm thanh…", async () => {
       const sources: MontageSource[] = [];
-      let failed = 0;
-      for (const clip of inputs) {
-        if (clip.kind === "image" || clip.endMs - clip.startMs < 500) { sources.push({ clip, shots: [] }); continue; }
+      let partial = 0;
+      let hardware = 0;
+      let issue = "";
+      for (const [index, clip] of inputs.entries()) {
+        if (clip.kind === "image") { sources.push({ clip, shots: [] }); continue; }
+        setBusy(`Phân tích ${index + 1}/${inputs.length} · ${fileName(clip.relativePath)}`);
         try {
-          sources.push({ clip, shots: await api.analyzeShots(clip.assetId, clip.startMs, clip.endMs) });
-        } catch { failed += 1; }
+          const result = await api.analyzeShots(clip.assetId, clip.startMs, clip.endMs);
+          hardware += result.hardwareChunks;
+          if (result.scannedMs < clip.endMs - clip.startMs || !result.shots.length) partial += 1;
+          sources.push({ clip, shots: result.shots });
+        } catch (error) {
+          issue ||= String(error);
+          partial += 1;
+          sources.push({ clip, shots: [] });
+        }
       }
-      if (!sources.length) throw new Error("Không đọc được cảnh từ các clip đã chọn. Kiểm tra FFmpeg và tệp nguồn.");
-      const soundtrack = sound ? { clip: sound, levels: await api.audioLevels(sound.assetId) } : undefined;
+      const soundtrack: MontageSound[] = [];
+      const analyzedSound = new Map<number, number[]>();
+      let unreadSound = false;
+      if (sounds.length) setBusy("Đang phân tích nhịp âm thanh…");
+      for (const clip of sounds) {
+        let levels = analyzedSound.get(clip.assetId);
+        if (!levels) {
+          levels = await api.audioLevels(clip.assetId).catch(() => { unreadSound = true; return []; });
+          analyzedSound.set(clip.assetId, levels);
+        }
+        soundtrack.push({ clip, levels });
+      }
       const snapshot = montageSnapshot(sources, aspect, seconds * 1000, style, soundtrack);
       const count = snapshot.tracks[0].clips.length;
       if (!count) throw new Error("Không có cảnh đủ dài để dựng.");
-      await openTemplateProject(`${sound ? "Theo nhịp" : "Highlight"} · ${Array.from(project.name).slice(0, 65).join("")}`, snapshot);
-      success(`Đã dựng ${count} đoạn${failed ? `, bỏ qua ${failed} clip không đọc được` : ""}.`);
+      const used = new Set(snapshot.tracks[0].clips.map((clip) => clip.assetId)).size;
+      await openTemplateProject(`${sounds.length ? "Theo nhịp" : "Highlight"} · ${Array.from(project.name).slice(0, 65).join("")}`, snapshot);
+      success(`Đã dựng ${count} đoạn từ ${used} tệp${hardware ? " · giải mã GPU" : ""}.`
+        + (partial ? ` Phân tích chưa đủ ${partial} clip, đã dùng các đoạn có sẵn.${issue ? ` ${issue}` : ""}` : "")
+        + (unreadSound ? " Có clip tiếng không đo được nhịp, âm thanh vẫn được giữ." : ""));
     });
   }
 
@@ -864,6 +930,33 @@ export function App() {
     success("Đã tạo dự án từ mẫu.");
   }
 
+  function saveProjectFile() {
+    if (!project) return;
+    if (projectMenu.current) projectMenu.current.open = false;
+    void run("Đang lưu tệp dự án…", async () => {
+      await saves.current.chain;
+      if (saves.current.failed) throw new Error("Timeline chưa lưu thành công. Thử lưu timeline trước khi ghi tệp dự án.");
+      const path = await api.saveProjectFile(project.id);
+      if (path) success(`Đã lưu dự án tại ${path}`);
+    });
+  }
+
+  function openProjectFile() {
+    if (projectMenu.current) projectMenu.current.open = false;
+    void run("Đang mở tệp dự án…", async () => {
+      await saves.current.chain;
+      const opened = await api.openProjectFile();
+      if (!opened) return;
+      setLuts(await api.luts());
+      setProjects((saved) => [opened, ...saved]);
+      setProjectId(opened.id);
+      setHistory(newHistory());
+      setView("library");
+      setTool("media");
+      success(`Đã mở dự án ${opened.name}.`);
+    });
+  }
+
   return (
     <div className="studio-shell">
       <header className="studio-top">
@@ -881,6 +974,10 @@ export function App() {
                 {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </label>
+            <div className="project-file-actions">
+              <button type="button" className="button secondary compact" disabled={editsDisabled || !project} onClick={saveProjectFile}>Lưu dự án thành tệp…</button>
+              <button type="button" className="button secondary compact" disabled={disabled} onClick={openProjectFile}>Mở tệp dự án…</button>
+            </div>
             <form onSubmit={createProject}>
               <label className="edit-field">{vi.projectName}
                 <input value={projectName} maxLength={160} required placeholder={vi.projectPlaceholder}
@@ -964,7 +1061,10 @@ export function App() {
                 && review.lanes === laneControls && review.revision === libraryRevision ? mediaUrl("review", review.id, 0) : undefined}
               onReview={buildReview} onCloseReview={() => setReview(null)}
               onCancelTracking={() => { setTracking(null); notify("Đã hủy theo dõi chuyển động.", false); }}
-              source={<Preview selection={selection} revision={libraryRevision} busy={editsDisabled}
+              proxyAssets={proxyAssets} proxyEnabled={proxyEnabled} proxyBuilding={proxyBuilding}
+              proxyCurrent={activeVideos.some((clip) => proxyAssets.has(clip.assetId))} onToggleProxy={toggleProxy}
+              onBuildProxy={proxyTarget === undefined ? undefined : () => requestProxy(proxyTarget, true)}
+              source={<Preview selection={selection} revision={libraryRevision} busy={editsDisabled} proxy={!!selection && proxyAssets.has(selection.assetId)}
               onAppend={addMedia} onReference={() => openTool("templates")} />}
               clips={clips} laneControls={laneControls} aspect={aspect} at={playheadMs} total={total} revision={libraryRevision} frameMode={frameMode} playing={playing}
               onMode={(mode) => { setFrameMode(mode); if (!mode) setPlaying(false); }}

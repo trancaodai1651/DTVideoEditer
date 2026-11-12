@@ -147,7 +147,8 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
   );
 }
 
-export function Preview({ selection, revision, busy, onAppend, onReference }: {
+export function Preview({ selection, revision, busy, onAppend, onReference, proxy }: {
+  proxy: boolean;
   selection: Selection | null;
   revision: number;
   busy: boolean;
@@ -161,7 +162,7 @@ export function Preview({ selection, revision, busy, onAppend, onReference }: {
         {selection && <span className="count-pill">{vi.media[selection.kind]}</span>}
       </div>
       <div className="monitor">
-        {selection ? <MediaPlayer key={`${selection.assetId}-${revision}`} selection={selection} revision={revision} /> : (
+        {selection ? <MediaPlayer key={`${selection.assetId}-${revision}-${proxy}`} selection={selection} revision={revision} proxy={proxy} /> : (
           <div className="empty">
             <span className="empty-icon"><Icon name="play" size={25} /></span>
             <strong>{vi.previewEmpty}</strong><p>{vi.previewHint}</p>
@@ -185,10 +186,10 @@ export function Preview({ selection, revision, busy, onAppend, onReference }: {
   );
 }
 
-function MediaPlayer({ selection, revision }: { selection: Selection; revision: number }) {
+function MediaPlayer({ selection, revision, proxy }: { selection: Selection; revision: number; proxy: boolean }) {
   const [failed, setFailed] = useState(false);
   const player = useRef<HTMLMediaElement | null>(null);
-  const src = mediaUrl("source", selection.assetId, revision);
+  const src = mediaUrl(proxy ? "proxy" : "source", selection.assetId, revision);
   const label = fileName(selection.relativePath);
   const { seekMs } = selection;
   const fail = () => setFailed(true);

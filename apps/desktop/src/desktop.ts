@@ -174,6 +174,7 @@ export interface TitleStyle {
 }
 export interface Cue { startMs: number; endMs: number; text: string }
 export interface Shot { startMs: number; endMs: number; score: number }
+interface ShotAnalysis { shots: Shot[]; scannedMs: number; hardwareChunks: number }
 export interface CatalogItem { title: string; group: "music" | "sound" | "sticker"; asset: Asset }
 export interface TitleEdit extends TitleStyle {
   positionMs: number;
@@ -337,6 +338,8 @@ export const api = {
     invoke<Cue[] | null>("transcribe_clip", { clip, language }),
   projects: () => invoke<Project[]>("list_projects"),
   createProject: (name: string) => invoke<Project>("create_project", { name }),
+  saveProjectFile: (projectId: number) => invoke<string | null>("save_project_file", { projectId }),
+  openProjectFile: () => invoke<Project | null>("open_project_file"),
   createEditedProject: (name: string, snapshot: TimelineSnapshot) =>
     invoke<Project>("create_edited_project", { name, snapshot }),
   timeline: (projectId: number) => invoke<Timeline>("load_timeline", { projectId }),
@@ -353,8 +356,9 @@ export const api = {
   tools: () => invoke<MediaTools>("media_tools"),
   /** Loudness per 50 ms, 0 = -60 dBFS or quieter, 255 = full scale. */
   audioLevels: (assetId: number) => invoke<number[]>("audio_levels", { assetId }),
-  analyzeShots: (assetId: number, startMs: number, endMs: number) => invoke<Shot[]>("analyze_shots", { assetId, startMs, endMs }),
+  analyzeShots: (assetId: number, startMs: number, endMs: number) => invoke<ShotAnalysis>("analyze_shots", { assetId, startMs, endMs }),
   renderReview: (projectId: number, startMs: number) => invoke<number>("render_review", { projectId, startMs }),
+  prepareProxy: (assetId: number) => invoke<void>("prepare_proxy", { assetId }),
   avatarKeyStatus: () => invoke<boolean>("avatar_key_status"),
   setAvatarKey: (key: string) => invoke<void>("set_avatar_key", { key }),
   createAvatarVideo: (avatar: string, voice: string, script: string) => invoke<string | null>("create_avatar_video", { avatar, voice, script }),
@@ -392,7 +396,7 @@ export const api = {
     invoke<boolean>("edit_remote_post", { accountId, remoteId, message }),
 };
 
-export function mediaUrl(route: "source" | "thumbnail" | "render" | "review" | "waveform" | "filmstrip", id: number, revision: number) {
+export function mediaUrl(route: "source" | "proxy" | "thumbnail" | "render" | "review" | "waveform" | "filmstrip", id: number, revision: number) {
   return `${convertFileSrc(`${route}-${id}`, "studio-media")}?v=${revision}`;
 }
 

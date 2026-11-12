@@ -1,6 +1,6 @@
 [package]
 name = "ai-video-studio"
-version = "0.7.0"
+version = "0.8.0"
 description = "Local-first desktop media workspace"
 edition = "2024"
 rust-version = "1.95"

@@ -8,6 +8,8 @@ mod library;
 mod model;
 mod preview;
 mod probe;
+mod project_file;
+mod proxy;
 mod publish;
 mod render;
 mod store;
@@ -51,6 +53,8 @@ struct AppState {
     render: Mutex<Option<ActiveRender>>,
     review: Mutex<Option<preview::RenderedReview>>,
     review_generation: Mutex<()>,
+    proxy_dir: PathBuf,
+    proxy_generation: Mutex<()>,
     publisher: Publisher,
 }
 
@@ -403,6 +407,85 @@ fn create_edited_project(
     )
 }
 
+#[tauri::command]
+async fn save_project_file(app: AppHandle, project_id: i64) -> CommandResult<Option<String>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let project = state
+            .store
+            .projects()?
+            .into_iter()
+            .find(|project| project.id == project_id)
+            .ok_or(StudioError::Input("Không tìm thấy dự án."))?;
+        let window = app
+            .get_webview_window("main")
+            .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
+        let name = PathBuf::from(output_name(&project.name)).with_extension("dtedit");
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Lưu dự án DT Edit")
+            .set_file_name(name.to_string_lossy().as_ref())
+            .add_filter("Dự án DT Edit", &["dtedit"])
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = file
+            .into_path()
+            .map_err(|_| StudioError::Input("Chọn tệp dự án trên máy."))?;
+        let path = if path.extension().is_none() {
+            path.with_extension("dtedit")
+        } else {
+            path
+        };
+        Ok(Some(
+            project_file::save(&state.store, &project, &path)?
+                .to_string_lossy()
+                .into_owned(),
+        ))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn open_project_file(app: AppHandle) -> CommandResult<Option<Project>> {
+    blocking(move || {
+        let window = app
+            .get_webview_window("main")
+            .ok_or(StudioError::Input("Không tìm thấy cửa sổ chính."))?;
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Mở dự án DT Edit")
+            .add_filter("Dự án DT Edit", &["dtedit"])
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        let path = file
+            .into_path()
+            .map_err(|_| StudioError::Input("Chọn tệp dự án trên máy."))?;
+        project_file::open(&app.state::<AppState>().store, &path).map(Some)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn prepare_proxy(app: AppHandle, asset_id: i64) -> CommandResult<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let _building = state
+            .proxy_generation
+            .lock()
+            .map_err(|_| StudioError::Input("Tác vụ tạo proxy bị gián đoạn."))?;
+        proxy::build(&state.store, &state.proxy_dir, asset_id)
+    })
+    .await
+}
+
 const RENDER_BUSY: StudioError = StudioError::Input("Đang xuất một video khác.");
 
 /// Drains queued snapshots one at a time, oldest first.
@@ -604,7 +687,7 @@ async fn analyze_shots(
     asset_id: i64,
     start_ms: i64,
     end_ms: i64,
-) -> CommandResult<Vec<analysis::Shot>> {
+) -> CommandResult<analysis::ShotAnalysis> {
     blocking(move || {
         analysis::analyze_shots(&app.state::<AppState>().store, asset_id, start_ms, end_ms)
     })
@@ -742,12 +825,16 @@ async fn remove_media_background(
 ) -> CommandResult<library::ImportedFiles> {
     blocking(move || {
         let state = app.state::<AppState>();
+        let resources = app.path().resource_dir().ok();
         let path = generative::remove_background(
             &state.store,
             &state.data_dir.join("cutouts"),
             asset_id,
             start_ms,
             end_ms,
+            resources
+                .as_deref()
+                .map(|path| (path, state.data_dir.as_path())),
         )?;
         import_local_files(&app, &[path])
     })
@@ -1083,6 +1170,8 @@ fn main() {
             app.manage(AppState {
                 store: Store::open(&data_dir.join("studio.sqlite3"))?,
                 data_dir,
+                proxy_dir: app.path().app_cache_dir()?.join("proxies"),
+                proxy_generation: Mutex::new(()),
                 scan: Mutex::new(()),
                 render: Mutex::new(None),
                 review: Mutex::new(None),
@@ -1105,9 +1194,15 @@ fn main() {
                         &state.store,
                         request,
                         review.as_deref().and_then(Option::as_ref),
+                        None,
                     ));
                 } else {
-                    responder.respond(preview::serve_with_review(&state.store, request, None));
+                    responder.respond(preview::serve_with_review(
+                        &state.store,
+                        request,
+                        None,
+                        Some(&state.proxy_dir),
+                    ));
                 }
             });
         })
@@ -1127,6 +1222,9 @@ fn main() {
             create_project,
             load_timeline,
             save_timeline,
+            save_project_file,
+            open_project_file,
+            prepare_proxy,
             create_edited_project,
             start_render,
             retry_render,

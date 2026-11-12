@@ -11,6 +11,9 @@
 - Xóa nền chỉ đọc asset trong grant, gọi `rembg` cục bộ với mô hình `u2netp` cố định. Lần đầu CLI có thể tải model. Kiểm tra lại grant, path, kích thước và mtime của nguồn trước khi trả tệp dẫn xuất. Video giới hạn số khung qua thời lượng và fps.
 - Avatar gửi kịch bản cùng Avatar ID và Voice ID tới HeyGen qua HTTPS sau xác nhận native. API key `ai-heygen` nằm trong keychain. Tải MP4 chỉ từ các host HeyGen được kiểm tra, không gửi key tới CDN, không theo redirect, giới hạn 120 MB.
 - Xem bản xuất phục vụ MP4 tạm bằng ID và byte range. Mỗi request kiểm tra lại các grant nguồn. App giữ một preview hiện hành trong phiên.
+- Proxy nằm trong cache riêng của app, lấy ID/kích thước/mtime từ nguồn đã được cấp quyền. Trước khi giữ tệp và trước mỗi request đọc proxy, kiểm tra lại quyền nguồn. Xuất MP4 dùng nguồn gốc.
+- Tệp dự án `.dtedit` giới hạn 32 MiB, chọn và ghi qua hộp thoại native. Đường dẫn media chứa trong tệp chỉ được đối chiếu với ID đã có trong thư viện, không tự cấp quyền đọc. LUT được kiểm tra trước khi thêm.
+- Bản cài chứa archive runtime riêng và model `u2netp` đối chiếu SHA-256 lúc build. Native chỉ giải nén archive đi kèm bundle, không nhận đường dẫn runtime từ WebView. Tác vụ xóa nền dùng mô hình cục bộ.
 - LUT .cube được chọn qua hộp thoại native, giới hạn 8 MB, kiểm tra cấu trúc rồi lưu nội dung trong SQLite. Khi xuất, LUT được ghi vào thư mục tạm của lượt xuất với tên cố định `lut-<id>.cube`.
 - Video tham chiếu được đọc local qua asset ID. Kho mẫu giữ timing và tỷ lệ, không giữ bản sao media. Preview video xuất chỉ phục vụ job đã xong và kiểm tra path.
 - Kho tích hợp chỉ đăng ký các tệp cố định đi kèm ứng dụng trong thư mục dữ liệu nội bộ, kiểm tra đường dẫn canonical và nội dung trước khi cấp ID. Tài nguyên người dùng vẫn qua native picker.
