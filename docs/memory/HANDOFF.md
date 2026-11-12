@@ -19,14 +19,30 @@ QA phát hiện Proxy của tag 0.8.0 tắt khi chưa có preference. Bản 0.8.
 
 **Kiểm chứng**
 
+- Tauri Windows QA: 4K 3840×2160 một clip ra một đoạn và hiện giải mã GPU. Hai video ra ba đoạn từ hai tệp. 0.8.1 hồ sơ mới mở lại tệp `.dtedit` đã lưu qua hộp thoại và tự chuyển nguồn 4K sang Proxy 720p. Dựng theo hai WAV ở hai tầng tạo bốn đoạn, giữ WAV đầu ở 0,0 giây và WAV thứ hai ở 1,1 giây.
+- Runtime rembg 0.8.1 đã chạy `real_rembg_segments_photo_and_short_video` từ archive đi kèm, dùng mô hình thật và tạo PNG RGBA cùng MOV alpha có AAC trong test. QA Tauri Windows cũng thay ảnh tầng trên bằng PNG alpha, thấy video tầng dưới. Không cần CLI rembg trên PATH. Test native mất 33 giây gồm giải nén và phân đoạn cả ảnh và video.
 - `pnpm test:native` có 34 test đạt và `pnpm test:media` có 9 test đạt. Thêm ca nguồn 125 giây có cảnh cuối bắt đầu 122 giây, proxy 4K có 720p và AAC cùng thời lượng, media protocol trả 206/404 trước/sau thu hồi, tệp `.dtedit` remap ID và từ chối nguồn đã thu hồi.
 - Test montage Node kiểm tra clip phân tích lỗi vẫn có đoạn đầu ra, ba tệp có mặt với ngân sách 3,2 giây, một WAV và ba lớp tiếng chồng/đặt lệch.
-- GPU Windows RTX 2070 SUPER chạy `scale_cuda` trên video 3840×2160. Tệp proxy 720p được FFprobe kiểm tra riêng. Đây là fixture, chưa đo tốc độ của tệp gốc trong ảnh báo lỗi.
+- GPU Windows RTX 2070 SUPER chạy `scale_cuda` trên video 3840×2160. FFprobe đọc proxy 1280×720 H.264/AAC dài 5 giây. Tệp mẫu gốc 37.878.542 byte và proxy 578.598 byte. Đây là fixture, chưa đo tốc độ của tệp gốc trong ảnh báo lỗi.
+- 38 test Node, lint, TypeScript, rustfmt, `context:check` và `skills:check` đạt. [CI tag](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43171951463) · [CI master](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43171951624)
 
 **Còn mở**
 
 - Đo độ mượt proxy trên dự án 4K nhiều lớp và macOS, chạy trên tệp camera/VFR hoặc HDR thực, thêm quản lý dung lượng cache. M1-H8 còn preset và thao tác trong khảo sát. Live test Claude/HeyGen vẫn cần API key.
 - Tệp `.dtedit` tham chiếu đúng đường dẫn nguồn. Nếu media đã được chuyển sang thư mục khác thì cần luồng gán lại đường dẫn ở phiên sau.
+
+**Phát hành**
+
+- Revision bộ cài `487ba34e2a5e12bf5768d1f9006532e85c203eb7`, tag `v0.8.1`. GitHub Actions build NSIS x64 và DMG Universal, chạy thử phân đoạn rembg trong bước tạo runtime cho từng kiến trúc. macOS runner xác nhận `x86_64 arm64`, `hdiutil verify` đạt và app khởi động trên arm64. [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.8.1) · [Build](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43171951446) · [Job macOS](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43171951446/job/131027121584)
+- Bộ cài lưu ở `apps/desktop/src-tauri/target/verified-installers/v0.8.1/`. SHA-256 của cả hai ZIP đã đối chiếu với GitHub trước khi giải nén. Runtime Windows khoảng 184 MB nén. Hai runtime macOS khoảng 144 MB cho arm64 và 157 MB cho x86_64. Mở editor tương tác trên máy Mac thật và ký/notarize vẫn còn ở M5-B.
+- Build lại với Python 3.12 trên hệ điều hành đích bằng `python scripts/package-rembg.py`, sau đó `pnpm tauri build --ci --config src-tauri/target/rembg.bundle.json` với tùy chọn bundle của workflow. Mac Apple Silicon chạy cả interpreter Intel bằng Rosetta trong bước kiểm thử runtime.
+
+| Tệp | SHA-256 |
+| --- | --- |
+| `AI Video Studio_0.8.1_x64-setup.exe` | `d4cbeffcfc5514e0eea1f1d58fe0cdb4acbdbf4bf49a85c65d4638a285bff925` |
+| `AI Video Studio_0.8.1_universal.dmg` | `1970edfe01d765d7c07d71b9bf89addd6cc3c0b8f7809f63e21ec26dc5b0c38a` |
+| Archive `windows-x64-setup` | `14afcd9f8abfa932dbfbf6303fd4d5d909b65436dd92a6d00cf528c005c435c0` |
+| Archive `macos-universal-dmg` | `caf91e4129ea00bbd8b7f63ecc2cc50bbc79bf72d51ca55d1497d8e69c45c39b` |
 
 ## Bản 0.7.0
 

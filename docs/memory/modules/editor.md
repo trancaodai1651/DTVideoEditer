@@ -45,6 +45,8 @@ M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy t�
 - **Xem bản xuất** gọi `render_review` trong [preview.rs](../../../apps/desktop/src-tauri/src/preview.rs) với vị trí playhead. Backend dùng cùng kế hoạch và graph FFmpeg như khi xuất. MP4 tạm tối đa 20 giây đi qua protocol media theo byte range. Sửa timeline, tỷ lệ, tầng hoặc thu hồi media làm mất hiệu lực phiên xem.
 - [generative.rs](../../../apps/desktop/src-tauri/src/generative.rs) dùng `rembg i` cho ảnh và `rembg p` cho lô khung video. Đầu ra là PNG hoặc MOV có alpha. [AvatarPanel](../../../apps/desktop/src/AvatarPanel.tsx) tạo job HeyGen và nhập MP4 sau khi job hoàn thành.
 
+0.8.1 quét toàn khoảng đã chọn theo các khối 120 giây. Mỗi lần đọc thử GPU rồi CPU và trả độ phủ phân tích cho UI. Highlight giữ ít nhất một đoạn mỗi nguồn nếu ngân sách đủ. Dựng theo nhiều âm thanh tổng hợp RMS trên timeline với offset, giữ lớp và điểm cắt tiếng trong dự án mới. Proxy chỉ dùng ở trình phát tương tác. [Bàn giao](../HANDOFF.md)
+
 ## Render
 
 [render.rs](../../../apps/desktop/src-tauri/src/render.rs) dựng một lệnh FFmpeg từ snapshot và media đã qua kiểm tra grant.

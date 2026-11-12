@@ -20,7 +20,7 @@ Next task: M1-H8
 
 ## Mức kiểm chứng
 
-- 0.8.0: test Windows tạo proxy 1280×720 giữ thời lượng/AAC của video 4K, đọc range 206 và từ chối sau thu hồi. Test quét tới cảnh cuối nguồn 125 giây, lưu/mở `.dtedit` với asset ID khác, phân bổ thời lượng cho ba tệp và giữ âm thanh chồng tầng. [Bàn giao](HANDOFF.md)
+- 0.8.1: Tauri Windows thử highlight một/hai video, dựng theo hai WAV, lưu/mở `.dtedit` và proxy tự tạo. Test Windows tạo proxy 1280×720 giữ thời lượng/AAC của video 4K, đọc range 206 và từ chối sau thu hồi. Test quét tới cảnh cuối nguồn 125 giây, mở `.dtedit` với asset ID khác và chạy xóa nền bằng archive đóng gói. [Bàn giao](HANDOFF.md)
 - 0.7.0 trên Windows 11: cửa sổ Tauri 1280×720 và trên màn hình 2560×1440, kéo MP4/PNG/WAV, tạo cả highlight và bản theo WAV, phát preview FFmpeg và xóa nền PNG. Test rembg thật xuất ProRes có alpha và AAC. CI macOS kiểm tra DMG hai kiến trúc và khởi động app trên ARM64. Live test Claude/HeyGen cần key. [Bàn giao](HANDOFF.md)
 
 - 0.6.0: 33 test Node, 32 test Rust, 7 test FFmpeg thật và test giọng đọc Windows thật đạt. Test FFmpeg mới đo độ lệch âm thanh 700 ms giữa hai góc, kiểm tra điểm ảnh cho reverse, freeze, LUT đảo màu, hue, lớp điều chỉnh khử màu, và xuất chữ nhiều thuộc tính. Giao diện đã thao tác trong trình duyệt với IPC giả lập. Chưa thử trong cửa sổ Tauri thật và chưa gọi Claude API thật. [Bàn giao](HANDOFF.md)
