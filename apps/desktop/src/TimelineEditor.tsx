@@ -1,14 +1,14 @@
 import { useEffect, useEffectEvent, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent, Ref } from "react";
 import { fileName, mediaUrl } from "./desktop";
-import type { EditorTrack, ExportRange, Project } from "./desktop";
+import type { EditorTrack, ExportRange, LaneControl, Project } from "./desktop";
 import { Icon } from "./Icon";
 import {
-  MAX_LAYERS, MAX_TIMELINE_MS, MIN_CLIP_MS, audioFades, canSplit, clipFinish, clipLength, clipsAt, deleteSelection, groupOf, groupSelection,
-  layerOf, mediaLength, moveClip, moveSelection, pasteSelection, place, previousVisual, snap, splitClip, totalMs, trackOf, transitionBetween, trimClip,
+  MAX_LAYERS, MAX_TIMELINE_MS, audioFades, canSplit, changesLockedLane, clipFinish, clipLane, clipLength, clipsAt, deleteSelection, groupOf, groupSelection,
+  laneControl, layerOf, mediaDropPlacement, moveClip, moveSelection, pasteSelection, previousVisual, snap, splitClip, totalMs, transitionBetween, trimClip,
 } from "./timeline";
-import type { Clip, MediaRef } from "./timeline";
-import { timecode, vi } from "./vi";
+import type { Clip, MediaDropTarget, MediaRef } from "./timeline";
+import { frameTimecode, timecode, vi } from "./vi";
 
 const MIN_SCALE = 0.00002;
 const MAX_SCALE = 0.96;
@@ -30,10 +30,13 @@ interface Props {
   canRedo: boolean;
   saveState: SaveState;
   lane: Lane;
-  onChange: (clips: Clip[]) => void;
+  laneControls: LaneControl[];
+  onLaneControl: (lane: Lane, flag: "locked" | "muted" | "hidden") => void;
+  onChange: (clips: Clip[]) => boolean;
   onSelect: (key: string | null) => void;
   onPlayhead: (ms: number) => void;
-  onDropMedia: (media: MediaRef, positionMs: number, lane: Lane) => void;
+  onPlay: () => void;
+  onDropMedia: (media: MediaRef, target: MediaDropTarget) => void;
   onLane: (lane: Lane) => void;
   onTitle: () => void;
   onUndo: () => void;
@@ -44,18 +47,18 @@ interface Props {
 }
 
 export type Lane = { track: EditorTrack; layer: number };
-export type TimelineDropTarget = { lane: Lane; positionMs: number };
 export interface TimelineDrop {
   media: (item: MediaRef, clientX: number, clientY: number, commit: boolean) => void;
   clear: () => void;
-  target: (x: number, y: number) => TimelineDropTarget | null;
+  target: (x: number, y: number) => MediaDropTarget | null;
+  hover: (x?: number, y?: number) => void;
 }
 const kinds = ["text", "video", "audio"] as const;
 const label = { text: "Chữ", video: "Video", audio: "Âm thanh" };
 const laneKey = ({ track, layer }: Lane) => `${track}-${layer}`;
 
 export function TimelineEditor(props: Props) {
-  const { project, clips, selectedKey, playheadMs, busy, lane, onChange, onSelect, onPlayhead } = props;
+  const { project, clips, selectedKey, playheadMs, busy, lane, laneControls, onChange, onSelect, onPlayhead } = props;
   const [scale, setScale] = useState(0.06);
   const [snapping, setSnapping] = useState(true);
   const [magnet, setMagnet] = useState(false);
@@ -73,10 +76,12 @@ export function TimelineEditor(props: Props) {
   const clipboard = useRef<Clip[]>([]);
   const [draft, setDraft] = useState<Clip[] | null>(null);
   const [pending, setPending] = useState<{ lane: Lane; at: number; length: number; name: string } | null>(null);
+  const [nativeOver, setNativeOver] = useState(false);
   const [viewport, setViewport] = useState({ width: 600, left: 0 });
-  const [extra, setExtra] = useState({ text: 1, video: 1, audio: 1 });
+  const [extra, setExtra] = useState({ text: 0, video: 1, audio: 1 });
   const drag = useRef<{ key: string; keys: ReadonlySet<string>; mode: Mode; at: number; x: number; y: number; pointer: number } | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
+  const editor = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const labels = useRef<HTMLDivElement>(null);
   const scrollAfterZoom = useRef<number | null>(null);
@@ -93,12 +98,15 @@ export function TimelineEditor(props: Props) {
     ? clips.filter((clip) => groupOf(clip) === group).map((clip) => clip.key) : [selected.key] : []);
   const cuts = clipsAt(clips, playheadMs).filter((clip) => !chosen.size || chosen.has(clip.key));
   const locked = busy || !project;
-  const layerCount = (track: EditorTrack) => clips.filter((clip) => clip.track === track)
-    .reduce((count, clip) => Math.max(count, layerOf(clip) + 1), extra[track]);
+  const layerCount = (track: EditorTrack) => laneControls.filter((control) => control.track === track).reduce(
+    (count, control) => Math.max(count, control.layer + 1), clips.filter((clip) => clip.track === track)
+      .reduce((count, clip) => Math.max(count, layerOf(clip) + 1), extra[track]));
   const lanes = kinds.flatMap((track) => {
     const count = layerCount(track);
     return Array.from({ length: count }, (_, i) => ({ track, layer: track === "audio" ? i : count - i - 1 }));
   });
+  const overlayLayer = clips.some((clip) => clip.track === "video") ? layerCount("video") : 0;
+  const nextAudioLayer = clips.some((clip) => clip.track === "audio") ? layerCount("audio") : 0;
   function addLane(track: EditorTrack) {
     const layer = layerCount(track);
     if (layer >= MAX_LAYERS) return;
@@ -176,26 +184,36 @@ export function TimelineEditor(props: Props) {
     return head !== wanted ? head : snap(wanted + length, edges, tolerance) - length;
   }
 
+  function mediaTarget(x: number, y: number): MediaDropTarget | null {
+    const element = document.elementFromPoint(x, y);
+    if (busy || !element || !scroll.current?.contains(element)) return null;
+    const row = element.closest<HTMLElement>("[data-track]");
+    const track = row?.dataset.track;
+    const layer = Number(row?.dataset.layer ?? 0);
+    const aboveVideo = track === "text" || !!element.closest(".tl-overlay-slot");
+    const belowAudio = !!element.closest(".tl-below");
+    return {
+      positionMs: timeAt(Math.max(x, (scroll.current.getBoundingClientRect().left + (labels.current?.offsetWidth ?? 0)))),
+      videoLayer: track === "video" ? layer : aboveVideo ? Math.min(overlayLayer, MAX_LAYERS - 1) : 0,
+      audioLayer: track === "audio" ? layer : belowAudio ? Math.min(nextAudioLayer, MAX_LAYERS - 1) : 0,
+      toleranceMs: snapping ? SNAP_PX / scale : 0,
+      playheadMs,
+    };
+  }
+
   useImperativeHandle(props.ref, () => ({
     clear: () => setPending(null),
-    target(x, y) {
-      const element = document.elementFromPoint(x, y);
-      if (locked || !element || !canvas.current?.contains(element) || element.closest(".tl-ruler")) return null;
-      const row = element.closest<HTMLElement>("[data-track]");
-      const track = row?.dataset.track as EditorTrack | undefined;
-      return { lane: { track: track ?? "video", layer: Number(row?.dataset.layer ?? 0) }, positionMs: timeAt(x) };
-    },
+    target: mediaTarget,
+    hover: (x, y) => setNativeOver(x !== undefined && y !== undefined && !!mediaTarget(x, y)),
     media(item, x, y, commit) {
-      const length = mediaLength(item);
-      const target = locked || !length || length < MIN_CLIP_MS ? null : laneAt(x, y, trackOf(item.kind));
-      if (!target || !length) { setPending(null); return; }
-      const at = place(clips, target.track, length, Math.min(snapped(timeAt(x), length, target), MAX_TIMELINE_MS - length), undefined, target.layer);
-      if (at + length > MAX_TIMELINE_MS) { setPending(null); return; }
+      const target = mediaTarget(x, y);
+      if (!target) { setPending(null); return; }
       if (commit) {
         setPending(null);
-        props.onDropMedia(item, at, target);
+        props.onDropMedia(item, target);
       } else {
-        setPending({ lane: target, at, length, name: fileName(item.relativePath) });
+        const placement = mediaDropPlacement(clips, item, target, laneControls);
+        setPending(placement ? { lane: placement, at: placement.at, length: placement.length, name: fileName(item.relativePath) } : null);
       }
     },
   }));
@@ -203,6 +221,8 @@ export function TimelineEditor(props: Props) {
   function begin(event: PointerEvent<HTMLElement>, clip: Clip, mode: Mode) {
     if (locked || event.button !== 0) return;
     event.stopPropagation();
+    editor.current?.focus({ preventScroll: true });
+    if (clipLane(laneControls, clip)?.locked) { setMulti([]); onSelect(clip.key); return; }
     if (tool === "split" && mode === "move") {
       const at = Math.round(Math.round(timeAt(event.clientX) * 30 / 1000) * 1000 / 30);
       const next = splitClip(clips, clip.key, at);
@@ -252,8 +272,7 @@ export function TimelineEditor(props: Props) {
     const key = drag.current.key;
     const next = dragResult(event);
     cancelDrag();
-    if (next === clips) return;
-    onChange(next);
+    if (next === clips || !onChange(next)) return;
     const moved = next.find((clip) => clip.key === key)!;
     props.onLane({ track: moved.track, layer: layerOf(moved) });
   }
@@ -264,7 +283,7 @@ export function TimelineEditor(props: Props) {
   }
 
   function split(all = false) {
-    const targets = all ? clipsAt(clips, playheadMs) : cuts;
+    const targets = (all ? clipsAt(clips, playheadMs) : cuts).filter((clip) => !clipLane(laneControls, clip)?.locked);
     const next = targets.reduce<Clip[]>((current, clip) => splitClip(current, clip.key, playheadMs) ?? current, clips);
     if (next !== clips) onChange(next);
   }
@@ -272,8 +291,7 @@ export function TimelineEditor(props: Props) {
   function remove() {
     if (!chosen.size || locked) return;
     const next = deleteSelection(clips, chosen, magnet, linkage);
-    if (next === clips) return;
-    onChange(next);
+    if (next === clips || !onChange(next)) return;
     setMulti([]);
     onSelect(null);
   }
@@ -292,8 +310,7 @@ export function TimelineEditor(props: Props) {
   }
 
   function keys(event: KeyboardEvent<HTMLElement>) {
-    if (locked || event.altKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
-    const step = event.shiftKey ? 1000 : 100;
+    if (locked || event.altKey || (event.target instanceof HTMLElement && event.target.closest("input, select, textarea, [contenteditable=true]"))) return;
     const key = event.key.toLowerCase();
     if (event.ctrlKey || event.metaKey) {
       if (key === "b") split(event.shiftKey);
@@ -304,8 +321,7 @@ export function TimelineEditor(props: Props) {
         if (key === "x") remove();
       } else if (key === "v") {
         const next = pasteSelection(clips, clipboard.current, playheadMs);
-        if (next !== clips) {
-          onChange(next);
+        if (next !== clips && onChange(next)) {
           setMulti(next.slice(clips.length).map((clip) => clip.key));
           onSelect(next[clips.length].key);
         }
@@ -330,8 +346,18 @@ export function TimelineEditor(props: Props) {
     }
     else if (key === "m") marker();
     else if (key === "z" && event.shiftKey) fit();
-    else if (event.key === "ArrowLeft" && selected) nudge(selected, -step);
-    else if (event.key === "ArrowRight" && selected) nudge(selected, step);
+    else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      const direction = event.key === "ArrowLeft" ? -1 : 1;
+      if (event.shiftKey && selected) nudge(selected, direction * 100);
+      else onPlayhead(Math.round((Math.round(playheadMs * 30 / 1000) + direction) * 1000 / 30));
+    }
+    else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      const edges = clips.flatMap((clip) => [clip.positionMs, clipFinish(clip)]);
+      onPlayhead(event.key === "ArrowUp" ? Math.max(0, ...edges.filter((at) => at < playheadMs))
+        : Math.min(total, ...edges.filter((at) => at > playheadMs)));
+    }
+    else if (key === "home" || key === "end") onPlayhead(key === "home" ? 0 : total);
+    else if (key === " " && !(event.target instanceof HTMLButtonElement)) props.onPlay();
     else return;
     event.preventDefault();
   }
@@ -341,8 +367,15 @@ export function TimelineEditor(props: Props) {
     if (scroll.current) scroll.current.scrollLeft = 0;
   }
 
+  function ghost(track: EditorTrack, layer: number) {
+    if (pending?.lane.track !== track || pending.lane.layer !== layer) return null;
+    return <div className="tl-drop-ghost" style={{ left: pending.at * scale, width: Math.max(6, pending.length * scale) }} aria-hidden="true">{pending.name}</div>;
+  }
+
+  const showOverlaySlot = overlayLayer > 0 && overlayLayer < MAX_LAYERS;
+
   return (
-    <section className="panel timeline" aria-labelledby="timeline-heading" onKeyDown={keys}>
+    <section ref={editor} tabIndex={-1} className={`panel timeline${nativeOver ? " native-over" : ""}`} aria-labelledby="timeline-heading" onKeyDown={keys}>
       <div className="panel-head">
         <div>
           <div className="panel-title"><Icon name="timeline" /><h2 id="timeline-heading">{vi.timeline}</h2></div>
@@ -367,14 +400,14 @@ export function TimelineEditor(props: Props) {
         <button type="button" className="button secondary compact danger" disabled={locked || !selected} onClick={remove}>
           <Icon name="trash" size={16} />{vi.removeClip}
         </button>
-        <span className="tl-time" aria-live="off">{timecode(playheadMs)} / {timecode(total)}</span>
+        <span className="tl-time" aria-live="off">{frameTimecode(playheadMs)} / {frameTimecode(total)}</span>
         <span className={`tl-save ${props.saveState}`}>{project ? vi.saveState[props.saveState] : ""}</span>
-        <button type="button" className="button secondary compact" aria-pressed={magnet} title="Dồn clip trên Video 1 sau khi trim hoặc xóa (P)"
-          onClick={() => setMagnet(!magnet)}>Dồn clip</button>
-        <button type="button" className="button secondary compact" aria-pressed={snapping} title="Hít vào playhead và mép clip"
-          onClick={() => setSnapping(!snapping)}>Hít mép</button>
-        <button type="button" className="button secondary compact" aria-pressed={linkage} title="Dịch các lớp phía sau theo Video 1 khi dồn clip (~)"
-          onClick={() => setLinkage(!linkage)}>Liên kết</button>
+        <button type="button" className="icon-button" aria-pressed={magnet} aria-label="Dồn clip" title="Dồn clip trên Video 1 sau khi trim hoặc xóa (P)"
+          onClick={() => setMagnet(!magnet)}><Icon name="magnet" size={15} /></button>
+        <button type="button" className="icon-button" aria-pressed={snapping} aria-label="Hít mép" title="Hít vào playhead và mép clip (N)"
+          onClick={() => setSnapping(!snapping)}><Icon name="snap" size={15} /></button>
+        <button type="button" className="icon-button" aria-pressed={linkage} aria-label="Liên kết" title="Dịch các lớp phía sau theo Video 1 khi dồn clip (~)"
+          onClick={() => setLinkage(!linkage)}><Icon name="link" size={15} /></button>
         <div className="tl-zoom" role="group" aria-label="Thu phóng timeline">
           <button type="button" className="icon-button" title={vi.zoomOut} aria-label={vi.zoomOut}
             disabled={scale <= MIN_SCALE} onClick={() => zoomTo(scale / 1.5)}><Icon name="zoomOut" size={16} /></button>
@@ -386,10 +419,10 @@ export function TimelineEditor(props: Props) {
           <button type="button" className="button secondary compact" title="Hiện toàn bộ timeline"
             disabled={!total} onClick={fit}>Vừa khung</button>
         </div>
-        <button type="button" className="button secondary compact" disabled={locked || total === 0}
-          onClick={() => props.onExport(true)}>Thêm vào hàng đợi</button>
-        <button type="button" className="button primary compact" disabled={locked || total === 0}
-          onClick={() => props.onExport(false)}><Icon name="export" size={16} />Xuất và chạy hàng đợi</button>
+        <button type="button" className="button secondary compact" disabled={locked || total === 0} aria-label="Thêm vào hàng đợi xuất"
+          onClick={() => props.onExport(true)}>Xếp hàng</button>
+        <button type="button" className="button primary compact" disabled={locked || total === 0} aria-label="Xuất và chạy hàng đợi"
+          onClick={() => props.onExport(false)}><Icon name="export" size={16} />Xuất</button>
       </div>
       <div className="tl-toolbar layer-toolbar">
         {kinds.map((track) => <button key={track} type="button" className="button secondary compact"
@@ -411,18 +444,46 @@ export function TimelineEditor(props: Props) {
       <div className="tl" ref={scroll} onScroll={measure}>
         <div className="tl-labels" ref={labels}>
           <div className="tl-corner" />
-          {lanes.map((target) =>
-            <button type="button" className="track-name" key={laneKey(target)} disabled={locked}
-              aria-pressed={laneKey(lane) === laneKey(target)} onClick={() => props.onLane(target)}>
-              <Icon name={target.track === "text" ? "library" : target.track} />{label[target.track]} {target.layer + 1}
-            </button>)}
+          {lanes.map((target) => {
+            const control = laneControl(laneControls, target.track, target.layer);
+            const name = `${label[target.track]} ${target.layer + 1}`;
+            return <div className="tl-track-label" key={laneKey(target)}>
+              {showOverlaySlot && target.track === "video" && target.layer === overlayLayer - 1 && <div className="tl-overlay-slot" aria-hidden="true" />}
+              <div className="tl-track-header" data-track={target.track} data-layer={target.layer}>
+                <button type="button" className="track-name" disabled={locked}
+                  aria-pressed={laneKey(lane) === laneKey(target)} onClick={() => props.onLane(target)}>
+                  <Icon name={target.track === "text" ? "text" : target.track} size={13} />{name}
+                </button>
+                <div className="tl-track-controls">
+                  <button type="button" disabled={locked} aria-pressed={!!control?.locked} title={`Khóa tầng ${name}`}
+                    aria-label={`Khóa tầng ${name}`} onClick={() => props.onLaneControl(target, "locked")}>
+                    <Icon name={control?.locked ? "lock" : "unlock"} size={13} />
+                  </button>
+                  {target.track !== "audio" && <button type="button" disabled={locked} aria-pressed={!!control?.hidden} title={`Ẩn hình tầng ${name}`}
+                    aria-label={`Ẩn hình tầng ${name}`} onClick={() => props.onLaneControl(target, "hidden")}>
+                    <Icon name={control?.hidden ? "eyeOff" : "eye"} size={13} />
+                  </button>}
+                  {target.track !== "text" && <button type="button" disabled={locked} aria-pressed={!!control?.muted} title={`Tắt tiếng tầng ${name}`}
+                    aria-label={`Tắt tiếng tầng ${name}`} onClick={() => props.onLaneControl(target, "muted")}>
+                    <Icon name={control?.muted ? "muted" : "speaker"} size={13} />
+                  </button>}
+                </div>
+              </div>
+            </div>;
+          })}
+          <div className="tl-below" aria-hidden="true" />
         </div>
           <div className="tl-canvas" ref={canvas} style={{ width }}
-            onPointerMove={(event) => { if (drag.current) setDraft(dragResult(event)); }}
+            onPointerMove={(event) => {
+              if (!drag.current) return;
+              const next = dragResult(event);
+              setDraft(changesLockedLane(clips, next, laneControls) ? null : next);
+            }}
             onPointerUp={finish} onPointerCancel={cancelDrag} onLostPointerCapture={cancelDrag}>
             <div className="tl-ruler"
               onPointerDown={(event) => {
                 if (event.button !== 0) return;
+                editor.current?.focus({ preventScroll: true });
                 event.currentTarget.setPointerCapture(event.pointerId);
                 onPlayhead(timeAt(event.clientX));
               }}
@@ -440,14 +501,18 @@ export function TimelineEditor(props: Props) {
             </div>
             {lanes.map((target) => {
               const { track, layer } = target;
+              const control = laneControl(laneControls, track, layer);
               const items = shown.filter((clip) => clip.track === track && layerOf(clip) === layer);
-              return <div className={`tl-lane ${track}`} key={laneKey(target)} data-track={track} data-layer={layer}
+              return <div key={laneKey(target)}>
+                {showOverlaySlot && track === "video" && layer === overlayLayer - 1 && <div className="tl-overlay-slot" aria-hidden="true">{ghost("video", overlayLayer)}</div>}
+                <div className={`tl-lane ${track}${track === "video" && layer === 0 ? " main-track" : ""}${control?.locked ? " locked-lane" : ""}${control?.hidden || (control?.muted && track === "audio") ? " inactive-lane" : ""}`} data-track={track} data-layer={layer}
                 onPointerDown={(event) => {
-                  if (event.target === event.currentTarget) { props.onLane(target); setMulti([]); onSelect(null); }
+                  if (event.target === event.currentTarget) {
+                    editor.current?.focus({ preventScroll: true }); props.onLane(target); setMulti([]); onSelect(null);
+                  }
                 }}>
-                {!items.length && <span className="track-empty">{project ? vi.dropHint : vi.noClips}</span>}
-                {pending && laneKey(pending.lane) === laneKey(target) && <div className="tl-drop-ghost"
-                  style={{ left: pending.at * scale, width: Math.max(6, pending.length * scale) }} aria-hidden="true">{pending.name}</div>}
+                {!items.length && track === "video" && layer === 0 && <span className="track-empty"><Icon name="video" size={14} />Kéo media hoặc tệp vào đây để dựng</span>}
+                {ghost(track, layer)}
                 {items.map((clip) => {
                   const name = clip.title?.text ?? fileName(clip.relativePath);
                   const previous = clip.look?.transition ? previousVisual(shown, clip) : undefined;
@@ -462,8 +527,13 @@ export function TimelineEditor(props: Props) {
                     onPointerDown={(event) => begin(event, clip, "move")}>
                     <span className="tl-handle start" aria-hidden="true"
                       onPointerDown={(event) => begin(event, clip, "start")} />
-                    {clip.available && clip.hasThumbnail && <span className="tl-clip-art" aria-hidden="true"
-                      style={{ backgroundImage: `url("${mediaUrl("thumbnail", clip.assetId, props.revision)}")` }} />}
+                    {clip.available && (clip.hasThumbnail || clip.kind === "video") && <span className="tl-clip-art" aria-hidden="true"
+                      style={clip.hasThumbnail ? { backgroundImage: `url("${mediaUrl("thumbnail", clip.assetId, props.revision)}")` } : undefined}>
+                      {clip.kind === "video" && !!clip.sourceMs && <img src={mediaUrl("filmstrip", clip.assetId, props.revision)} alt="" loading="lazy" draggable={false}
+                        style={{ width: `${100 * clip.sourceMs / (clip.endMs - clip.startMs)}%`, left: `${-100 * clip.startMs / (clip.endMs - clip.startMs)}%` }}
+                        onError={(event) => { event.currentTarget.style.visibility = "hidden"; }}
+                        onLoad={(event) => { event.currentTarget.style.visibility = "visible"; }} />}
+                    </span>}
                     {clip.available && (clip.kind === "audio" || clip.kind === "video") && !!clip.sourceMs && <span className="tl-waveform"
                       aria-hidden="true"><img src={mediaUrl("waveform", clip.assetId, props.revision)} alt="" loading="lazy" draggable={false}
                         style={{ width: `${100 * clip.sourceMs / (clip.endMs - clip.startMs)}%`,
@@ -482,8 +552,10 @@ export function TimelineEditor(props: Props) {
                       onPointerDown={(event) => begin(event, clip, "end")} />
                   </div>;
                 })}
+                </div>
               </div>;
             })}
+            <div className="tl-below" aria-hidden="true">{nextAudioLayer > 0 && nextAudioLayer < MAX_LAYERS && ghost("audio", nextAudioLayer)}</div>
             <div className="tl-playhead" style={{ left: playheadMs * scale }} aria-hidden="true" />
             {props.range && props.range.endMs > props.range.startMs && <div className="tl-export-range" aria-hidden="true"
               style={{ left: props.range.startMs * scale, width: (props.range.endMs - props.range.startMs) * scale }} />}

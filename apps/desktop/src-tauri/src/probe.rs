@@ -297,6 +297,59 @@ pub fn waveform(path: &Path, duration_ms: i64) -> Option<Vec<u8>> {
     capture(cmd, Duration::from_secs(18)).filter(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"))
 }
 
+pub fn filmstrip(path: &Path, duration_ms: i64) -> Option<Vec<u8>> {
+    const FRAMES: i64 = 8;
+    if duration_ms < 100 {
+        return None;
+    }
+    let format = MediaFormat::for_path(path)?;
+    let mut cmd = command(find_tool("ffmpeg")?);
+    cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-filter_complex_threads",
+        "1",
+    ]);
+    let mut graph = String::new();
+    for index in 0..FRAMES {
+        let at = duration_ms * index / FRAMES;
+        cmd.args(format.input_args())
+            .args([
+                "-threads",
+                "1",
+                "-ss",
+                &format!("{}.{:03}", at / 1000, at % 1000),
+                "-i",
+            ])
+            .arg(path);
+        graph.push_str(&format!("[{index}:V:0]trim=end_frame=1,scale=96:54:force_original_aspect_ratio=decrease,pad=96:54:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[f{index}];"));
+    }
+    for index in 0..FRAMES {
+        graph.push_str(&format!("[f{index}]"));
+    }
+    graph.push_str(&format!("hstack=inputs={FRAMES}[strip]"));
+    cmd.args([
+        "-filter_complex",
+        &graph,
+        "-map",
+        "[strip]",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        "-c:v",
+        "mjpeg",
+        "-q:v",
+        "5",
+        "-f",
+        "image2pipe",
+        "pipe:1",
+    ]);
+    capture(cmd, THUMBNAIL_TIMEOUT).filter(|bytes| bytes.starts_with(b"\xff\xd8\xff"))
+}
+
 fn capture(cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
     capture_allow_empty(cmd, deadline).filter(|bytes| !bytes.is_empty())
 }

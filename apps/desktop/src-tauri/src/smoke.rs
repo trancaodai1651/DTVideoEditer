@@ -7,7 +7,7 @@ use crate::{
     preview::serve,
     probe::{Ffprobe, MediaFormat, MediaProbe, Metadata, find_tool},
     render::{Outcome, execute},
-    store::Store,
+    store::{DerivedPreview, Store},
     timeline::{ClipEdit, TimelineSnapshot, TrackEdit},
 };
 
@@ -37,6 +37,7 @@ fn snapshot(video: Vec<ClipEdit>, audio: Vec<ClipEdit>) -> TimelineSnapshot {
         ],
         titles: vec![],
         aspect: Default::default(),
+        lanes: Vec::new(),
         export_range: None,
     }
 }
@@ -238,7 +239,7 @@ fn real_ffmpeg_indexes_media_and_jpeg_thumbnail() {
             "-f",
             "lavfi",
             "-i",
-            "color=c=royalblue:s=320x180:r=24:d=1",
+            "color=c=royalblue:s=320x180:r=24:d=1,drawbox=color=red:t=fill:enable='gte(t,0.5)'",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -293,7 +294,7 @@ fn real_ffmpeg_indexes_media_and_jpeg_thumbnail() {
     );
     let full_probe = Ffprobe {
         binary: ffprobe,
-        ffmpeg: Some(ffmpeg),
+        ffmpeg: Some(ffmpeg.clone()),
     };
     let report = scan(&store, folder, &full_probe).unwrap();
     assert_eq!(
@@ -330,16 +331,44 @@ fn real_ffmpeg_indexes_media_and_jpeg_thumbnail() {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.body().starts_with(&[0xff, 0xd8, 0xff]));
     }
-    let project = store.create_project("Smoke test").unwrap();
-    store
-        .save_timeline(
-            project.id,
-            &snapshot(
-                vec![clip(video.id, 0, 1000, 0), clip(image.id, 0, 3000, 1000)],
-                vec![clip(audio.id, 0, 1000, 0)],
-            ),
-        )
+    let strip = serve(
+        &store,
+        Request::builder()
+            .uri(format!("/filmstrip-{}", video.id))
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(strip.status(), StatusCode::OK);
+    let jpeg = dir.path().join("filmstrip.jpg");
+    fs::write(&jpeg, strip.body()).unwrap();
+    let pixels = Command::new(&ffmpeg)
+        .args(["-v", "error", "-i"])
+        .arg(jpeg)
+        .args([
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1",
+        ])
+        .output()
         .unwrap();
+    assert!(pixels.status.success());
+    assert_eq!(pixels.stdout.len(), 768 * 54 * 3);
+    let blue = (27 * 768 + 48) * 3;
+    let red = (27 * 768 + 720) * 3;
+    assert!(pixels.stdout[blue + 2] > pixels.stdout[blue] + 80);
+    assert!(pixels.stdout[red] > pixels.stdout[red + 2] + 80);
+    let project = store.create_project("Smoke test").unwrap();
+    let mut saved = snapshot(
+        vec![clip(video.id, 0, 1000, 0), clip(image.id, 0, 3000, 1000)],
+        vec![clip(audio.id, 0, 1000, 0)],
+    );
+    saved.lanes.push(crate::timeline::LaneControl {
+        track: "audio".into(),
+        layer: 0,
+        muted: true,
+        locked: true,
+        hidden: false,
+    });
+    store.save_timeline(project.id, &saved).unwrap();
+    assert_eq!(store.snapshot(project.id).unwrap(), saved);
     let tracks: Vec<_> = store
         .timeline(project.id)
         .unwrap()
@@ -994,7 +1023,28 @@ fn real_ffmpeg_exports_keyframes_and_transitions_with_in_out() {
     );
     assert_eq!(response.status(), StatusCode::OK);
     assert!(response.body().starts_with(b"\x89PNG\r\n\x1a\n"));
-    assert!(store.waveform(red).unwrap().is_some());
+    assert!(
+        store
+            .derived_preview(red, DerivedPreview::Waveform)
+            .unwrap()
+            .is_some()
+    );
+    let response = serve(
+        &store,
+        Request::builder()
+            .uri(format!("/filmstrip-{red}"))
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.body().starts_with(b"\xff\xd8\xff"));
+    assert_eq!(
+        store
+            .derived_preview(red, DerivedPreview::Filmstrip)
+            .unwrap()
+            .as_deref(),
+        Some(response.body().as_slice())
+    );
 
     for (name, kind) in [
         ("dissolve", TransitionKind::Dissolve),

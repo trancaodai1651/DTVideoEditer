@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fileName, mediaUrl } from "./desktop";
-import type { Asset, AssetPage, Folder, MediaKind, Project } from "./desktop";
+import type { Asset, AssetPage, Folder, MediaKind } from "./desktop";
 import { Icon } from "./Icon";
 import type { PointerEvent, RefObject } from "react";
 import type { TimelineDrop } from "./TimelineEditor";
@@ -95,11 +95,13 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
       {!data ? <div className="empty small-empty">{vi.loading}</div> : data.items.length ? (
         <div className="asset-grid">
           {data.items.map((asset) => (
-            <button type="button" key={asset.id} aria-pressed={selected === asset.id}
+            <div className="asset-tile" key={asset.id}>
+            <button type="button" aria-pressed={selected === asset.id}
               className={`asset ${selected === asset.id ? "selected" : ""}`}
               title={asset.relativePath}
               onClick={(event) => { if (event.detail === 0 || !gesture.current?.moved) onSelect(selectAsset(asset)); }}
               onDoubleClick={() => { if (canAdd && !gesture.current?.moved) onAppend(selectAsset(asset)); }}
+              onDragStart={(event) => event.preventDefault()}
               onPointerDown={(event) => startDrag(event, asset)} onPointerMove={(event) => moveDrag(event, false)}
               onPointerUp={(event) => moveDrag(event, true)}
               onLostPointerCapture={() => timeline.current?.clear()}
@@ -111,6 +113,9 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
               <span className="asset-name">{fileName(asset.relativePath)}</span>
               <span className="asset-kind">{vi.media[asset.kind]} · {size(asset.bytes)}</span>
             </button>
+            {canAdd && <button type="button" className="asset-add icon-button" title="Thêm tại playhead"
+              aria-label={`Thêm ${fileName(asset.relativePath)} vào timeline`} onClick={() => onAppend(selectAsset(asset))}><Icon name="plus" size={14} /></button>}
+            </div>
           ))}
         </div>
       ) : (
@@ -129,9 +134,8 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
   );
 }
 
-export function Preview({ selection, project, revision, busy, onAppend, onReference }: {
+export function Preview({ selection, revision, busy, onAppend, onReference }: {
   selection: Selection | null;
-  project: Project | undefined;
   revision: number;
   busy: boolean;
   onAppend: (selection: Selection) => void;
@@ -159,8 +163,7 @@ export function Preview({ selection, project, revision, busy, onAppend, onRefere
         <div className="preview-actions">
           {selection.kind === "video" && <button className="button secondary compact" type="button" disabled={busy}
             onClick={onReference}>Dùng làm video mẫu</button>}
-          <button className="button secondary compact" type="button" disabled={busy || !project}
-            title={!project ? vi.needProject : undefined} onClick={() => onAppend(selection)}>
+          <button className="button secondary compact" type="button" disabled={busy} onClick={() => onAppend(selection)}>
             <Icon name="plus" />{vi.addClip}
           </button>
         </div>

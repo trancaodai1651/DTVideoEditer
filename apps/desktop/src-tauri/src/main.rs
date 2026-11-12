@@ -23,7 +23,7 @@ use std::{
     },
 };
 
-use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WebviewEvent, http::StatusCode};
+use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent, http::StatusCode};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use model::{
@@ -140,6 +140,11 @@ async fn pick_media_files(app: AppHandle) -> CommandResult<Option<library::Impor
 #[derive(serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum MediaDrop {
+    Hover {
+        x: f64,
+        y: f64,
+    },
+    Left,
     Started {
         id: usize,
         x: f64,
@@ -151,17 +156,36 @@ enum MediaDrop {
     },
 }
 
-fn native_drop(webview: &tauri::Webview, event: &WebviewEvent) {
-    let WebviewEvent::DragDrop(DragDropEvent::Drop { paths, position }) = event else {
+fn native_drop(window: &tauri::Window, event: &WindowEvent) {
+    // The webview that fills a Tauri WebviewWindow reports its drop as a window event.
+    let WindowEvent::DragDrop(event) = event else {
         return;
     };
-    if webview.label() != "main" || paths.is_empty() {
+    if window.label() != "main" {
         return;
     }
+    let (paths, position) = match event {
+        DragDropEvent::Enter { position, .. } | DragDropEvent::Over { position } => {
+            let _ = window.emit(
+                "studio-media-drop",
+                &MediaDrop::Hover {
+                    x: position.x,
+                    y: position.y,
+                },
+            );
+            return;
+        }
+        DragDropEvent::Leave => {
+            let _ = window.emit("studio-media-drop", &MediaDrop::Left);
+            return;
+        }
+        DragDropEvent::Drop { paths, position } if !paths.is_empty() => (paths, position),
+        _ => return,
+    };
     static NEXT_DROP: AtomicUsize = AtomicUsize::new(1);
     let id = NEXT_DROP.fetch_add(1, Ordering::Relaxed);
-    let app = webview.app_handle().clone();
-    let _ = app.emit(
+    let app = window.app_handle().clone();
+    let _ = window.emit(
         "studio-media-drop",
         &MediaDrop::Started {
             id,
@@ -172,7 +196,9 @@ fn native_drop(webview: &tauri::Webview, event: &WebviewEvent) {
     let paths = paths.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = command(import_local_files(&app, &paths));
-        let _ = app.emit("studio-media-drop", &MediaDrop::Finished { id, result });
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.emit("studio-media-drop", &MediaDrop::Finished { id, result });
+        }
     });
 }
 
@@ -767,7 +793,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .on_webview_event(native_drop)
+        .on_window_event(native_drop)
         .setup(|app| {
             let data_dir = data_dir(app)?;
             std::fs::create_dir_all(&data_dir)?;

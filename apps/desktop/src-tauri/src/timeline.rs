@@ -294,6 +294,19 @@ pub struct TrackEdit {
     pub clips: Vec<ClipEdit>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LaneControl {
+    pub track: String,
+    pub layer: u8,
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
 /// Versioned timeline contract shared by persistence, IPC and the renderer.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -304,6 +317,8 @@ pub struct TimelineSnapshot {
     pub titles: Vec<TitleEdit>,
     #[serde(default, skip_serializing_if = "Aspect::is_source")]
     pub aspect: Aspect,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lanes: Vec<LaneControl>,
     #[serde(
         default,
         rename = "exportRange",
@@ -320,6 +335,12 @@ pub struct ExportRange {
 }
 
 impl TimelineSnapshot {
+    pub fn lane(&self, track: &str, layer: u8) -> Option<&LaneControl> {
+        self.lanes
+            .iter()
+            .find(|lane| lane.track == track && lane.layer == layer)
+    }
+
     pub fn export_duration_ms(&self) -> Result<i64> {
         let total = self.duration_ms();
         match self.export_range {
@@ -382,6 +403,18 @@ pub fn check_version(snapshot: &TimelineSnapshot) -> Result<()> {
         || kinds.windows(2).any(|pair| pair[0] == pair[1])
     {
         return Err(StudioError::Input("Timeline có nhóm media không hợp lệ."));
+    }
+    let mut lanes = std::collections::HashSet::new();
+    if snapshot.lanes.len() > 3 * usize::from(MAX_LAYERS)
+        || snapshot.lanes.iter().any(|lane| {
+            lane.layer >= MAX_LAYERS
+                || !matches!(lane.track.as_str(), "video" | "audio" | "text")
+                || (lane.track == "text" && lane.muted)
+                || (lane.track == "audio" && lane.hidden)
+                || !lanes.insert((lane.track.as_str(), lane.layer))
+        })
+    {
+        return Err(StudioError::Input("Timeline có cài đặt tầng không hợp lệ."));
     }
     if snapshot.titles.len() > MAX_TITLES
         || snapshot.titles.iter().any(|title| {
@@ -551,6 +584,7 @@ mod tests {
                 .collect(),
             titles: vec![],
             aspect: Aspect::Source,
+            lanes: Vec::new(),
             export_range: None,
         };
         assert!(check_version(&snapshot(2, &["video", "audio"])).is_ok());

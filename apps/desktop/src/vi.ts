@@ -166,6 +166,14 @@ export function timecode(ms: number) {
   return `${String(Math.floor(tenths / 600)).padStart(2, "0")}:${String(Math.floor(tenths / 10) % 60).padStart(2, "0")}.${tenths % 10}`;
 }
 
+/** HH:MM:SS:FF on the 30 fps editing grid. */
+export function frameTimecode(ms: number) {
+  const frame = Math.max(0, Math.round(ms * 30 / 1000));
+  const seconds = Math.floor(frame / 30);
+  return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60, frame % 30]
+    .map((part) => String(part).padStart(2, "0")).join(":");
+}
+
 export function size(bytes: number) {
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   const index = Math.min(Math.max(Math.floor(Math.log(bytes) / Math.log(1024)), 0), units.length - 1);

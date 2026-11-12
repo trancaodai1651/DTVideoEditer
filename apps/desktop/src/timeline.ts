@@ -1,4 +1,4 @@
-import type { Aspect, ClipLook, Cue, EditorTrack, MediaKind, Timeline, TimelineSnapshot, TitleStyle, Track, TransformKey, TransitionKind } from "./desktop";
+import type { Aspect, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, Timeline, TimelineSnapshot, TitleStyle, Track, TransformKey, TransitionKind } from "./desktop";
 
 // Limits mirror src-tauri/src/timeline.rs, which is the authority on save.
 export const TIMELINE_VERSION = 3;
@@ -41,6 +41,14 @@ export interface MediaRef {
   hasThumbnail?: boolean;
 }
 
+export interface MediaDropTarget {
+  positionMs: number;
+  videoLayer: number;
+  audioLayer: number;
+  toleranceMs: number;
+  playheadMs: number;
+}
+
 let serial = 0;
 const newKey = () => `clip-${++serial}`;
 
@@ -53,6 +61,16 @@ export const clipFinish = (clip: Clip) => clip.positionMs + clipLength(clip);
 export const trackOf = (kind: MediaKind): Track => (kind === "audio" ? "audio" : "video");
 export const layerOf = (clip: Clip) => clip.layer ?? 0;
 export const sameLane = (left: Clip, right: Clip) => left.track === right.track && layerOf(left) === layerOf(right);
+export const laneControl = (lanes: LaneControl[], track: EditorTrack, layer: number) => lanes.find((lane) => lane.track === track && lane.layer === layer);
+export const clipLane = (lanes: LaneControl[], clip: Clip) => laneControl(lanes, clip.track, layerOf(clip));
+
+export function changesLockedLane(before: Clip[], after: Clip[], lanes: LaneControl[]) {
+  if (!lanes.some((lane) => lane.locked) || before === after) return false;
+  const from = new Set(before);
+  const to = new Set(after);
+  return before.some((clip) => !to.has(clip) && clipLane(lanes, clip)?.locked)
+    || after.some((clip) => !from.has(clip) && clipLane(lanes, clip)?.locked);
+}
 export function previousVisual(clips: Clip[], target: Clip) {
   return target.track === "video" ? clips.find((clip) => clip.key !== target.key && sameLane(clip, target)
     && clipFinish(clip) === target.positionMs && clip.available && target.available) : undefined;
@@ -140,13 +158,14 @@ export function fromTimeline(timeline: Timeline): Clip[] {
   return [...media, ...titles];
 }
 
-export function toSnapshot(clips: Clip[], aspect: Aspect = "source"): TimelineSnapshot {
+export function toSnapshot(clips: Clip[], aspect: Aspect = "source", lanes: LaneControl[] = []): TimelineSnapshot {
   const titles = clips.filter((clip) => clip.title).map((clip) => ({
     ...clip.title!, positionMs: clip.positionMs, durationMs: clipLength(clip), layer: layerOf(clip),
   }));
   return {
     version: TIMELINE_VERSION,
     ...(aspect !== "source" ? { aspect } : {}),
+    ...(lanes.length ? { lanes } : {}),
     ...(titles.length ? { titles } : {}),
     tracks: (["video", "audio"] as const).map((kind) => ({
       kind,
@@ -171,6 +190,38 @@ export function place(clips: Clip[], track: EditorTrack, lengthMs: number, wante
 }
 
 export const mediaLength = (media: MediaRef) => media.kind === "image" ? DEFAULT_IMAGE_MS : media.durationMs;
+
+export function mediaDropPlacement(clips: Clip[], media: MediaRef, target: MediaDropTarget, lanes: LaneControl[] = []) {
+  const length = mediaLength(media);
+  if (!length || length < MIN_CLIP_MS) return null;
+  const track = trackOf(media.kind);
+  const layer = track === "video" ? target.videoLayer : target.audioLayer;
+  if (laneControl(lanes, track, layer)?.locked) return null;
+  const row = clips.filter((clip) => clip.track === track && layerOf(clip) === layer);
+  if (row.length >= MAX_TRACK_CLIPS) return null;
+  const edges = [0, target.playheadMs, ...row.flatMap((clip) => [clip.positionMs, clipFinish(clip)])];
+  let position = Math.min(target.positionMs, MAX_TIMELINE_MS - length);
+  if (target.toleranceMs > 0) {
+    const head = snap(position, edges, target.toleranceMs);
+    position = head === position ? snap(position + length, edges, target.toleranceMs) - length : head;
+  }
+  const at = place(row, track, length, position, undefined, layer);
+  return at + length <= MAX_TIMELINE_MS ? { track, layer, at, length } : null;
+}
+
+export function addDroppedMedia(clips: Clip[], files: MediaRef[], target: MediaDropTarget, lanes: LaneControl[] = []): Clip[] {
+  const cursor = { video: undefined as number | undefined, audio: undefined as number | undefined };
+  return files.reduce((next, media) => {
+    const track = trackOf(media.kind);
+    const at = cursor[track];
+    const placement = mediaDropPlacement(next, media, at === undefined ? target : { ...target, positionMs: at, toleranceMs: 0 }, lanes);
+    if (!placement || (at !== undefined && placement.at < at)) return next;
+    const added = addClip(next, media, placement.at, placement.layer);
+    if (!added) return next;
+    cursor[track] = clipFinish(added[added.length - 1]);
+    return added;
+  }, clips);
+}
 
 /** Adds media at a position, or at the end of its track. Null when it has no usable length. */
 export function addClip(clips: Clip[], media: MediaRef, positionMs?: number, layer = 0): Clip[] | null {

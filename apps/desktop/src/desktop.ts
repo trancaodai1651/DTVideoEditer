@@ -36,7 +36,8 @@ export interface ImportedFiles {
   skipped: number;
 }
 
-export type MediaDrop = { type: "started"; id: number; x: number; y: number }
+export type MediaDrop = { type: "hover"; x: number; y: number } | { type: "left" }
+  | { type: "started"; id: number; x: number; y: number }
   | { type: "finished"; id: number; result: { Ok: ImportedFiles } | { Err: string } };
 export interface ExportRange { startMs: number; endMs: number }
 
@@ -66,6 +67,13 @@ export interface TimelineClip {
 export type Aspect = "source" | "landscape" | "portrait" | "square";
 export type TitleColor = "white" | "yellow" | "cyan" | "black";
 export type EditorTrack = Track | "text";
+export interface LaneControl {
+  track: EditorTrack;
+  layer: number;
+  locked: boolean;
+  muted: boolean;
+  hidden: boolean;
+}
 export interface ClipLook {
   brightness: number;
   contrast: number;
@@ -139,6 +147,7 @@ export interface Timeline {
   clips: TimelineClip[];
   titles: TitleEdit[];
   aspect: Aspect;
+  lanes: LaneControl[];
 }
 
 export interface ClipEdit {
@@ -156,6 +165,7 @@ export interface TimelineSnapshot {
   tracks: { kind: Track; clips: ClipEdit[] }[];
   titles?: TitleEdit[];
   aspect?: Aspect;
+  lanes?: LaneControl[];
 }
 
 export type RenderStatus = "queued" | "running" | "done" | "failed" | "canceled";
@@ -313,7 +323,7 @@ export const api = {
     invoke<boolean>("edit_remote_post", { accountId, remoteId, message }),
 };
 
-export function mediaUrl(route: "source" | "thumbnail" | "render" | "waveform", id: number, revision: number) {
+export function mediaUrl(route: "source" | "thumbnail" | "render" | "waveform" | "filmstrip", id: number, revision: number) {
   return `${convertFileSrc(`${route}-${id}`, "studio-media")}?v=${revision}`;
 }
 

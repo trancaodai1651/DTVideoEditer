@@ -1,0 +1,1 @@
+ALTER TABLE timelines ADD COLUMN lanes_json TEXT NOT NULL DEFAULT '[]';

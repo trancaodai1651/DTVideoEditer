@@ -19,18 +19,38 @@ use crate::{
 };
 
 const PAGE_SIZE: u32 = 48;
-const MIGRATIONS: [&str; 6] = [
+const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_library.sql"),
     include_str!("../migrations/002_timeline_edit_points.sql"),
     include_str!("../migrations/003_publishing.sql"),
     include_str!("../migrations/004_editor_layers.sql"),
     include_str!("../migrations/005_file_grants.sql"),
     include_str!("../migrations/006_waveforms.sql"),
+    include_str!("../migrations/007_filmstrips.sql"),
+    include_str!("../migrations/008_lane_controls.sql"),
 ];
 const RENDER_JOB: &str = "SELECT id, project_id, status, progress, output_path, duration_ms, error, created_at, finished_at FROM render_jobs";
 const NOT_GRANTED: StudioError = StudioError::Input("Thư mục đã bị thu hồi hoặc không tồn tại.");
 
-pub struct Store(Mutex<Connection>, pub Mutex<()>);
+pub struct Store {
+    connection: Mutex<Connection>,
+    pub(crate) preview_generation: Mutex<()>,
+}
+
+#[derive(Clone, Copy)]
+pub enum DerivedPreview {
+    Waveform,
+    Filmstrip,
+}
+
+impl DerivedPreview {
+    fn column(self) -> &'static str {
+        match self {
+            Self::Waveform => "waveform",
+            Self::Filmstrip => "filmstrip",
+        }
+    }
+}
 
 pub struct IndexEntry {
     pub relative_path: String,
@@ -123,11 +143,14 @@ impl Store {
         )?;
         tx.commit()?;
         db.execute_batch("PRAGMA foreign_keys = ON;")?;
-        Ok(Self(Mutex::new(db), Mutex::new(())))
+        Ok(Self {
+            connection: Mutex::new(db),
+            preview_generation: Mutex::new(()),
+        })
     }
 
     pub(crate) fn db(&self) -> Result<MutexGuard<'_, Connection>> {
-        self.0
+        self.connection
             .lock()
             .map_err(|_| StudioError::Input("Cơ sở dữ liệu đang lỗi. Hãy khởi động lại ứng dụng."))
     }
@@ -373,16 +396,28 @@ impl Store {
             .optional()?)
     }
 
-    pub fn waveform(&self, asset_id: i64) -> Result<Option<Vec<u8>>> {
+    pub fn derived_preview(
+        &self,
+        asset_id: i64,
+        preview: DerivedPreview,
+    ) -> Result<Option<Vec<u8>>> {
         Ok(self.db()?.query_row(
-            "SELECT m.waveform FROM asset_metadata m JOIN assets a ON a.id = m.asset_id WHERE a.id = ? AND a.available = 1",
+            &format!("SELECT m.{} FROM asset_metadata m JOIN assets a ON a.id = m.asset_id WHERE a.id = ? AND a.available = 1", preview.column()),
             [asset_id], |row| row.get::<_, Option<Vec<u8>>>(0),
         ).optional()?.flatten())
     }
 
-    pub fn cache_waveform(&self, asset_id: i64, bytes: &[u8]) -> Result<()> {
+    pub fn cache_derived_preview(
+        &self,
+        asset_id: i64,
+        preview: DerivedPreview,
+        bytes: &[u8],
+    ) -> Result<()> {
         self.db()?.execute(
-            "UPDATE asset_metadata SET waveform = ? WHERE asset_id = ?",
+            &format!(
+                "UPDATE asset_metadata SET {} = ? WHERE asset_id = ?",
+                preview.column()
+            ),
             params![bytes, asset_id],
         )?;
         Ok(())
@@ -436,10 +471,10 @@ impl Store {
 
     pub fn timeline(&self, project_id: i64) -> Result<Timeline> {
         let db = self.db()?;
-        let (titles, aspect) = db.query_row(
-            "SELECT titles_json, aspect_json FROM timelines WHERE id = ?",
+        let (titles, aspect, lanes) = db.query_row(
+            "SELECT titles_json, aspect_json, lanes_json FROM timelines WHERE id = ?",
             [project_id],
-            |row| Ok((decode(row, 0)?, decode(row, 1)?)),
+            |row| Ok((decode(row, 0)?, decode(row, 1)?, decode(row, 2)?)),
         )?;
         let mut statement = db.prepare(
             "SELECT c.id, a.id, a.relative_path, a.kind, t.kind, c.start_ms, c.end_ms, c.position_ms,
@@ -472,6 +507,7 @@ impl Store {
             clips: rows.collect::<rusqlite::Result<_>>()?,
             titles,
             aspect,
+            lanes,
         })
     }
 
@@ -504,6 +540,7 @@ impl Store {
             tracks,
             titles: timeline.titles,
             aspect: timeline.aspect,
+            lanes: timeline.lanes,
             export_range: None,
         })
     }
@@ -531,11 +568,12 @@ impl Store {
             return Err(StudioError::Input("Không tìm thấy dự án."));
         }
         tx.execute(
-            "UPDATE timelines SET titles_json = ?2, aspect_json = ?3 WHERE id = ?1",
+            "UPDATE timelines SET titles_json = ?2, aspect_json = ?3, lanes_json = ?4 WHERE id = ?1",
             params![
                 project_id,
                 encode(&snapshot.titles)?,
-                encode(&snapshot.aspect)?
+                encode(&snapshot.aspect)?,
+                encode(&snapshot.lanes)?
             ],
         )?;
         tx.execute(

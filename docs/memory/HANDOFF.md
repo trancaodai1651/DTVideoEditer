@@ -1,12 +1,26 @@
 # Bàn giao
 
-Snapshot: 2026-11-11/EDITOR-040
+Snapshot: 2026-11-12/EDITOR-041
 
 ## Điểm vào cho Claude Code hoặc Codex
 
 Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có thao tác timeline, preview, các thư viện và thuộc tính tương tự CapCut Desktop, kho mẫu từ video tham chiếu, hàng đợi xuất nhiều dự án và bộ cài Windows/macOS Universal. Người dùng đã cho phép push source lên `origin` và chạy GitHub Actions. Tiếp tục M1-H3, rồi M1-H6 và M1-F. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker hoặc native drop.
 
 Phiên khảo sát dùng Computer Use trên CapCut Windows 9.7.1.4203, draft tổng hợp **1111 (1)**. Đã thử import nhiều tệp, split theo frame, trim với magnet/linkage, chọn phải, group/compound, keyframe, Black Fade, kéo chữ, mask hình chữ nhật, SRT tiếng Việt, fade và kéo clip WAV, lớp hiệu ứng riêng, zoom vừa khung, xuất MP4 toàn timeline và xuất riêng range In–Out. Người dùng chưa có quyền CapCut Pro. Dùng ca CC-06/CC-07 cho thao tác timeline, CC-14 cho keyframe, CC-18/CC-19 cho audio và CC-23/CC-29 cho nối cảnh và xuất vùng. [Kết quả khảo sát](CAPCUT_DESKTOP_AUDIT.md)
+
+## Bản 0.4.1
+
+- Người dùng báo bản 0.4.0 không kéo được tệp xuống timeline. Tauri/Wry chuyển sự kiện của webview chính thành `WindowEvent::DragDrop`. Bản 0.4.0 đăng ký `on_webview_event`, nên nhánh import native không nhận event. Bản 0.4.1 đổi sang `on_window_event`, gửi tọa độ và ID đã cấp quyền, đồng thời báo khi rê tệp qua timeline. [Native drop](../../apps/desktop/src-tauri/src/main.rs)
+- Kéo từ Gallery và native drop dùng cùng hàm đặt clip, kiểm tra tầng khóa, giới hạn và hít mép. Một lượt nhiều tệp giữ thứ tự riêng cho hình và audio. Thả khi chưa có dự án tạo dự án và clip trong giao dịch. Nút `+` trên thẻ thêm tại playhead. [Phép sửa](../../apps/desktop/src/timeline.ts) · [Timeline](../../apps/desktop/src/TimelineEditor.tsx)
+- Có vùng thả hình phủ phía trên Video và audio ở dưới. Ruler đặt focus để dùng I/O và phím mũi tên. Trái/phải bước frame ở 30 fps, lên/xuống đến điểm cắt, `Home/End` đến đầu/cuối. Có vách chia chiều cao timeline và một hàng tab công cụ cuộn ngang.
+- Filmstrip tạo 8 ảnh ở các mốc nguồn bằng FFmpeg, cache SQLite và cắt theo trim. Khóa tầng chặn chỉnh sửa, ẩn chỉ ảnh/chữ, tắt tiếng chỉ audio. Preview và MP4 dùng hai công tắc độc lập. [Migration 007](../../apps/desktop/src-tauri/migrations/007_filmstrips.sql) · [Migration 008](../../apps/desktop/src-tauri/migrations/008_lane_controls.sql) · [Renderer](../../apps/desktop/src-tauri/src/render.rs)
+- Handoff vẫn theo dõi mục tiêu UI và thao tác tương đương CapCut. M1-H3 tiếp theo là tách/khôi phục audio, meter và tay nắm fade. M1-H6 còn compound, multicam, speed curve, tracking, rich text và lớp hiệu ứng/LUT. M1-F còn nhận dạng chữ, hiệu ứng, chuyển động, nhạc và voice từ video mẫu. M1-J còn công cụ Pro/cloud theo tài khoản và macOS. [Backlog](TASK_BACKLOG.md)
+
+**Kiểm chứng Windows**
+
+- Bản Tauri chạy bằng frontend production, với app ID/SQLite riêng. Người dùng nhập rồi kéo từ thư viện vào timeline, sau đó xác nhận kéo trực tiếp MP4 từ Explorer vào chỗ trống cũng tạo clip trên timeline. Quan sát cửa sổ QA có dự án tự tạo, ba tầng video, filmstrip, preview và trạng thái đã lưu. Kiểm thử Finder và độ phân giải DPI khác còn mở.
+- 22 test Node, 21 test Rust và 5 test FFmpeg đạt. Fixture FFmpeg giải mã JPEG filmstrip 768×54 và kiểm tra khung đầu/cuối khác màu. Native test kiểm tra khôi phục trạng thái tầng và audio/video graph khi ẩn hoặc tắt tiếng độc lập.
+- Trước khi dùng lại bản 0.4.0, lưu ý schema dữ liệu 0.4.1 là `user_version = 8`. Các trường mới có giá trị mặc định khi nâng cấp. Timeline JSON vẫn version 3.
 
 ## Bản 0.4.0
 

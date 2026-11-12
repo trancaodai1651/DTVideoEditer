@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
 import { fileName, mediaUrl } from "./desktop";
-import type { Aspect, ClipLook, TitleColor } from "./desktop";
-import { MAX_LAYERS, audioFades, clipFinish, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, playbackRate, previousVisual, transformProperties, transitionBetween } from "./timeline";
+import type { Aspect, ClipLook, LaneControl, TitleColor } from "./desktop";
+import { MAX_LAYERS, audioFades, clipFinish, clipLane, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, playbackRate, previousVisual, transformProperties, transitionBetween } from "./timeline";
 import type { Clip } from "./timeline";
 import { timecode } from "./vi";
 
@@ -245,10 +245,11 @@ function useMediaClock(clip: Clip, at: number, playing: boolean, revision: numbe
 
 type TransformMode = "move" | "scale" | "rotate";
 
-function VisualFrame({ clip, at, revision, playing, aspectRatio, editable, selected, onTransform, live, blend, shade }: {
+function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable, selected, onTransform, live, blend, shade }: {
   clip: Clip; at: number; revision: number; playing: boolean; aspectRatio: number; editable: boolean; selected: boolean;
   onTransform: (event: PointerEvent<HTMLElement>, clip: Clip, mode: TransformMode) => void;
   live: boolean;
+  muted: boolean;
   blend: number;
   shade: number;
 }) {
@@ -279,7 +280,7 @@ function VisualFrame({ clip, at, revision, playing, aspectRatio, editable, selec
     style={bounds} title={editable ? fileName(clip.relativePath) : undefined}
     onPointerDown={editable ? (event) => onTransform(event, { ...clip, look }, "move") : undefined}>
     {clip.kind === "image" ? <img className="frame-layer" src={src} style={style} alt="" draggable={false} />
-      : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} playsInline preload="auto" />}
+      : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} muted={muted} playsInline preload="auto" />}
     {editable && selected && <>
       {["nw", "ne", "sw", "se"].map((corner) => <span className={`frame-handle ${corner}`} key={corner} aria-hidden="true"
         title="Đổi cỡ" onPointerDown={(event) => onTransform(event, { ...clip, look }, "scale")} />)}
@@ -294,8 +295,8 @@ function AudioFrame({ clip, at, revision, playing }: { clip: Clip; at: number; r
   return <audio ref={(element) => { player.current = element; }} src={mediaUrl("source", clip.assetId, revision)} preload="auto" />;
 }
 
-export function CompositionFrame({ clips, aspect, at, revision, playing, selectedKey, editable, onSelect, onTransform }: {
-  clips: Clip[]; aspect: Aspect; at: number; revision: number; playing: boolean; selectedKey: string | null; editable: boolean;
+export function CompositionFrame({ clips, laneControls, aspect, at, revision, playing, selectedKey, editable, onSelect, onTransform }: {
+  clips: Clip[]; laneControls: LaneControl[]; aspect: Aspect; at: number; revision: number; playing: boolean; selectedKey: string | null; editable: boolean;
   onSelect: (key: string | null) => void; onTransform: (clip: Clip) => void;
 }) {
   const frame = useRef<HTMLDivElement>(null);
@@ -315,13 +316,14 @@ export function CompositionFrame({ clips, aspect, at, revision, playing, selecte
   const held = joins.filter(({ right, kind, durationMs }) => kind === "dissolve" && at >= right.positionMs
     && at < right.positionMs + durationMs).map(({ left }) => left);
   const visuals = [...active.filter((clip) => clip.track === "video"), ...held]
+    .filter((clip) => !clipLane(laneControls, clip)?.hidden)
     .sort((a, b) => layerOf(a) - layerOf(b) || a.positionMs - b.positionMs);
   const source = aspect === "source" ? clips.reduce<Clip | undefined>((first, clip) =>
     clip.track === "video" && clip.width && clip.height && (!first || clip.positionMs < first.positionMs) ? clip : first, undefined) : undefined;
   const size = source?.width && source.height ? source.width / source.height : ratio[aspect];
 
   function begin(event: PointerEvent<HTMLElement>, clip: Clip, mode: TransformMode) {
-    if (!frame.current || !editable || playing || event.button !== 0 || !event.isPrimary) return;
+    if (!frame.current || !editable || playing || clipLane(laneControls, clip)?.locked || event.button !== 0 || !event.isPrimary) return;
     event.stopPropagation();
     const bounds = frame.current.getBoundingClientRect();
     const object = (event.currentTarget.closest(".frame-object") ?? event.currentTarget).getBoundingClientRect();
@@ -381,6 +383,7 @@ export function CompositionFrame({ clips, aspect, at, revision, playing, selecte
     onPointerUp={(event) => transform(event, true)} onPointerCancel={cancel} onLostPointerCapture={cancel}
     onPointerDown={(event) => { if (editable && event.target === event.currentTarget) onSelect(null); }}>
     {visuals.map((clip) => {
+      const controls = clipLane(laneControls, clip);
       const frozen = at >= clipFinish(clip);
       const elapsed = frozen ? clipLength(clip) - 1 : at - clip.positionMs;
       const incoming = joins.find((join) => join.right.key === clip.key);
@@ -389,16 +392,20 @@ export function CompositionFrame({ clips, aspect, at, revision, playing, selecte
       const shade = Math.min(1, incoming?.kind === "black" ? 2 * elapsed / incoming.durationMs : 1,
         outgoing ? 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 1);
       return <VisualFrame key={clip.key} clip={clip} at={elapsed} revision={revision} playing={playing && !frozen}
-        aspectRatio={size} editable={editable && !playing && !frozen} selected={clip.key === selectedKey}
+        muted={frozen || !!controls?.muted} aspectRatio={size} editable={editable && !playing && !frozen && !controls?.locked} selected={clip.key === selectedKey}
         onTransform={begin} live={draft?.key === clip.key} blend={blend} shade={shade} />;
     })}
-    {playing && active.filter((clip) => clip.track === "audio").map((clip) =>
+    {playing && active.filter((clip) => {
+      const controls = clipLane(laneControls, clip);
+      return !controls?.muted && (clip.track === "audio" || (clip.kind === "video" && controls?.hidden));
+    }).map((clip) =>
       <AudioFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing} />)}
-    {active.filter((clip) => clip.title).map((clip) => {
+    {active.filter((clip) => clip.title && !clipLane(laneControls, clip)?.hidden).map((clip) => {
       const title = clip.title!;
+      const canEdit = editable && !playing && !clipLane(laneControls, clip)?.locked;
       const x = (title.x + 100) / 2;
       const y = (title.y + 100) / 2;
-      return <span key={clip.key} className={`frame-title ${title.background ? "with-background" : ""} ${editable && !playing ? "editable" : ""} ${clip.key === selectedKey && editable && !playing ? "frame-selected" : ""}`} style={{
+      return <span key={clip.key} className={`frame-title ${title.background ? "with-background" : ""} ${canEdit ? "editable" : ""} ${clip.key === selectedKey && canEdit ? "frame-selected" : ""}`} style={{
         left: `${x}%`, top: `${y}%`, transform: `translate(-${x}%, -${y}%)`, fontSize: `${title.size}cqh`,
         color: title.color, textShadow: title.color === "black" ? "0 0 3px white" : undefined,
       }} onPointerDown={(event) => begin(event, clip, "move")}>{title.text}</span>;

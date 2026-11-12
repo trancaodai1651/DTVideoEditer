@@ -1,6 +1,12 @@
 # Changelog
 
-Snapshot: 2026-11-11/EDITOR-040
+Snapshot: 2026-11-12/EDITOR-041
+
+## 2026-11-12 · Editor 0.4.1
+
+- M1-H7 sửa bộ lắng nghe kéo tệp từ hệ điều hành. Kéo trong thư viện hoặc kéo tệp vào timeline trống có thể tạo dự án và lưu clip đầu cùng một giao dịch. Cả hai dùng chung quy tắc đặt clip và hít mép.
+- M1-H2 thêm điều hướng theo frame và điểm cắt, chuyển focus từ thước tới timeline, kéo vách chia để đổi chiều cao và đưa thư viện công cụ về một hàng cuộn ngang.
+- M1-H3 thêm filmstrip 8 khung qua migration 007. Migration 008 lưu khóa/ẩn/tắt tiếng theo tầng. Trạng thái ẩn và tắt tiếng đi cùng snapshot xuất.
 
 ## 2026-11-11 · Editor 0.4.0
 

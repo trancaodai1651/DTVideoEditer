@@ -18,8 +18,8 @@ Nếu đang dùng Corepack, chạy `corepack enable` để kích hoạt shim pnp
 
 1. Chạy `pnpm demo:media`. Lệnh tạo video MP4, WAV và PNG trong một thư mục tạm và in đường dẫn.
 2. Mở ứng dụng, bấm **Nhập tệp** rồi chọn cùng lúc các tệp mẫu. Cũng có thể thả tệp từ Explorer/Finder hoặc dùng nút thư mục để quét cả thư mục.
-3. Mở **Dự án** trên thanh trên cùng và tạo dự án. Chọn video, phát trong **Nguồn**, rồi bấm **Thêm vào timeline** hoặc kéo tệp từ thư viện vào tầng. Làm tương tự với WAV để thấy hai nhóm.
-4. Trên timeline, kéo clip theo thời gian hoặc sang tầng cùng loại. Kéo hai mép để trim. Dùng thanh zoom, **Vừa khung** hoặc giữ Ctrl/⌘ khi cuộn để đổi tỷ lệ thước. Bấm thước để đặt playhead rồi bấm **Tách** (phím `S`). `Ctrl+Z` và `Ctrl+Y` hoàn tác và làm lại.
+3. Kéo video hoặc WAV từ thư viện hoặc Explorer/Finder vào timeline. Lần thả đầu sẽ tạo dự án nếu chưa có. Cũng có thể bấm dấu `+` trên thẻ media để thêm tại playhead. Thả hình vào dải phía trên Video để tạo tầng phủ, hoặc thả WAV phía dưới các tầng âm thanh để tạo thêm tầng.
+4. Trên timeline, kéo clip theo thời gian hoặc sang tầng cùng loại. Kéo hai mép để trim. Dùng thanh zoom, **Vừa khung** hoặc giữ Ctrl/⌘ khi cuộn để đổi tỷ lệ thước. Bấm thước để đặt playhead. Dùng trái/phải để bước từng frame, lên/xuống để tới điểm cắt và `S` để tách. `Ctrl+Z` và `Ctrl+Y` hoàn tác và làm lại.
 5. Bấm **Xuất và chạy hàng đợi**, chọn tên tệp MP4 trong hộp thoại. Tiến độ hiện trong **Hàng đợi xuất**, có thể hủy hoặc thử lại.
 6. Đóng rồi mở lại ứng dụng để kiểm tra dữ liệu đã lưu. Trong **Cài đặt**, có thể kiểm tra FFmpeg, quét lại và thu hồi thư mục. Thu hồi gỡ metadata và clip tham chiếu khỏi ứng dụng. Tệp gốc vẫn nằm trong thư mục.
 
@@ -31,7 +31,7 @@ Nếu đang dùng Corepack, chạy `corepack enable` để kích hoạt shim pnp
 2. Thêm chữ, sticker và âm thanh ở thanh thư viện. Trong **Bản dựng**, dừng phát rồi kéo video, ảnh, sticker hoặc chữ ngay trên preview. Kéo góc để đổi cỡ video hoặc ảnh, kéo nút tròn để xoay. Dùng menu zoom cạnh tỷ lệ khung để phóng riêng preview. Một số xử lý nâng cao như ổn định, khử nhiễu và chroma key hiện đầy đủ trong MP4.
 3. Trong **Mẫu dựng**, chọn preset hoặc video từ thư viện rồi bấm **Phân tích và lưu mẫu**. FFmpeg dò điểm cắt và tỷ lệ khung của video dài từ 0,5 giây đến 3 phút. Gán nguồn từng đoạn, hiệu ứng màu, animation, chuyển cảnh, chữ, nhạc, SFX và voice. **Tạo dự án từ mẫu** mở một dự án mới có thể chỉnh tiếp.
 4. Chọn clip hình và dùng nút diamond để đặt keyframe vị trí, cỡ, xoay và opacity. Trong **Chuyển cảnh**, chọn clip sau ở mối nối rồi chọn **Hòa trộn** hoặc **Qua đen**. Timeline hiển thị waveform và inspector âm thanh có gain dB, fade đầu và fade cuối.
-5. Dùng **In** và **Out** nếu muốn xuất riêng một vùng. Trên từng dự án, bấm **Thêm vào hàng đợi** và chọn tên MP4. Mở **Hàng đợi xuất** rồi bấm **Chạy hàng đợi** để xử lý lần lượt. Lượt chờ giữ phạm vi đã chọn khi đóng ứng dụng.
+5. Dùng **In** và **Out** nếu muốn xuất riêng một vùng. Trên từng dự án, bấm **Xếp hàng** và chọn tên MP4. Mở **Hàng đợi xuất** rồi bấm **Chạy hàng đợi** để xử lý lần lượt. Lượt chờ giữ phạm vi và trạng thái ẩn/tắt tiếng của các tầng khi đóng ứng dụng.
 
 Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Có thể xuất SRT từ các lớp đã đánh dấu là phụ đề. Để nhận dạng, chọn một clip có tiếng, ngôn ngữ và mô hình Whisper GGML `.bin`. Dùng bản FFmpeg có filter `whisper`. Kiểm tra bằng `ffmpeg -h filter=whisper`. [FFmpeg Whisper](https://ffmpeg.org/ffmpeg-filters.html#whisper) · [Mô hình Whisper](https://github.com/ggml-org/whisper.cpp#quick-start)
 

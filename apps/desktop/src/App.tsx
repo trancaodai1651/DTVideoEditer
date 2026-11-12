@@ -1,15 +1,15 @@
 import { useCallback, useDeferredValue, useEffect, useEffectEvent, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { CSSProperties, FormEvent, PointerEvent } from "react";
 import { api, desktop, fileName } from "./desktop";
-import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
+import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, LaneControl, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
 import { Icon } from "./Icon";
 import { Gallery, Preview, selectAsset } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
 import type { Selection } from "./MediaPanels";
-import { MAX_LAYERS, addCaptions, addClip, addTitle, changeLayer, clipFinish, commit, defaultLook, fromTimeline, layerOf, lookAt, newHistory, playbackRate, previousVisual, redo, setTransformKey, setTransition, subtitleCues, toSnapshot, totalMs, trackOf, transformProperties, undo, updateAppearance } from "./timeline";
-import type { Clip, History, MediaRef } from "./timeline";
+import { MAX_LAYERS, addCaptions, addClip, addDroppedMedia, addTitle, changeLayer, changesLockedLane, clipFinish, clipLane, commit, defaultLook, fromTimeline, laneControl, layerOf, lookAt, newHistory, playbackRate, previousVisual, redo, setTransformKey, setTransition, subtitleCues, toSnapshot, totalMs, trackOf, transformProperties, undo, updateAppearance } from "./timeline";
+import type { Clip, History, MediaDropTarget, MediaRef } from "./timeline";
 import { TimelineEditor } from "./TimelineEditor";
-import type { Lane, TimelineDrop, TimelineDropTarget } from "./TimelineEditor";
+import type { Lane, TimelineDrop } from "./TimelineEditor";
 import { ClipInspector } from "./ClipInspector";
 import type { InspectorTab } from "./ClipInspector";
 import { EditorLibrary } from "./EditorLibrary";
@@ -40,10 +40,13 @@ function clipSelection(clip: Clip, playheadMs: number): Selection | null {
 
 export function App() {
   const timelineDrop = useRef<TimelineDrop>(null);
-  const dropTargets = useRef(new Map<number, { projectId: number; target: TimelineDropTarget }>());
+  const dropTargets = useRef(new Map<number, { projectId: number | null; target: MediaDropTarget }>());
+  const seededProject = useRef<number | null>(null);
+  const creatingFromMedia = useRef(false);
   const [view, setView] = useState<View>("library");
   const [tool, setTool] = useState<LibraryTab>("media");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("video");
+  const [timelineShare, setTimelineShare] = useState(44);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderId, setFolderId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
@@ -62,6 +65,7 @@ export function App() {
   const [history, setHistory] = useState<History>(newHistory);
   const [aspect, setAspect] = useState<Aspect>("source");
   const [lane, setLane] = useState<Lane>({ track: "video", layer: 0 });
+  const [laneControls, setLaneControls] = useState<LaneControl[]>([]);
   const [frameMode, setFrameMode] = useState(false);
   const [playing, setPlaying] = useState(false);
   const playback = useRef({ from: 0, start: 0 });
@@ -77,9 +81,13 @@ export function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [libraryRevision, setLibraryRevision] = useState(0);
   const [timelineRevision, setTimelineRevision] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [loadedTimeline, setLoadedTimeline] = useState<{ id: number; revision: number } | null>(null);
   const [revokeId, setRevokeId] = useState<number | null>(null);
   const project = projects.find((item) => item.id === projectId);
   const disabled = !!busy || !desktop;
+  const editsDisabled = disabled || !ready || (projectId !== null
+    && (loadedTimeline?.id !== projectId || loadedTimeline.revision !== timelineRevision));
   const clips = history.present;
   const selectedClip = clips.find((clip) => clip.key === selectedKey);
   const total = totalMs(clips);
@@ -89,6 +97,11 @@ export function App() {
   const captions = subtitleCues(clips);
   const needCatalog = view === "library" && (tool === "audio" || tool === "stickers");
   const rendering = jobs.some(isActive);
+
+  function resizeTimeline(event: PointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (bounds?.height) setTimelineShare(Math.round(Math.max(30, Math.min(68, 100 * (bounds.bottom - event.clientY) / bounds.height))));
+  }
 
   useEffect(() => {
     if (!desktop) return;
@@ -100,6 +113,7 @@ export function App() {
       setProjectId((existing) => existing ?? saved[0]?.id ?? null);
       setTools(capabilities);
       setJobs(queue);
+      setReady(true);
     }).catch((error: unknown) => {
       if (current) setNotice({ text: String(error), error: true });
     });
@@ -154,15 +168,18 @@ export function App() {
 
   useEffect(() => {
     if (projectId === null) return;
+    if (seededProject.current === projectId) { seededProject.current = null; return; }
     let current = true;
     // Wait for queued saves so a reload never reads a stale timeline.
     void saves.current.chain.then(() => api.timeline(projectId)).then((saved) => {
       if (!current) return;
       setHistory(newHistory(fromTimeline(saved)));
+      setLoadedTimeline({ id: projectId, revision: timelineRevision });
       setSelectedKey(null);
       setPlayheadMs(0);
       setAspect(saved.aspect ?? "source");
       setLane({ track: "video", layer: 0 });
+      setLaneControls(saved.lanes ?? []);
       setFrameMode(false);
       setPlaying(false);
       setSaveState("saved");
@@ -174,9 +191,15 @@ export function App() {
   }, [projectId, timelineRevision]);
 
   const receiveDrop = useEffectEvent((drop: MediaDrop) => {
+    if (drop.type === "hover") {
+      timelineDrop.current?.hover(drop.x / window.devicePixelRatio, drop.y / window.devicePixelRatio);
+      return;
+    }
+    if (drop.type === "left") { timelineDrop.current?.hover(); return; }
     if (drop.type === "started") {
       const target = timelineDrop.current?.target(drop.x / window.devicePixelRatio, drop.y / window.devicePixelRatio);
-      if (target && project) dropTargets.current.set(drop.id, { projectId: project.id, target });
+      timelineDrop.current?.hover();
+      if (target) dropTargets.current.set(drop.id, { projectId, target });
       return;
     }
     const captured = dropTargets.current.get(drop.id);
@@ -185,8 +208,8 @@ export function App() {
       setNotice({ text: drop.result.Err, error: true });
       return;
     }
-    const target = captured?.projectId === project?.id && view === "library" && !disabled ? captured?.target : undefined;
-    applyImported(drop.result.Ok, target);
+    const target = captured?.projectId === projectId && view === "library" && !editsDisabled ? captured.target : undefined;
+    void applyImported(drop.result.Ok, target).catch((error: unknown) => notify(String(error), true));
   });
 
   useEffect(() => {
@@ -282,7 +305,7 @@ export function App() {
     });
   }
 
-  function applyImported(report: ImportedFiles, target?: TimelineDropTarget) {
+  async function applyImported(report: ImportedFiles, target?: MediaDropTarget) {
     if (!report.assets.length) {
       setNotice({ text: "Không có tệp media đọc được trong lựa chọn.", error: true });
       return;
@@ -293,37 +316,14 @@ export function App() {
     setTool("media");
     setView("library");
     void refreshLibrary().catch((error: unknown) => setNotice({ text: String(error), error: true }));
-    let inserted = 0;
-    if (target && project) {
-      let next = clips;
-      const times = { video: target.positionMs, audio: target.positionMs };
-      for (const asset of report.assets) {
-        const media = selectAsset(asset);
-        const track = trackOf(media.kind);
-        const added = addClip(next, media, times[track], target.lane.track === track ? target.lane.layer : 0);
-        if (!added) continue;
-        next = added;
-        times[track] = clipFinish(added.at(-1)!);
-        inserted += 1;
-      }
-      if (inserted) {
-        const first = next[clips.length];
-        edit(commit(history, next));
-        setSelectedKey(first.key);
-        setInspectorTab(first.track === "audio" ? "audio" : "video");
-        setLane({ track: first.track, layer: layerOf(first) });
-        setPlayheadMs(first.positionMs);
-        setFrameMode(true);
-        setPlaying(false);
-      }
-    }
+    const inserted = target ? await insertDroppedMedia(report.assets.map(selectAsset), target) : 0;
     success(`Đã nhập ${report.assets.length} tệp${target ? `, đặt ${inserted} clip lên timeline` : ""}${report.skipped ? `, bỏ qua ${report.skipped} tệp` : ""}.`);
   }
 
   function pickMediaFiles() {
     void run("Đang nhập tệp media…", async () => {
       const report = await api.pickMediaFiles();
-      if (report) applyImported(report);
+      if (report) await applyImported(report);
     });
   }
 
@@ -343,12 +343,17 @@ export function App() {
   }
 
   /** Applies an edit and queues its save. Saves run in order, one at a time. */
-  function edit(next: History, nextAspect = aspect) {
-    if (!project || (next === history && nextAspect === aspect)) return;
+  function edit(next: History, nextAspect = aspect, nextLanes = laneControls) {
+    if (!project || editsDisabled || (next === history && nextAspect === aspect && nextLanes === laneControls)) return false;
+    if (changesLockedLane(clips, next.present, laneControls)) {
+      notify("Mở khóa tầng trước khi chỉnh clip trên tầng đó.", true);
+      return false;
+    }
     const id = project.id;
-    const snapshot = toSnapshot(next.present, nextAspect);
+    const snapshot = toSnapshot(next.present, nextAspect, nextLanes);
     setHistory(next);
     setAspect(nextAspect);
+    setLaneControls(nextLanes);
     setSaveState("saving");
     const queue = saves.current;
     queue.pending += 1;
@@ -362,23 +367,72 @@ export function App() {
       setSaveState("error");
       setNotice({ text: String(error), error: true });
     });
+    return true;
+  }
+
+  function toggleLane(target: Lane, flag: "locked" | "hidden" | "muted") {
+    const current = laneControl(laneControls, target.track, target.layer) ?? { ...target, locked: false, hidden: false, muted: false };
+    const changed = { ...current, [flag]: !current[flag] };
+    const next = laneControls.filter((control) => control !== current);
+    if (changed.locked || changed.hidden || changed.muted) next.push(changed);
+    edit(history, aspect, next);
+  }
+
+  async function commitMedia(next: Clip[]) {
+    const inserted = next[clips.length];
+    if (!inserted) return 0;
+    if (project) {
+      if (!edit(commit(history, next))) return 0;
+    }
+    else {
+      if (creatingFromMedia.current) return 0;
+      creatingFromMedia.current = true;
+      setBusy("Đang tạo dự án từ media…");
+      try {
+        const created = await api.createEditedProject(`Dự án ${new Date().toLocaleString("vi-VN")}`, toSnapshot(next));
+        seededProject.current = created.id;
+        setLoadedTimeline({ id: created.id, revision: timelineRevision });
+        setProjects((saved) => [created, ...saved]);
+        setProjectId(created.id);
+        setHistory(commit(newHistory(), next));
+        setAspect("source");
+        setLaneControls([]);
+        setSaveState("saved");
+        setView("library");
+      } finally {
+        creatingFromMedia.current = false;
+        setBusy("");
+      }
+    }
+    setSelectedKey(inserted.key);
+    setInspectorTab(inserted.track === "audio" ? "audio" : "video");
+    setLane({ track: inserted.track, layer: layerOf(inserted) });
+    setPlaying(false);
+    if (playheadMs < inserted.positionMs || playheadMs >= clipFinish(inserted)) setPlayheadMs(inserted.positionMs);
+    setFrameMode(true);
+    return next.length - clips.length;
+  }
+
+  function insertDroppedMedia(media: MediaRef[], target: MediaDropTarget) {
+    return commitMedia(addDroppedMedia(clips, media, target, laneControls));
+  }
+
+  function dropMedia(media: MediaRef, target: MediaDropTarget) {
+    if (editsDisabled) return;
+    void insertDroppedMedia([media], target).then((added) => notify(added ? vi.clipAdded : vi.clipNoLength, !added))
+      .catch((error: unknown) => notify(String(error), true));
   }
 
   function addMedia(media: MediaRef, positionMs?: number, target = lane, appearance?: Partial<ClipLook>) {
-    if (!project || disabled) return;
+    if (editsDisabled) return;
     const track = trackOf(media.kind);
-    const next = addClip(clips, media, positionMs, target.track === track ? target.layer : 0);
-    if (!next) return setNotice({ text: vi.clipNoLength, error: true });
-    const inserted = next[next.length - 1];
-    if (appearance) next[next.length - 1] = { ...inserted, look: appearance };
-    edit(commit(history, next));
-    setSelectedKey(inserted.key);
-    setInspectorTab(track === "audio" ? "audio" : "video");
-    setLane({ track, layer: layerOf(inserted) });
-    setPlaying(false);
-    if (track === "video" && (playheadMs < inserted.positionMs || playheadMs >= clipFinish(inserted))) setPlayheadMs(inserted.positionMs);
-    setFrameMode(track === "video");
-    success(vi.clipAdded);
+    const layer = target.track === track ? target.layer : 0;
+    if (laneControl(laneControls, track, layer)?.locked) return notify("Mở khóa tầng trước khi thêm clip.", true);
+    const next = addClip(clips, media, positionMs, layer);
+    if (!next) return notify(vi.clipNoLength, true);
+    if (appearance) next[next.length - 1] = { ...next[next.length - 1], look: appearance };
+    void commitMedia(next).then((added) => { if (added) success(vi.clipAdded); })
+      .catch((error: unknown) => notify(String(error), true));
   }
 
   function selectClip(key: string | null) {
@@ -415,8 +469,7 @@ export function App() {
     if (!project || disabled) return;
     const next = addTitle(clips, playheadMs, lane.track === "text" ? lane.layer : 0, style);
     const title = next.at(-1);
-    if (next === clips || !title) return;
-    edit(commit(history, next));
+    if (next === clips || !title || !edit(commit(history, next))) return;
     setSelectedKey(title.key);
     setPlaying(false);
     setPlayheadMs(title.positionMs);
@@ -458,6 +511,7 @@ export function App() {
 
   function applyLook(look: Partial<ClipLook>) {
     if (!selectedClip || selectedClip.track !== "video") return;
+    if (clipLane(laneControls, selectedClip)?.locked) return notify("Mở khóa tầng trước khi áp dụng hiệu ứng.", true);
     if (selectedClip.kind !== "video" && (look.stabilize || look.opticalFlow)) {
       notify("Chọn clip video để dùng ổn định hoặc nội suy chuyển động.", true);
       return;
@@ -480,7 +534,7 @@ export function App() {
   function loadCues(cues: Cue[], offset: number) {
     if (!cues.length) { notify("Không tìm thấy câu phụ đề.", false); return; }
     const next = addCaptions(clips, cues, offset);
-    edit(commit(history, next));
+    if (!edit(commit(history, next))) return;
     setPlayheadMs(cues[0].startMs + offset);
     setSelectedKey(next[clips.length].key);
     setFrameMode(true);
@@ -605,11 +659,11 @@ export function App() {
           </p>}
         </div>
 
-        {view === "library" ? <div className="editor-workspace">
+        {view === "library" ? <div className="editor-workspace" style={{ "--panels-fr": `${100 - timelineShare}fr`, "--timeline-fr": `${timelineShare}fr` } as CSSProperties}>
           <div className="editor-columns">
             <EditorLibrary tab={tool} onTab={openTool} busy={disabled} catalog={catalog} catalogFailed={catalogFailed}
               onRetryCatalog={() => { setCatalogFailed(false); setCatalogRetry((value) => value + 1); }}
-              hasProject={!!project} hasVisual={selectedClip?.track === "video"}
+              hasProject={!!project && !editsDisabled} hasVisual={selectedClip?.track === "video" && !editsDisabled}
               hasSpeech={!!selectedClip && (selectedClip.kind === "audio" || selectedClip.kind === "video") && selectedClip.available}
               hasCaptions={captions.length > 0} onApply={applyLook} onTitle={insertTitle} onAdd={addStock}
               onImportSrt={importSrt} onExportSrt={exportSrt} onTranscribe={transcribe}
@@ -623,7 +677,8 @@ export function App() {
                 selected={selection?.assetId} onSelect={(asset) => { setSelection(asset); setFrameMode(false); setPlaying(false); }}
                 query={query} onQuery={(value) => { setQuery(value); setPage(0); }}
                 kind={kind} audioOnly={tool === "audio"} onKind={(value) => { setKind(value); setPage(0); }}
-                onImport={pickMediaFiles} onFolderImport={pickFolder} busy={disabled} canAdd={!!project && !disabled} timeline={timelineDrop} onAppend={addMedia}
+                onImport={pickMediaFiles} onFolderImport={pickFolder} busy={disabled} canAdd={!editsDisabled} timeline={timelineDrop}
+                onAppend={(media) => addMedia(media, playheadMs)}
                 onPage={(index) => { setAssets(null); setPage(index); }}
                 onFolder={(id) => {
                   if (id === folderId) return;
@@ -632,29 +687,37 @@ export function App() {
               templates={<TemplateLibrary initialReference={assets?.items.find((asset) => asset.id === selection?.assetId && asset.kind === "video")}
                 disabled={disabled} onProject={openTemplateProject} notify={notify} />}
             />
-            <EditorPlayer source={<Preview selection={selection} project={project} revision={libraryRevision} busy={disabled}
+            <EditorPlayer source={<Preview selection={selection} revision={libraryRevision} busy={editsDisabled}
               onAppend={addMedia} onReference={() => openTool("templates")} />}
-              clips={clips} aspect={aspect} at={playheadMs} total={total} revision={libraryRevision} frameMode={frameMode} playing={playing}
+              clips={clips} laneControls={laneControls} aspect={aspect} at={playheadMs} total={total} revision={libraryRevision} frameMode={frameMode} playing={playing}
               onMode={(mode) => { setFrameMode(mode); if (!mode) setPlaying(false); }}
-              onPlay={togglePlayback} onSeek={movePlayhead} onAspect={(value) => edit(history, value)} disabled={disabled || !project}
+              onPlay={togglePlayback} onSeek={movePlayhead} onAspect={(value) => edit(history, value)} disabled={editsDisabled || !project}
               selectedKey={selectedKey} onSelect={selectClip} onTransform={(clip) => changeClip(clip, true)}
             />
-            <ClipInspector clip={selectedClip} aspect={aspect} disabled={disabled || !project}
+            <ClipInspector clip={selectedClip} aspect={aspect} disabled={editsDisabled || !project || !!(selectedClip && clipLane(laneControls, selectedClip)?.locked)}
               name={project?.name} total={total} playheadMs={playheadMs} tab={inspectorTab} onTab={setInspectorTab}
               onKeyframe={toggleTransformKey} onSeek={movePlayhead}
               onAspect={(value) => edit(history, value)}
               onLayer={(layer) => {
                 if (!selectedClip) return;
-                edit(commit(history, changeLayer(clips, selectedClip.key, layer)));
-                setLane({ track: selectedClip.track, layer });
+                if (edit(commit(history, changeLayer(clips, selectedClip.key, layer)))) setLane({ track: selectedClip.track, layer });
               }}
               onClip={changeClip} />
           </div>
+          <div className="workspace-divider" role="separator" aria-label="Đổi chiều cao timeline" aria-orientation="horizontal"
+            aria-valuemin={30} aria-valuemax={68} aria-valuenow={timelineShare} tabIndex={0}
+            onPointerDown={(event) => { if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId); }}
+            onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeTimeline(event); }}
+            onDoubleClick={() => setTimelineShare(44)} onKeyDown={(event) => {
+              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+              event.preventDefault();
+              setTimelineShare((share) => Math.max(30, Math.min(68, share + (event.key === "ArrowUp" ? 3 : -3))));
+            }} />
           <TimelineEditor ref={timelineDrop} key={projectId} project={project} clips={clips} selectedKey={selectedKey} playheadMs={playheadMs} revision={libraryRevision}
-            busy={disabled} canUndo={history.past.length > 0} canRedo={history.future.length > 0}
-            saveState={saveState} lane={lane} onLane={setLane} onTitle={() => insertTitle()}
-            onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead}
-            onDropMedia={addMedia} onUndo={() => edit(undo(history))} onRedo={() => edit(redo(history))}
+            busy={editsDisabled} canUndo={history.past.length > 0} canRedo={history.future.length > 0}
+            saveState={saveState} lane={lane} laneControls={laneControls} onLaneControl={toggleLane} onLane={setLane} onTitle={() => insertTitle()}
+            onChange={(next) => edit(commit(history, next))} onSelect={selectClip} onPlayhead={movePlayhead} onPlay={togglePlayback}
+            onDropMedia={dropMedia} onUndo={() => edit(undo(history))} onRedo={() => edit(redo(history))}
             onExport={startRender} range={exportRange} onRange={markRange} />
         </div> : view === "queue" ? <ExportQueue jobs={jobs} projects={projects} busy={disabled}
           onRun={() => void run(vi.working, async () => { await api.runRenderQueue(); setJobs(await api.renderQueue()); })}

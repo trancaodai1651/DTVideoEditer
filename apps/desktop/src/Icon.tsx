@@ -32,6 +32,14 @@ const paths = {
   pause: "M9 5v14 M15 5v14",
   expand: "M9 4H4v5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5",
   search: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M15 15l6 6",
+  lock: "M6 10h12v10H6z M9 10V7a3 3 0 0 1 6 0v3 M12 14v2",
+  unlock: "M6 10h12v10H6z M9 10V7a3 3 0 0 1 5-2 M12 14v2",
+  eye: "M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
+  eyeOff: "M3 3l18 18 M6 7.4C4 9 2 12 2 12s3.6 6 10 6c1.7 0 3.3-.4 4.6-1 M10 6.2c.6-.1 1.3-.2 2-.2 6.4 0 10 6 10 6s-1 1.7-2.9 3.2",
+  speaker: "M3 9h4l5-4v14l-5-4H3z M16 8c2 2 2 6 0 8 M19 5c4 4 4 10 0 14",
+  muted: "M3 9h4l5-4v14l-5-4H3z M16 9l5 6 M21 9l-5 6",
+  magnet: "M5 6v7a7 7 0 0 0 14 0V6h-4v7a3 3 0 0 1-6 0V6z M5 9h4 M15 9h4",
+  snap: "M12 4v16 M3 12h5 M5 9l3 3-3 3 M21 12h-5 M19 9l-3 3 3 3",
 };
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths; size?: number }) {

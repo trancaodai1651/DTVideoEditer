@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAX_TIMELINE_MS, addCaptions, addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, offsetVisual, place, redo, removeClip, snap, splitClip, subtitleCues, updateAppearance,
-  deleteSelection, groupSelection, lookAt, moveSelection, pasteSelection, setTransformKey,
+  addDroppedMedia, changesLockedLane, deleteSelection, groupSelection, lookAt, mediaDropPlacement, moveSelection, pasteSelection, setTransformKey,
   toSnapshot, totalMs, transitionBetween, trimClip, trimEnd, trimStart, undo,
 } from "../apps/desktop/src/timeline.ts";
 
@@ -10,6 +10,38 @@ const video = { assetId: 1, relativePath: "a.mp4", kind: "video", durationMs: 60
 const image = { assetId: 2, relativePath: "b.png", kind: "image", durationMs: null };
 const audio = { assetId: 3, relativePath: "c.wav", kind: "audio", durationMs: 3000 };
 const points = (clips) => clips.map((clip) => [clip.track, clip.startMs, clip.endMs, clip.positionMs]);
+
+test("drops a mixed batch onto a blank timeline with separate visual and audio cursors", () => {
+  const target = { videoLayer: 0, audioLayer: 0, positionMs: 1500, toleranceMs: 0, playheadMs: 0 };
+  const dropped = addDroppedMedia([], [video, audio, image], target);
+  assert.deepEqual(points(dropped), [["video", 0, 6000, 1500], ["audio", 0, 3000, 1500], ["video", 0, 3000, 7500]]);
+  assert.equal(toSnapshot(dropped).tracks[0].clips[0].positionMs, 1500);
+});
+
+test("preview and committed drops share snapping, layer, and collision rules", () => {
+  const base = addClip([], video);
+  const drop = { videoLayer: 1, audioLayer: 0, positionMs: 3045, toleranceMs: 50, playheadMs: 3000 };
+  const preview = mediaDropPlacement(base, image, drop);
+  const result = addDroppedMedia(base, [image], drop);
+  assert.deepEqual(preview, { track: "video", layer: 1, at: 3000, length: 3000 });
+  assert.equal(result[1].positionMs, preview.at);
+  assert.equal(result[1].layer, preview.layer);
+  assert.equal(addDroppedMedia(base, [image], { ...drop, videoLayer: 0 })[1].positionMs, 6000);
+  assert.equal(addDroppedMedia(base, [{ ...video, durationMs: null }], drop), base);
+});
+
+test("locks prevent inserting, removing, or moving clips across a protected lane", () => {
+  const lane = { track: "video", layer: 0, locked: true, hidden: false, muted: false };
+  const base = addClip([], video);
+  const target = { videoLayer: 0, audioLayer: 0, positionMs: 500, toleranceMs: 0, playheadMs: 0 };
+  const mixed = addDroppedMedia(base, [image, audio], target, [lane]);
+  assert.equal(mixed.length, 2);
+  assert.equal(mixed[1].track, "audio");
+  assert.equal(changesLockedLane(base, mixed, [lane]), false);
+  assert.equal(changesLockedLane(base, removeClip(base, base[0].key), [lane]), true);
+  assert.equal(changesLockedLane(base, changeLayer(base, base[0].key, 1), [lane]), true);
+  assert.deepEqual(toSnapshot(base, "source", [lane]).lanes, [lane]);
+});
 
 test("main track magnet and linkage move following clips independently", () => {
   const clips = addTitle(addClip(addClip([], video), video), 6200, 0);

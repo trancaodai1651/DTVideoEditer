@@ -10,7 +10,7 @@ use tauri::http::{Method, Request, Response, StatusCode, header};
 use crate::{
     library::{authorized_asset, authorized_file},
     probe::{self, MediaFormat},
-    store::Store,
+    store::{DerivedPreview, Store},
 };
 
 const MAX_RANGE: u64 = 4 * 1024 * 1024;
@@ -66,7 +66,9 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
         return empty(StatusCode::NOT_FOUND);
     };
     let thumbnail = route == "thumbnail";
-    if asset_id < 1 || (!thumbnail && !matches!(route, "source" | "render" | "waveform")) {
+    if asset_id < 1
+        || (!thumbnail && !matches!(route, "source" | "render" | "waveform" | "filmstrip"))
+    {
         return empty(StatusCode::NOT_FOUND);
     }
     if route == "render" {
@@ -89,6 +91,17 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
         };
         return file_response(&path, "video/mp4", head, request);
     }
+    if matches!(route, "waveform" | "filmstrip") {
+        if head {
+            return empty(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let preview = if route == "waveform" {
+            DerivedPreview::Waveform
+        } else {
+            DerivedPreview::Filmstrip
+        };
+        return derived_response(store, asset_id, preview);
+    }
     let Ok(Some(source)) = store.source(asset_id, thumbnail) else {
         return empty(StatusCode::NOT_FOUND);
     };
@@ -103,21 +116,14 @@ fn media_response(store: &Store, request: &Request<Vec<u8>>) -> Response<Vec<u8>
             .body(if head { Vec::new() } else { bytes })
             .expect("static thumbnail headers");
     }
-    if route == "waveform" {
-        if head {
-            return empty(StatusCode::METHOD_NOT_ALLOWED);
-        }
-        return waveform_response(store, asset_id);
-    }
-
     let Some(format) = MediaFormat::for_path(&path) else {
         return empty(StatusCode::NOT_FOUND);
     };
     file_response(&path, format.mime(&source.kind), head, request)
 }
 
-fn waveform_response(store: &Store, asset_id: i64) -> Response<Vec<u8>> {
-    let Ok(_generation) = store.1.lock() else {
+fn derived_response(store: &Store, asset_id: i64, preview: DerivedPreview) -> Response<Vec<u8>> {
+    let Ok(_generation) = store.preview_generation.lock() else {
         return empty(StatusCode::SERVICE_UNAVAILABLE);
     };
     let Ok(Some(source)) = store.source(asset_id, false) else {
@@ -126,10 +132,15 @@ fn waveform_response(store: &Store, asset_id: i64) -> Response<Vec<u8>> {
     let Ok((path, metadata)) = authorized_asset(&source) else {
         return empty(StatusCode::NOT_FOUND);
     };
-    let bytes = match store.waveform(asset_id) {
+    let (generate, mime): (fn(&Path, i64) -> Option<Vec<u8>>, _) = match preview {
+        DerivedPreview::Waveform if source.kind != "image" => (probe::waveform, "image/png"),
+        DerivedPreview::Filmstrip if source.kind == "video" => (probe::filmstrip, "image/jpeg"),
+        _ => return empty(StatusCode::NOT_FOUND),
+    };
+    let bytes = match store.derived_preview(asset_id, preview) {
         Ok(Some(bytes)) => bytes,
         _ => {
-            let Some(bytes) = probe::waveform(&path, source.duration_ms.unwrap_or(0)) else {
+            let Some(bytes) = generate(&path, source.duration_ms.unwrap_or(0)) else {
                 return empty(StatusCode::NOT_FOUND);
             };
             let still_allowed =
@@ -147,11 +158,11 @@ fn waveform_response(store: &Store, asset_id: i64) -> Response<Vec<u8>> {
             if !still_allowed {
                 return empty(StatusCode::NOT_FOUND);
             }
-            let _ = store.cache_waveform(asset_id, &bytes);
+            let _ = store.cache_derived_preview(asset_id, preview, &bytes);
             bytes
         }
     };
-    headers("image/png", bytes.len() as u64)
+    headers(mime, bytes.len() as u64)
         .body(bytes)
         .expect("static waveform headers")
 }

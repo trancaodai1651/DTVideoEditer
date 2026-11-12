@@ -79,6 +79,7 @@ pub struct Timeline {
     pub clips: Vec<TimelineClip>,
     pub titles: Vec<crate::timeline::TitleEdit>,
     pub aspect: crate::timeline::Aspect,
+    pub lanes: Vec<crate::timeline::LaneControl>,
 }
 
 #[derive(Clone, Debug, Serialize)]

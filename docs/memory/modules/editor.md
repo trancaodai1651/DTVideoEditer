@@ -6,11 +6,13 @@
 
 [timeline.ts](../../../apps/desktop/src/timeline.ts) chứa các phép sửa ở frontend và undo/redo 100 bước. [TimelineEditor](../../../apps/desktop/src/TimelineEditor.tsx) nhận media theo tầng. [ClipInspector](../../../apps/desktop/src/ClipInspector.tsx) chỉnh chữ, hình, âm thanh, tốc độ, animation và màu. `save_timeline` ghi snapshot trong giao dịch. [EditorPlayer](../../../apps/desktop/src/EditorPlayer.tsx) phát nguồn hoặc timeline. Tốc độ thay đổi thời lượng trên timeline, giữ điểm in/out theo thời gian nguồn.
 
-`S` hoặc `Ctrl+B` tách tại playhead, `Ctrl+Shift+B` tách nhiều clip, `Delete` gỡ clip, mũi tên dịch 100 ms (giữ Shift 1 giây), `Ctrl+Z` và `Ctrl+Y` hoàn tác/làm lại. Có chế độ chọn/cắt/chọn theo hướng, group, clipboard, marker `M`, điểm In `I` và Out `O`.
+`S` hoặc `Ctrl+B` tách tại playhead, `Ctrl+Shift+B` tách nhiều clip, `Delete` gỡ clip, `Ctrl+Z` và `Ctrl+Y` hoàn tác/làm lại. Trái/phải bước frame ở 30 fps, `Shift` + trái/phải dịch clip 100 ms, lên/xuống nhảy điểm cắt. Có chế độ chọn/cắt/chọn theo hướng, group, clipboard, marker `M`, điểm In `I` và Out `O`.
 
 M1-I dùng pointer capture để kéo từ thẻ media tới timeline, xem trước vị trí đã hít mép và đổi tầng khi kéo clip. Thước và tên tầng giữ vị trí khi cuộn. Có thanh zoom, vừa khung và Ctrl/⌘ + cuộn. Preview lưu vị trí, tỷ lệ và góc xoay khi nhả chuột qua cùng snapshot dùng để xuất MP4.
 
 M1-H2 có công tắc dồn clip chính, hít mép và liên kết riêng. Khi trim hoặc xóa với dồn clip, clip phía sau ở Video 1 dịch theo. Liên kết áp dụng cùng độ dịch cho clip ở tầng khác bắt đầu từ ranh giới sửa. Keyframe transform nội suy vị trí, tỷ lệ, xoay và opacity theo mốc trên clip. Chuyển cảnh hòa trộn và qua đen áp dụng cho hai clip kề trên cùng tầng và bị vô hiệu khi tạo khoảng hở.
+
+M1-H7 cho thả media đầu tiên để tự tạo dự án, dùng chung quy tắc đặt clip cho Gallery và native drop. Vùng trên các tầng hình tạo tầng phủ, vùng dưới các tầng âm thanh tạo thêm tầng âm thanh. M1-H3 có filmstrip theo trim và waveform. Khóa tầng bảo vệ phép sửa trên timeline và preview. Ẩn hình/chữ và tắt tiếng là hai điều khiển độc lập, lưu cùng snapshot xuất.
 
 ## Render
 

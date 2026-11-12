@@ -2,14 +2,15 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Icon } from "./Icon";
 import { aspectNames, CompositionFrame } from "./ClipInspector";
-import type { Aspect } from "./desktop";
+import type { Aspect, LaneControl } from "./desktop";
 import type { Clip } from "./timeline";
-import { timecode } from "./vi";
+import { frameTimecode } from "./vi";
 
-export function EditorPlayer({ source, clips, aspect, at, total, revision, frameMode, playing, onMode, onPlay, onSeek, onAspect,
+export function EditorPlayer({ source, clips, laneControls, aspect, at, total, revision, frameMode, playing, onMode, onPlay, onSeek, onAspect,
   disabled, selectedKey, onSelect, onTransform }: {
   source: ReactNode;
   clips: Clip[];
+  laneControls: LaneControl[];
   aspect: Aspect;
   at: number;
   total: number;
@@ -42,13 +43,13 @@ export function EditorPlayer({ source, clips, aspect, at, total, revision, frame
     </div>
     {frameMode ? <div className="studio-stage" ref={stage} style={{ "--viewer-zoom": zoom / 100 } as CSSProperties}>
       <div className="studio-stage-inner">
-        {clips.length ? <CompositionFrame clips={clips} aspect={aspect} at={Math.min(at, Math.max(0, total - 1))} revision={revision} playing={playing}
+        {clips.length ? <CompositionFrame clips={clips} laneControls={laneControls} aspect={aspect} at={Math.min(at, Math.max(0, total - 1))} revision={revision} playing={playing}
           selectedKey={selectedKey} editable={!disabled} onSelect={onSelect} onTransform={onTransform} />
           : <div className="player-empty"><Icon name="play" size={34} /><span>Thêm media để xem bản dựng</span></div>}
       </div>
     </div> : <div className="source-pane" ref={stage}>{source}</div>}
     <div className="player-footer">
-      <span className="player-time"><strong>{timecode(at)}</strong> / {timecode(total)}</span>
+      <span className="player-time"><strong>{frameTimecode(at)}</strong> / {frameTimecode(total)}</span>
       <button type="button" className="icon-button" aria-label={playing ? "Dừng bản dựng" : "Phát bản dựng"}
         disabled={disabled || total <= 0} onClick={onPlay}><Icon name={playing ? "pause" : "play"} size={17} /></button>
       <input className="player-scrub" type="range" min={0} max={Math.max(1, total)} value={Math.min(at, total)}

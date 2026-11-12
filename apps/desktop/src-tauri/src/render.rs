@@ -271,7 +271,12 @@ pub fn plan(
     let mut audio = vec!["[abase]".to_owned()];
     let mut index = 0;
     let mut video = "[base]".to_owned();
-    let mut visuals = snapshot.clips("video");
+    let (mut visuals, hidden): (Vec<_>, Vec<_>) =
+        snapshot.clips("video").into_iter().partition(|clip| {
+            !snapshot
+                .lane("video", clip.layer)
+                .is_some_and(|lane| lane.hidden)
+        });
     visuals.sort_by_key(|clip| (clip.layer, clip.position_ms));
 
     let joins: Vec<_> = visuals
@@ -389,13 +394,38 @@ pub fn plan(
              eof_action=pass:repeatlast=0:enable='gte(t,{at})*lt(t,{end})'{composed}",
         ));
         video = composed;
-        if source.kind == "video" && source.has_audio {
+        if source.kind == "video"
+            && source.has_audio
+            && !snapshot
+                .lane("video", clip.layer)
+                .is_some_and(|lane| lane.muted)
+        {
             graph.push(audio_chain(index, clip));
             audio.push(format!("[a{index}]"));
         }
         index += 1;
     }
+    for clip in hidden {
+        let source = sources.get(&clip.asset_id).ok_or_else(missing)?;
+        if source.kind == "video"
+            && source.has_audio
+            && !snapshot
+                .lane("video", clip.layer)
+                .is_some_and(|lane| lane.muted)
+        {
+            push_input(&mut inputs, source, clip);
+            graph.push(audio_chain(index, clip));
+            audio.push(format!("[a{index}]"));
+            index += 1;
+        }
+    }
     for clip in snapshot.clips("audio") {
+        if snapshot
+            .lane("audio", clip.layer)
+            .is_some_and(|lane| lane.muted)
+        {
+            continue;
+        }
         let source = sources.get(&clip.asset_id).ok_or_else(missing)?;
         if !source.has_audio {
             return Err(StudioError::Input(
@@ -408,7 +438,15 @@ pub fn plan(
         index += 1;
     }
 
-    let mut titles: Vec<_> = snapshot.titles.iter().collect();
+    let mut titles: Vec<_> = snapshot
+        .titles
+        .iter()
+        .filter(|title| {
+            !snapshot
+                .lane("text", title.layer)
+                .is_some_and(|lane| lane.hidden)
+        })
+        .collect();
     titles.sort_by_key(|title| title.layer);
     for (index, title) in titles.iter().enumerate() {
         let label = format!("[title{index}]");
@@ -805,6 +843,7 @@ mod tests {
             ],
             titles: vec![],
             aspect: Aspect::Source,
+            lanes: Vec::new(),
             export_range: None,
         };
         let output = sources[&1].path.with_file_name("out.mp4");
@@ -838,6 +877,41 @@ mod tests {
         assert!(graph.contains("atrim=duration=7.000[abase]"));
         assert!(graph.contains("[abase][a0][a2]amix=inputs=3:duration=first:normalize=0"));
         assert!(joined.ends_with("-t 7.000 -movflags +faststart -progress pipe:1 -nostats -f mp4"));
+
+        let mut controls = snapshot;
+        controls.lanes = vec![
+            crate::timeline::LaneControl {
+                track: "video".into(),
+                hidden: true,
+                ..Default::default()
+            },
+            crate::timeline::LaneControl {
+                track: "audio".into(),
+                muted: true,
+                ..Default::default()
+            },
+        ];
+        let graph_for = |settings: &TimelineSnapshot| {
+            let plan = super::plan(settings, &sources, &output).unwrap();
+            let index = plan
+                .args
+                .iter()
+                .position(|arg| arg == "-filter_complex")
+                .unwrap();
+            plan.args[index + 1].to_string_lossy().into_owned()
+        };
+        let hidden = graph_for(&controls);
+        assert!(!hidden.contains("overlay="));
+        assert!(
+            hidden.contains("adelay=500:all=1"),
+            "hidden video can still be heard"
+        );
+        assert!(!hidden.contains("adelay=6000:all=1"));
+        controls.lanes[0].hidden = false;
+        controls.lanes[0].muted = true;
+        let muted = graph_for(&controls);
+        assert!(muted.contains("overlay="));
+        assert!(!muted.contains("adelay="));
     }
 
     #[test]
@@ -849,6 +923,7 @@ mod tests {
             tracks: Vec::new(),
             titles: vec![],
             aspect: Aspect::Source,
+            lanes: Vec::new(),
             export_range: None,
         };
         assert!(plan(&empty, &sources, &output).is_err());
@@ -860,6 +935,7 @@ mod tests {
             }],
             titles: vec![],
             aspect: Aspect::Source,
+            lanes: Vec::new(),
             export_range: None,
         };
         assert!(plan(&missing, &sources, &output).is_err());
