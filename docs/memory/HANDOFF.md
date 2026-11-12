@@ -33,11 +33,23 @@ Source chính: [phép sửa](../../apps/desktop/src/timeline.ts) cuối tệp, [
 - `pnpm lint`, `pnpm typecheck`, `cargo fmt --check`, 28 test Node (thêm [smart.test.mjs](../../scripts/smart.test.mjs)), 26 test Rust, 6 test FFmpeg thật, `context:check`, `skills:check`.
 - Test FFmpeg mới `real_ffmpeg_measures_tracks_and_exports_curves_with_detached_audio`: mức RMS thấp trong đoạn im lặng 0,5–1,5 giây và được cache; dò đúng một điểm cắt ở 1 giây (±80 ms); tracking hình vuông chạy 60 px/giây sai lệch ≤ 40/1000 khung; xuất clip speed curve 0,5×→2× có âm thanh tách và một clip tắt, FFprobe đo thời lượng hình và tiếng khớp tính toán (±80–100 ms).
 - Giao diện production chạy trong trình duyệt với IPC giả lập tạm (đã gỡ khỏi repo): menu chuột phải, tách âm thanh lưu đúng `audioLink`, multicam đổi góc tại 5,97 giây, compound thu gọn và mở, preset speed curve, tab Thông minh tách 3 cảnh, vẽ khung tracking ghi keyframe.
-- Bộ cài NSIS 0.5.0 build tại máy (xem mục Bộ cài).
+- Bộ cài NSIS 0.5.0 build tại máy và CI cả hai nền tảng đạt (xem mục Bộ cài và revision).
 
 **Chưa kiểm chứng**
 
 - Chưa thao tác trong cửa sổ Tauri thật và trên macOS. Meter, tracking và dò cảnh mới chạy với dữ liệu thật trong test native, chưa qua giao diện thật. Kéo núm fade và chọn bằng khung chưa thử bằng chuột.
+
+**Bộ cài và revision**
+
+- Commit build là `8534cd1`, tag `v0.5.0`. CI Windows/macOS cho master và tag đạt, hai job đóng gói (NSIS Windows x64 và DMG macOS Universal, có bước `lipo` và `hdiutil verify`) đạt. [CI](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43142222834) · [Bộ cài](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43142222854) · [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.5.0)
+- Bộ cài Windows build tại máy nằm ở `apps/desktop/src-tauri/target/verified-installers/v0.5.0`. DMG chưa được tải về máy vì phiên này không có `gh`; tải từ trang run và so digest của archive bên dưới. Windows chưa ký, DMG ký ad hoc, cả hai cần FFmpeg/FFprobe trên PATH.
+- Bản debug với `STUDIO_DEV_DATA_DIR` riêng khởi động được và nâng cơ sở dữ liệu mới lên `user_version = 9`. Chưa mở bản release trên dữ liệu thật vì 0.4.1 sẽ không đọc được schema 9.
+
+| Tệp | SHA-256 |
+| --- | --- |
+| `AI Video Studio_0.5.0_x64-setup.exe` build tại máy | `9596309a24d3651d4f486cb1aa0e2ef65f3ddc454511d5fff95a2b4154f44ce9` |
+| Archive `windows-x64-setup` trên Actions | `d4a1778770688896b9596b8ac36eebf74a0d80d3396831e039b3ca33926315be` |
+| Archive `macos-universal-dmg` trên Actions | `8a0c540a31a920bcc68c6584184b9c983a5a60a158dce660cb65c23fdc65673a` |
 
 **Ca chạy lại trong cửa sổ thật**
 
