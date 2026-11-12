@@ -1,6 +1,6 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-12/EDITOR-100
+Snapshot: 2026-11-12/EDITOR-101
 
 Next task: M1-H8
 
@@ -18,9 +18,12 @@ Next task: M1-H8
 - Bản 0.8.1 (M1-K, M1-L, M5-A/M5-B): quét toàn bộ khoảng video được dùng trên timeline, giữ nhiều nguồn trong highlight, dựng theo một hoặc nhiều âm thanh, proxy 720p mặc định bật, tệp `.dtedit` lưu ở nơi được chọn và runtime xóa nền đi kèm bộ cài. [Bàn giao](HANDOFF.md)
 - Bản 0.9.0 (M1-D, M1-K, M1-H6, M5-A/M5-B): bộ cài kèm mô hình Whisper `ggml-small-q5_1.bin` nên tạo phụ đề không cần chọn mô hình; proxy chỉ tạo khi người dùng bật/bấm tạo; highlight phân tích độ nét, màu, rung máy, điểm cắt thích ứng và đỉnh âm, mặc định không giới hạn thời lượng; dựng theo âm thanh dài đúng timeline âm thanh và đi qua hết tư liệu trước khi lặp; chỉnh màu thêm bánh xe Lift/Gamma/Gain, đường cong R/G/B kéo điểm và HSL sáu dải. [Bàn giao](HANDOFF.md)
 - Bản 0.10.0 (M1-D, M1-L, M1-H8): luồng Tạo phụ đề tìm model trong bộ cài hoặc cache và tự tải bản đã pin khi thiếu. Nhận dạng theo đoạn 5 phút có tiến độ, tối đa 1800 câu/chữ trên timeline. Xuất Final Cut Pro XML 4 và SRT để chuyển dự án sang Adobe Premiere. Đổi tab thư viện đưa phần nội dung về đầu tab mới. [Bàn giao](HANDOFF.md)
+- Bản 0.10.1 (M1-D): bỏ qua đoạn 5 phút im lặng hoàn toàn, bỏ khoảng im lặng dài ở đầu mỗi đoạn và cộng lại đúng mốc vào phụ đề. [Bàn giao](HANDOFF.md)
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token trong keychain, nháp, duyệt native, đăng, danh sách, sửa và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng
+
+- 0.10.0: 42 test Node, 37 test Rust, 11 test FFmpeg thật, lint và TypeScript đạt. Trong cửa sổ Tauri Windows, đã kéo clip từ thư viện, tạo hai câu phụ đề bằng model đi kèm và xuất XML/SRT. OpenTimelineIO đọc lại tầng và điểm cắt. Chưa mở XML bằng Adobe Premiere. [Bàn giao](HANDOFF.md)
 
 - 0.9.0: 42 test Node, 37 test Rust, 10 test FFmpeg thật và test Whisper thật (giọng Windows → mô hình small trong bố cục `resources/whisper/`) đạt. Test FFmpeg mới đo pixel cho bánh xe màu, đường cong lam và HSL đỏ. Đường cong kênh khớp tuyệt đối giữa TS và Rust. Chưa QA bằng tay trong cửa sổ Tauri. [Bàn giao](HANDOFF.md)
 

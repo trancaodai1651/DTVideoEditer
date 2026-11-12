@@ -1,6 +1,10 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-100
+Snapshot: 2026-11-12/EDITOR-101
+
+## 2026-11-12 · Editor 0.10.1
+
+- M1-D đo im lặng ở đầu mỗi đoạn nhận dạng để Whisper không đặt câu vào khoảng im lặng dài. Bỏ qua đoạn không có tiếng và giữ nguyên vị trí câu trên timeline.
 
 ## 2026-11-12 · Editor 0.10.0
 

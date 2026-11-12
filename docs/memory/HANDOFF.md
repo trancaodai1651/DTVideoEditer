@@ -1,6 +1,6 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-100
+Snapshot: 2026-11-12/EDITOR-101
 
 ## Điểm vào cho Claude Code hoặc Codex
 
@@ -8,11 +8,23 @@ Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án
 
 Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu trên Windows/macOS. M1-L còn ca mở XML trong Adobe Premiere để lưu lại thành `.prproj`. [Backlog](TASK_BACKLOG.md)
 
+## Bản 0.10.1
+
+- **M1-D.** Ca WAV 15:57 có câu nói bắt đầu ở giây 952. Whisper 0.10.0 nhận đúng câu nhưng đặt đầu phụ đề khoảng giây 948. Bản 0.10.1 đo im lặng đầu mỗi khối bằng `silencedetect` (−60 dBFS, 1,5 giây), giữ đệm 200 ms trước tiếng và cộng lại mốc đã bỏ theo tốc độ clip. Khối im lặng hoàn toàn bỏ qua Whisper. [Captions](../../apps/desktop/src-tauri/src/captions.rs)
+- **Kiểm chứng.** Ca WAV 15:57 đã qua API Rust dùng model đi kèm, cả bốn khối cập nhật tiến độ và câu cuối bắt đầu sau giây 950. Ca thiếu resource cũng tải đúng model và dùng cache khi chạy lại. Chạy `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked real_whisper -- --ignored` với `DT_EDIT_WHISPER_MODEL` trỏ đến model thật.
+
 ## Bản 0.10.0
 
 - **M1-D.** Ảnh báo lỗi cho thấy picker GGML và một clip khoảng 25 phút. 0.9.0 có nhánh fallback mở picker và giới hạn 15 phút. `transcribe_clip` mặc định nay chỉ dùng model đi kèm hoặc cache theo SHA-256. Khi thiếu, tải tệp pin vào app data, xác minh trước khi đặt vào cache. Hộp thoại chỉ mở khi chọn mô hình tùy chọn. FFmpeg vẫn cần filter `whisper`. Từng đoạn 5 phút xử lý trên máy, trả tiến độ và ghép mốc thời gian có xét tốc độ cố định 0,5–2×. Giới hạn chung 1800 câu/chữ, SRT 6 MiB. [Captions](../../apps/desktop/src-tauri/src/captions.rs)
 - **M1-L.** Dự án → Xuất cho Adobe Premiere (.xml)… ghi `xmeml version=4`, tham chiếu file URL với escaping, mốc nguồn theo FPS và mốc sequence 30 fps, tầng hình và tiếng, gain, liên kết video với âm thanh gốc. Xuất SRT cạnh XML khi có phụ đề. Trong Premiere, chọn File → Import, nhập thêm SRT nếu có, rồi Save As `.prproj`. `.dtedit` giữ dữ liệu đầy đủ của DT Edit. XML báo khi dự án có thuộc tính cần làm lại như retime, LUT, chuyển cảnh, chữ trang trí hoặc keyframe. [Premiere exporter](../../apps/desktop/src-tauri/src/premiere.rs) · [Nhập XML trong Premiere](https://helpx.adobe.com/premiere/desktop/organize-media/import-files/migrate-from-final-cut-pro-x.html)
 - **M1-H8/M5-B.** Khi đổi tab, nội dung thư viện bắt đầu ở đầu tab. Installer xác minh model có trong layout Windows và trong `.app` macOS. Schema SQLite 10, timeline JSON v3.
+
+**Kiểm chứng**
+
+- TypeScript, ESLint, 42 test Node, 37 test Rust và 11 test FFmpeg thật đạt. Test XML nhiều tầng kiểm tra nguồn đã cấp quyền và SRT. OpenTimelineIO đọc lại hai tầng hình, hai tầng tiếng, vị trí clip 0,5 giây và điểm vào nguồn 0,8 giây với nguồn 25 fps.
+- Ca Whisper thật với hai đoạn thử 10 giây giữ offset. Mô hình tải từ revision đã pin qua xác minh SHA-256 rồi được dùng lại từ cache.
+- Tauri Windows, bản QA 0.10.0 với model đi kèm và hồ sơ riêng: nhập MP4 25 fps, kéo xuống timeline, chọn tiếng Anh rồi bấm **Tạo phụ đề**. Không mở hộp thoại GGML, tạo hai câu. Dùng menu **Dự án** xuất XML/SRT và đọc lại đúng tầng hình, tầng tiếng nguồn và hai mốc phụ đề.
+- GitHub Actions build cả hai bộ cài từ `48bfda1` và đã đối chiếu SHA-256 của ZIP. Bản 0.10.1 thay thế hai bộ cài này. [Build 0.10.0](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43186720072)
 
 **Còn mở**
 

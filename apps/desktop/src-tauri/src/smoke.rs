@@ -1937,7 +1937,7 @@ fn real_whisper_transcribes_with_the_bundled_model_layout() {
     let status = Command::new(find_tool("ffmpeg").unwrap())
         .args(["-v", "error", "-i"])
         .arg(speech)
-        .args(["-af", "adelay=12000:all=1"])
+        .args(["-af", "adelay=952000:all=1", "-ar", "16000", "-ac", "1"])
         .arg(&delayed)
         .status()
         .unwrap();
@@ -1955,18 +1955,17 @@ fn real_whisper_transcribes_with_the_bundled_model_layout() {
     }))
     .unwrap();
     let progress = std::cell::RefCell::new(Vec::new());
-    let cues =
-        crate::captions::transcribe_in_chunks(&store, &clip, "en", &model, 10_000, |done, _| {
-            progress.borrow_mut().push(done)
-        })
-        .unwrap();
+    let cues = crate::captions::transcribe(&store, &clip, "en", &model, |done, _| {
+        progress.borrow_mut().push(done)
+    })
+    .unwrap();
     assert_eq!(
         *progress.borrow(),
-        vec![0, 10_000, asset.duration_ms.unwrap()]
+        vec![0, 300_000, 600_000, 900_000, asset.duration_ms.unwrap()]
     );
     assert!(
         cues.iter()
-            .any(|cue| cue.start_ms >= 10_000 && cue.text.to_lowercase().contains("caption"))
+            .any(|cue| cue.start_ms >= 950_000 && cue.text.to_lowercase().contains("caption"))
     );
     let text = cues
         .iter()

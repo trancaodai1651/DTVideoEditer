@@ -2,6 +2,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
+    process::Command,
     time::Duration,
 };
 
@@ -284,6 +285,42 @@ pub fn whisper_binary() -> Result<PathBuf> {
     Ok(path)
 }
 
+fn leading_silence(mut command: Command, duration_ms: i64) -> i64 {
+    command.args([
+        "-af",
+        "silencedetect=n=-60dB:d=1.5,ametadata=print:file=-",
+        "-f",
+        "null",
+        "-",
+    ]);
+    let Some(output) = probe::capture_limited(command, Duration::from_secs(90), 256 * 1024) else {
+        return 0;
+    };
+    let text = String::from_utf8_lossy(&output);
+    let mut lines = text.lines();
+    let start = lines.find_map(|line| line.strip_prefix("lavfi.silence_start="));
+    let at_boundary = start
+        .and_then(|value| value.parse::<f64>().ok())
+        .is_some_and(|seconds| seconds.abs() <= 0.05);
+    if !at_boundary {
+        return 0;
+    }
+    // Keep 200 ms before the first audible sample to preserve the onset of speech.
+    lines
+        .find_map(|line| line.strip_prefix("lavfi.silence_end="))
+        .map_or(duration_ms, |value| {
+            value
+                .parse::<f64>()
+                .ok()
+                .filter(|seconds| seconds.is_finite())
+                .map_or(0, |seconds| {
+                    ((seconds * 1000.).round() as i64)
+                        .saturating_sub(200)
+                        .clamp(0, duration_ms - 1)
+                })
+        })
+}
+
 pub(crate) fn transcribe_in_chunks(
     store: &Store,
     clip: &SpeechClip,
@@ -343,20 +380,30 @@ pub(crate) fn transcribe_in_chunks(
     progress(0, length);
     for from in (0..length).step_by(chunk_ms as usize) {
         let to = (from + chunk_ms).min(length);
-        let mut command = probe::command(&ffmpeg);
-        command
-            .current_dir(work.path())
-            .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
-            .args(format.input_args())
-            .args([
-                "-ss",
-                &format!("{:.3}", (clip.start_ms + from) as f64 / 1000.0),
-                "-t",
-                &format!("{:.3}", (to - from) as f64 / 1000.0),
-                "-i",
-            ])
-            .arg(&source_path)
-            .args(["-map", "0:a:0", "-vn", "-af", &filter, "-f", "null", "-"]);
+        let read_audio = |offset: i64| {
+            let mut command = probe::command(&ffmpeg);
+            command
+                .current_dir(work.path())
+                .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
+                .args(format.input_args())
+                .args([
+                    "-ss",
+                    &format!("{:.3}", (clip.start_ms + offset) as f64 / 1000.0),
+                    "-t",
+                    &format!("{:.3}", (to - offset) as f64 / 1000.0),
+                    "-i",
+                ])
+                .arg(&source_path)
+                .args(["-map", "0:a:0", "-vn"]);
+            command
+        };
+        let offset = from + leading_silence(read_audio(from), to - from);
+        if offset >= to {
+            progress(to, length);
+            continue;
+        }
+        let mut command = read_audio(offset);
+        command.args(["-af", &filter, "-f", "null", "-"]);
         probe::capture_allow_empty(command, Duration::from_secs(20 * 60)).ok_or_else(|| StudioError::Message(format!(
             "Whisper chưa đọc được tiếng từ mốc {}. Kiểm tra clip có âm thanh và FFmpeg có filter whisper.", format_timestamp(clip.start_ms + from))))?;
         if output.is_file() {
@@ -370,8 +417,8 @@ pub(crate) fn transcribe_in_chunks(
             let text = std::str::from_utf8(&bytes)
                 .map_err(|_| StudioError::Input("Whisper trả phụ đề không hợp lệ."))?;
             for mut cue in parse_cues(text, true)? {
-                cue.start_ms += scaled(from);
-                cue.end_ms = (cue.end_ms + scaled(from)).min(scaled(to));
+                cue.start_ms += scaled(offset);
+                cue.end_ms = (cue.end_ms + scaled(offset)).min(scaled(to));
                 if valid(&cue) {
                     result.push(cue);
                 }
