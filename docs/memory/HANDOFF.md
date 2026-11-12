@@ -14,13 +14,29 @@ Phiên khảo sát dùng Computer Use trên CapCut Windows 9.7.1.4203, draft t�
 - Kéo từ Gallery và native drop dùng cùng hàm đặt clip, kiểm tra tầng khóa, giới hạn và hít mép. Một lượt nhiều tệp giữ thứ tự riêng cho hình và audio. Thả khi chưa có dự án tạo dự án và clip trong giao dịch. Nút `+` trên thẻ thêm tại playhead. [Phép sửa](../../apps/desktop/src/timeline.ts) · [Timeline](../../apps/desktop/src/TimelineEditor.tsx)
 - Có vùng thả hình phủ phía trên Video và audio ở dưới. Ruler đặt focus để dùng I/O và phím mũi tên. Trái/phải bước frame ở 30 fps, lên/xuống đến điểm cắt, `Home/End` đến đầu/cuối. Có vách chia chiều cao timeline và một hàng tab công cụ cuộn ngang.
 - Filmstrip tạo 8 ảnh ở các mốc nguồn bằng FFmpeg, cache SQLite và cắt theo trim. Khóa tầng chặn chỉnh sửa, ẩn chỉ ảnh/chữ, tắt tiếng chỉ audio. Preview và MP4 dùng hai công tắc độc lập. [Migration 007](../../apps/desktop/src-tauri/migrations/007_filmstrips.sql) · [Migration 008](../../apps/desktop/src-tauri/migrations/008_lane_controls.sql) · [Renderer](../../apps/desktop/src-tauri/src/render.rs)
-- Handoff vẫn theo dõi mục tiêu UI và thao tác tương đương CapCut. M1-H3 tiếp theo là tách/khôi phục audio, meter và tay nắm fade. M1-H6 còn compound, multicam, speed curve, tracking, rich text và lớp hiệu ứng/LUT. M1-F còn nhận dạng chữ, hiệu ứng, chuyển động, nhạc và voice từ video mẫu. M1-J còn công cụ Pro/cloud theo tài khoản và macOS. [Backlog](TASK_BACKLOG.md)
+- Handoff vẫn theo dõi mục tiêu UI và thao tác tương đương CapCut. M1-H3 tiếp theo là tách/khôi phục audio, meter và tay nắm fade. M1-H8 còn sidebar thư viện, menu chuột phải và đổi chiều rộng panel. M1-H6 còn compound, multicam, speed curve, tracking, rich text và lớp hiệu ứng/LUT. M1-F còn nhận dạng chữ, hiệu ứng, chuyển động, nhạc và voice từ video mẫu. M1-J còn công cụ Pro/cloud theo tài khoản và macOS. [Backlog](TASK_BACKLOG.md)
 
 **Kiểm chứng Windows**
 
-- Bản Tauri chạy bằng frontend production, với app ID/SQLite riêng. Người dùng nhập rồi kéo từ thư viện vào timeline, sau đó xác nhận kéo trực tiếp MP4 từ Explorer vào chỗ trống cũng tạo clip trên timeline. Quan sát cửa sổ QA có dự án tự tạo, ba tầng video, filmstrip, preview và trạng thái đã lưu. Kiểm thử Finder và độ phân giải DPI khác còn mở.
+- Bản Tauri chạy bằng frontend production, với app ID `studio.dtedit.desktop.qa041` và SQLite riêng. Người dùng nhập rồi kéo từ thư viện vào timeline, sau đó xác nhận kéo trực tiếp MP4 từ Explorer vào chỗ trống cũng tạo clip trên timeline. Quan sát cửa sổ QA có dự án tự tạo, ba tầng video, filmstrip, preview và trạng thái đã lưu. Truy vấn QA ở chế độ chỉ đọc xác nhận schema 8, sáu clip trên ba tầng video, hai quyền theo tệp và hai filmstrip. Kiểm thử Finder và độ phân giải DPI khác còn mở.
 - 22 test Node, 21 test Rust và 5 test FFmpeg đạt. Fixture FFmpeg giải mã JPEG filmstrip 768×54 và kiểm tra khung đầu/cuối khác màu. Native test kiểm tra khôi phục trạng thái tầng và audio/video graph khi ẩn hoặc tắt tiếng độc lập.
 - Trước khi dùng lại bản 0.4.0, lưu ý schema dữ liệu 0.4.1 là `user_version = 8`. Các trường mới có giá trị mặc định khi nâng cấp. Timeline JSON vẫn version 3.
+
+**Ca chạy lại khi sửa kéo thả**
+
+1. Chạy `pnpm demo:media`. Build `pnpm tauri build --no-bundle --ci --config <tauri-qa.json>` với app identifier riêng, giữ `dragDropEnabled: true` và label `main`. Cửa sổ QA dùng cấu hình 1280×720 để thấy lỗi thanh công cụ che tầng chính.
+2. Mở QA với DB trống, nhập MP4/WAV từ picker và kéo thẻ MP4 vào hàng Video 1. Kiểm tra dự án tự tạo, clip được chọn và preview đọc nguồn. Thả một video/ảnh vào vùng ngay trên Video 1 để tạo tầng phủ.
+3. Từ Explorer/Finder kéo WAV và MP4 vào timeline, rồi thả một ảnh vào thư viện. Kiểm tra thả vào timeline tạo clip đúng loại, còn thả vào thư viện chỉ thêm asset. Thử lại với zoom timeline và DPI khác nhau. Mở lại để kiểm tra các clip đã lưu.
+
+**Bộ cài và revision**
+
+- Commit build là `229a33850a27ff3dc0783737081714f9c9531c21`, tag `v0.4.1`. CI Windows và macOS đạt. Hai job đóng gói đạt. `lipo` xác nhận `x86_64 arm64` và `hdiutil` xác nhận checksum DMG hợp lệ. DMG ký ad hoc, bộ cài Windows chưa ký. Hai nền tảng cần FFmpeg và FFprobe trên PATH. [CI](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43136856929) · [Bộ cài](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43136856838) · [Tag](https://github.com/trancaodai1651/DTVideoEditer/tree/v0.4.1)
+- Đã đối chiếu SHA-256 archive GitHub, giải nén và băm các tệp trong `apps/desktop/src-tauri/target/verified-installers/v0.4.1`.
+
+| Bộ cài | SHA-256 của tệp |
+| --- | --- |
+| `AI Video Studio_0.4.1_x64-setup.exe` | `48799eb8961b5125669ecebc83993dfbe9cc85fca30b0acc04149303a3e36697` |
+| `AI Video Studio_0.4.1_universal.dmg` | `25d4c1fb8a98d09b6bf4b6e1a4594579024c3e2671b3e74c08b8f6c93288feb0` |
 
 ## Bản 0.4.0
 
