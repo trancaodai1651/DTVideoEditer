@@ -12,6 +12,18 @@ Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu
 
 - **M1-D.** Ca WAV 15:57 có câu nói bắt đầu ở giây 952. Whisper 0.10.0 nhận đúng câu nhưng đặt đầu phụ đề khoảng giây 948. Bản 0.10.1 đo im lặng đầu mỗi khối bằng `silencedetect` (−60 dBFS, 1,5 giây), giữ đệm 200 ms trước tiếng và cộng lại mốc đã bỏ theo tốc độ clip. Khối im lặng hoàn toàn bỏ qua Whisper. [Captions](../../apps/desktop/src-tauri/src/captions.rs)
 - **Kiểm chứng.** Ca WAV 15:57 đã qua API Rust dùng model đi kèm, cả bốn khối cập nhật tiến độ và câu cuối bắt đầu sau giây 950. Ca thiếu resource cũng tải đúng model và dùng cache khi chạy lại. Chạy `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked real_whisper -- --ignored` với `DT_EDIT_WHISPER_MODEL` trỏ đến model thật.
+- **QA Tauri Windows 0.10.1.** Nhập và kéo WAV tiếng Việt từ FLEURS `vi_vn` validation, ID 1656, lên tầng âm thanh. Bấm **Tạo phụ đề** với tiếng Việt mặc định và model đi kèm. App tạo một câu có dấu, không mở picker. Bản nhận dạng còn sai vài từ so với câu tham chiếu. Chưa thử tệp 25 phút của người dùng. [FLEURS, CC BY 4.0](https://huggingface.co/datasets/google/fleurs)
+- **Kiểm tra tự động.** 42 test Node, 37 test Rust, 11 test FFmpeg và hai test Whisper thật đạt. Hai lượt Desktop checks đạt. [Checks](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43189372977)
+- **Phát hành.** Tag `v0.10.1` trỏ đến `0212fbffd13205b772aaf2300f0d260cc4fdc17e`. CI Windows xác nhận model 190.085.487 byte trong layout đóng gói. CI macOS xác nhận cùng model trong `.app`, `lipo` thấy `x86_64 arm64`, `hdiutil verify` đạt và app khởi động trên runner arm64. Chưa QA editor trên máy Mac. Bộ cài chưa có chữ ký phát hành. [Build](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43189373011) · [Job macOS](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43189373011/job/131084498085)
+
+Hai bộ cài đã tải về `apps/desktop/src-tauri/target/verified-installers/v0.10.1/`. SHA-256 của từng ZIP khớp metadata GitHub Actions trước khi giải nén.
+
+| Tệp | SHA-256 |
+| --- | --- |
+| `AI Video Studio_0.10.1_x64-setup.exe` | `7529aa8390269909e963b638ea0e531f18e1118ee26ad41e6024815eaddad4eb` |
+| `AI Video Studio_0.10.1_universal.dmg` | `e57c2070b29de646986b16bce9af4ebe02a7e90ec1e80b2d42a4f92074f04c38` |
+| `windows-x64-setup.zip` | `ff4037cfeb8597b247dd2db5f5f982effb8de62780a53c925b323c33d3e7fd94` |
+| `macos-universal-dmg.zip` | `3f42da29216197e3f1c0532cad7c0e86edc575f5d66ab83cf909fc071ebab2fc` |
 
 ## Bản 0.10.0
 
@@ -29,7 +41,7 @@ Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu
 **Còn mở**
 
 - Máy Windows hiện tại không có Adobe Premiere. Kiểm thử mở XML và lưu `.prproj` trong Premiere trên máy có ứng dụng, gồm ca tốc độ nguồn hỗn hợp và clip dọc.
-- QA nhận dạng tiếng Việt và clip 25 phút của người dùng. Tiếp tục M1-H8, HSL/LUT realtime và preset xuất M1-H6, test Claude/HeyGen khi có key. [Backlog](TASK_BACKLOG.md)
+- QA clip tiếng Việt 25 phút của người dùng. Tiếp tục M1-H8, HSL/LUT realtime và preset xuất M1-H6, test Claude/HeyGen khi có key. [Backlog](TASK_BACKLOG.md)
 
 ## Bản 0.9.0
 
