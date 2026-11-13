@@ -166,6 +166,8 @@ export interface TransformKey {
   opacity: number;
   smooth?: boolean;
 }
+export type CaptionMotion = "static" | "highlight" | "reveal";
+export interface CaptionWord { startMs: number; endMs: number }
 export interface TitleStyle {
   text: string;
   size: number;
@@ -173,6 +175,9 @@ export interface TitleStyle {
   y: number;
   color: TitleColor;
   caption?: boolean;
+  captionMotion?: CaptionMotion;
+  words?: CaptionWord[];
+  highlightHex?: string;
   background?: boolean;
   editGroup?: number;
   font?: TitleFont;
@@ -187,7 +192,7 @@ export interface TitleStyle {
   fadeMs?: number;
   lineSpacing?: number;
 }
-export interface Cue { startMs: number; endMs: number; text: string }
+export interface Cue { startMs: number; endMs: number; text: string; words?: CaptionWord[] }
 export interface Shot { startMs: number; endMs: number; score: number; peakMs?: number }
 interface ShotAnalysis { shots: Shot[]; scannedMs: number; hardwareChunks: number }
 export interface CatalogItem { title: string; group: "music" | "sound" | "sticker"; asset: Asset }
@@ -350,8 +355,8 @@ export const api = {
   catalog: () => invoke<CatalogItem[]>("list_studio_catalog"),
   importSrt: () => invoke<Cue[] | null>("import_srt"),
   exportSrt: (cues: Cue[]) => invoke<boolean>("export_srt", { cues }),
-  transcribe: (clip: { assetId: number; startMs: number; endMs: number; speed: number }, language: string, chooseModel = false) =>
-    invoke<Cue[] | null>("transcribe_clip", { clip, language, chooseModel }),
+  transcribe: (clip: { assetId: number; startMs: number; endMs: number; speed: number }, language: string, chooseModel: boolean, wordTiming: boolean) =>
+    invoke<Cue[] | null>("transcribe_clip", { clip, language, chooseModel, wordTiming }),
   projects: () => invoke<Project[]>("list_projects"),
   createProject: (name: string) => invoke<Project>("create_project", { name }),
   saveProjectFile: (projectId: number) => invoke<string | null>("save_project_file", { projectId }),

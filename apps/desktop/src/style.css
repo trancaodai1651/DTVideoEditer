@@ -168,6 +168,7 @@ input::placeholder { color: var(--muted); }
 .frame-handle.rotate { top: 100%; left: 50%; transform: translate(-50%, 9px); border-radius: 50%; cursor: grab; }
 .frame-handle.rotate::before { position: absolute; left: 3px; bottom: 8px; height: 8px; width: 1px; background: #f5fafb; content: ""; }
 .frame-title { position: absolute; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; text-align: center; font-weight: 700; line-height: 1.16; text-shadow: 0 0 3px black, 1px 1px 2px black; }
+.frame-title.dynamic-caption { width: max-content; max-width: 92%; }
 .template-workspace h2, .export-queue h2 { font-size: 15px; font-weight: 650; }
 .template-fields { display: grid; gap: 8px; min-width: 0; padding: 0 14px 14px; }
 .edit-field { min-width: 0; display: grid; gap: 4px; align-content: start; color: var(--soft); font-size: 11px; }

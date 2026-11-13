@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import type { ComponentProps, CSSProperties, ReactNode } from "react";
 import { api, desktop, mediaUrl } from "./desktop";
 import type { Voice } from "./desktop";
-import type { Asset, CatalogItem, ClipLook, ClipTransition, TitleStyle, TransitionKind } from "./desktop";
+import type { Asset, CaptionMotion, CatalogItem, ClipLook, ClipTransition, TitleStyle, TransitionKind } from "./desktop";
 import { Icon } from "./Icon";
 import { grades } from "./ClipInspector";
-import { captionStyle, defaultTitle } from "./timeline";
+import { captionMotions, captionStyle, defaultTitle } from "./timeline";
 import { duration } from "./vi";
 
 const tabs = [
@@ -137,7 +137,7 @@ function VoiceAndTranslate({ busy, hasProject, hasCaptionLines, onSpeak, onTrans
   </>;
 }
 
-export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarget, onSmartTool, tab, onTab, media, templates, montage, avatar, onRemoveBackground, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, canJoin, join, onJoin }: {
+export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarget, onSmartTool, tab, onTab, media, templates, montage, avatar, onRemoveBackground, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, onCaptionMotion, canJoin, join, onJoin }: {
   tab: LibraryTab;
   onTab: (tab: LibraryTab) => void;
   smartTarget: SmartTarget | null;
@@ -163,7 +163,8 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
   onAdd: (asset: Asset, sticker: boolean) => void;
   onImportSrt: () => void;
   onExportSrt: () => void;
-  onTranscribe: (language: string, chooseModel: boolean) => void;
+  onTranscribe: (language: string, chooseModel: boolean, motion: CaptionMotion) => void;
+  onCaptionMotion: (motion: CaptionMotion) => void;
   canJoin: boolean;
   join?: ClipTransition;
   onJoin: (kind: TransitionKind | null, durationMs: number) => void;
@@ -172,6 +173,7 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
   const [textGroup, setTextGroup] = useState<"basic" | "presets">("basic");
   const [previewSound, setPreviewSound] = useState<number | null>(null);
   const [language, setLanguage] = useState("vi");
+  const [captionMotion, setCaptionMotion] = useState<CaptionMotion>("highlight");
   const [joinDuration, setJoinDuration] = useState(500);
   const selected = tabs.find((item) => item.id === tab)!;
   const hasStock = tab === "stickers" || tab === "audio" && audioGroup !== "local";
@@ -233,9 +235,16 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
           <label className="edit-field">Ngôn ngữ<select value={language} onChange={(event) => setLanguage(event.target.value)}>
             <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="auto">Tự nhận diện</option>
           </select></label>
-          <button type="button" className="button primary" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, false)}>Tạo phụ đề</button>
+          <label className="edit-field">Kiểu phụ đề<select value={captionMotion} onChange={(event) => setCaptionMotion(event.target.value as CaptionMotion)}>
+            {Object.entries(captionMotions).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+          </select></label>
+          <div className="library-filters">
+            <button type="button" className="button primary" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, false, captionMotion)}>Tạo phụ đề</button>
+            <button type="button" className="button secondary compact" disabled={busy || !hasCaptions} onClick={() => onCaptionMotion(captionMotion)}>Áp dụng cho phụ đề hiện có</button>
+          </div>
+          {hasCaptions && captionMotion !== "static" && <p>Phụ đề chưa có mốc từng từ sẽ dùng mốc ước tính. Tạo từ clip có tiếng để bám sát lời nói.</p>}
           <details className="caption-options"><summary>Mô hình tùy chọn</summary>
-            <button type="button" className="button secondary compact" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, true)}>Chọn tệp GGML…</button>
+            <button type="button" className="button secondary compact" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, true, captionMotion)}>Chọn tệp GGML…</button>
           </details>
         </div>
       </div>}

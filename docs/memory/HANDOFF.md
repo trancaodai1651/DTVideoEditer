@@ -1,12 +1,18 @@
 # Bàn giao
 
-Snapshot: 2026-11-12/EDITOR-101
+Snapshot: 2026-11-13/EDITOR-110
 
 ## Điểm vào cho Claude Code hoặc Codex
 
 Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án](PROJECT_INDEX.md), [trạng thái](CURRENT_STATE.md), [module editor](modules/editor.md), [khảo sát CapCut](CAPCUT_DESKTOP_AUDIT.md) và [backlog](TASK_BACKLOG.md). Người dùng muốn DT_Edit có giao diện, thao tác và chức năng tương đương CapCut Desktop, và đã cho phép push lên `origin`, chạy GitHub Actions và build bộ cài. DT_Edit dùng bố cục và luồng thao tác tương tự nhưng giao diện, tên và tài nguyên là của riêng dự án, không sao chép thương hiệu hay asset CapCut. Đọc [quyền media](SECURITY.md) trước khi sửa quyền, picker, native drop hoặc phân tích media.
 
 Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu trên Windows/macOS. M1-L còn ca mở XML trong Adobe Premiere để lưu lại thành `.prproj`. [Backlog](TASK_BACKLOG.md)
+
+## Bản 0.11.0
+
+- **M1-D/M1-H8.** Mở draft 1113 trong CapCut Desktop 9.7.1.4203. Captions có Auto captions, Templates và Auto lyrics. Mẫu Trending hiện chữ trắng với một từ vàng hoặc xanh. Generate có nhãn Pro khi chưa đăng nhập. Video mẫu Quin Nến cho thấy chọn mẫu và ngôn ngữ trước khi tạo. Mẫu Kenhcuathuy dùng chữ trắng viền đen và tô vàng từ đang đọc. [Khảo sát](CAPCUT_DESKTOP_AUDIT.md)
+- DT Edit mặc định **Tô sáng từng từ**, thêm lựa chọn **Hiện dần từng từ** và **Tĩnh**. Whisper vẫn chạy cục bộ với model đi kèm. Hai kiểu động gọi FFmpeg Whisper `max_len=1`, nhóm tối đa sáu từ theo khoảng nghỉ và dấu câu, ghi mốc tương đối trong mỗi lớp chữ. **Áp dụng cho phụ đề hiện có** dùng mốc ước tính cho câu cũ, SRT hoặc câu đổi số từ. Sửa chính tả cùng số từ giữ mốc cũ. Tầng khóa được bỏ qua.
+- Preview theo playhead. MP4 và **Xem bản xuất** dùng ASS nội bộ theo thứ tự tầng, cần FFmpeg có filter `ass` (libass). Màu từ đang nói chỉnh được trong inspector. Nền chữ và giãn dòng chỉ có ở kiểu tĩnh. SRT/Premiere tiếp tục nhận nội dung và mốc từng cụm. Schema SQLite 10, timeline v3 có trường tùy chọn mới, đọc được dự án trước 0.11.0.
 
 ## Bản 0.10.1
 

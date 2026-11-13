@@ -8,6 +8,8 @@ Bổ sung cho 0.7.0 ngày 12/11/2026. Đã mở draft trống trên CapCut 9.7.1
 
 ## Tái lập
 
+Ngày 13/11/2026, mở draft thử 1113, vào **Captions → Templates → Trending**. Thẻ preview cho thấy kiểu chữ trắng nhấn từng từ bằng vàng hoặc xanh. **Auto captions** có chọn ngôn ngữ và **Generate** gắn nhãn Pro khi chưa đăng nhập. Đối chiếu video mẫu thứ nhất hướng dẫn chọn mẫu, video thứ hai hiển thị chữ trắng viền đen và tô vàng từ đang đọc. [Quin Nến](https://www.tiktok.com/@quin.nen/video/7677830458318671124) · [Kenhcuathuy](https://www.tiktok.com/@kenhcuathuy1991/video/7655695246591855879)
+
 1. Từ thư mục DT_Edit chạy `pnpm demo:media` để tạo MP4 H.264/AAC 640×360 dài 6 giây, WAV 3 giây và PNG trong một thư mục tạm. Thử trên draft riêng. Phiên này tạo draft mặc định **1111 (1)** bằng **Create project**.
 2. Chọn **Media → Import → From device**, nhập ba tệp. Chọn thumbnail MP4 để xem nguồn, bấm dấu **+** trên thẻ để đặt vào main track. Giữ project mặc định 30 fps. Tất cả ca thử dưới đây dùng media tổng hợp.
 3. Ghi hành vi trực tiếp từ app. **Đã thử** nghĩa là có thao tác và kết quả quan sát. **Đã thấy** là thấy mục, nhãn hoặc điều kiện nhưng chưa chạy tới kết quả. **Cần thử** là chưa có kết luận trên máy. Nguồn hỗ trợ được ghi riêng.

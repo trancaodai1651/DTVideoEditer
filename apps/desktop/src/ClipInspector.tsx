@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
 import { fileName, mediaUrl } from "./desktop";
-import type { Aspect, ClipLook, LaneControl, LutEntry, TitleColor, TitleFont, TitleStyle } from "./desktop";
-import { MAX_LAYERS, audioFades, clipFinish, clipLane, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, previousVisual, sourcePosition, transformProperties, transitionBetween } from "./timeline";
+import type { Aspect, CaptionMotion, ClipLook, LaneControl, LutEntry, TitleColor, TitleFont, TitleStyle } from "./desktop";
+import { MAX_LAYERS, audioFades, captionHighlight, captionMotions, captionWords, clipFinish, clipLane, clipLength, clipsAt, defaultLook, layerOf, lookAt, offsetVisual, previousVisual, sourcePosition, transformProperties, transitionBetween, withCaptionText } from "./timeline";
 import type { Clip } from "./timeline";
 import { timecode } from "./vi";
 import { SpeedPanel } from "./SpeedPanel";
@@ -70,6 +70,7 @@ export const fontFamily: Record<TitleFont, string> = {
   mono: "'Courier New', Courier, monospace", display: "Impact, 'Arial Black', sans-serif",
 };
 const namedColor: Record<TitleColor, string> = { white: "#ffffff", yellow: "#ffd400", cyan: "#00ffff", black: "#000000" };
+const animatedCaption = (title: TitleStyle) => !!title.captionMotion && title.captionMotion !== "static";
 
 /** CSS for a title in the preview, matching the drawtext options used on export. */
 export function titleCss(title: TitleStyle, elapsed: number, length: number) {
@@ -78,11 +79,12 @@ export function titleCss(title: TitleStyle, elapsed: number, length: number) {
   const width = title.strokeWidth ?? 2;
   const fade = title.fadeMs ? Math.min(title.fadeMs, length / 2) : 0;
   const opacity = fade ? Math.max(0, Math.min(1, elapsed / fade, (length - elapsed) / fade)) : 1;
-  const background = title.background || title.backgroundHex
+  const animated = animatedCaption(title);
+  const background = !animated && (title.background || title.backgroundHex)
     ? hexAlpha(title.backgroundHex ?? "#000000", (title.backgroundOpacity ?? 66) / 100) : undefined;
   return {
     color, opacity, fontFamily: fontFamily[title.font ?? "sans"], fontWeight: title.font === "bold" ? 700 : 400,
-    textAlign: title.align ?? "center", lineHeight: 1.15 + (title.lineSpacing ?? 0) / 40,
+    textAlign: title.align ?? "center", lineHeight: 1.15 + (animated ? 0 : title.lineSpacing ?? 0) / 40,
     WebkitTextStroke: width ? `${width / 3}px ${stroke}` : undefined,
     textShadow: title.shadow ? "3px 3px 2px rgba(0,0,0,.6)" : undefined,
     background,
@@ -92,6 +94,21 @@ export function titleCss(title: TitleStyle, elapsed: number, length: number) {
 function hexAlpha(hex: string, alpha: number) {
   const value = Number.parseInt(hex.slice(1), 16);
   return `rgba(${value >> 16}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+}
+
+function CaptionText({ title, elapsed, length }: { title: TitleStyle; elapsed: number; length: number }) {
+  if (!title.captionMotion || title.captionMotion === "static") return title.text;
+  const words = captionWords(title, length);
+  let index = 0;
+  return title.text.split(/(\s+)/u).map((text, key) => {
+    if (!text || /^\s+$/u.test(text)) return text;
+    const word = words[index++];
+    if (!word) return text;
+    const active = elapsed >= word.startMs && elapsed < word.endMs;
+    const hidden = title.captionMotion === "reveal" && elapsed < word.startMs;
+    return <span key={key} style={{ visibility: hidden ? "hidden" : undefined,
+      color: active ? title.highlightHex ?? captionHighlight : undefined }}>{text}</span>;
+  });
 }
 
 export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs, tab, onTab, onAspect, onLayer, onClip, onKeyframe, onSeek, luts, onImportLut, onDeleteLut }: {
@@ -113,6 +130,7 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
   onSeek: (at: number) => void;
 }) {
   const title = clip?.title;
+  const dynamic = title ? animatedCaption(title) : false;
   const elapsed = clip ? playheadMs - clip.positionMs : 0;
   const look = clip ? lookAt(clip, elapsed) : defaultLook;
   const previous = look.keyframes?.filter((key) => key.atMs < elapsed).at(-1);
@@ -161,10 +179,20 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
         <label className="edit-field wide">Nội dung chữ
           <textarea key={title.text} rows={3} maxLength={600} defaultValue={title.text} onBlur={(event) => {
             const text = event.target.value.trim();
-            if (text && text !== title.text) onClip({ ...clip, title: { ...title, text }, relativePath: text });
+            if (text && text !== title.text) onClip({ ...clip, title: withCaptionText(title, text), relativePath: text });
             else if (!text) event.target.value = title.text;
           }} />
         </label>
+        {title.caption && <>
+          <label className="edit-field">Kiểu phụ đề
+            <select value={title.captionMotion ?? "static"} onChange={(event) => titleEdit({ captionMotion: event.target.value as CaptionMotion })}>
+              {Object.entries(captionMotions).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+            </select>
+          </label>
+          {dynamic && <label className="edit-field">Màu từ đang đọc
+            <input type="color" value={title.highlightHex ?? captionHighlight} onChange={(event) => titleEdit({ highlightHex: event.target.value })} />
+          </label>}
+        </>}
         <label className="edit-field">Màu chữ
           <select value={title.color} onChange={(event) => onClip({ ...clip, title: { ...title, color: event.target.value as TitleColor } })}>
             <option value="white">Trắng</option><option value="yellow">Vàng</option>
@@ -196,8 +224,8 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
           </label>
           <NumberField label="Độ dày viền" value={title.strokeWidth ?? 2} min={0} max={12} onChange={(strokeWidth) => titleEdit({ strokeWidth })} />
         </div>
-        <Toggle label="Nền chữ" checked={!!title.background || !!title.backgroundHex} onChange={(background) => titleEdit({ background, backgroundHex: background ? title.backgroundHex : undefined })} />
-        {(title.background || title.backgroundHex) && <div className="inspector-pair">
+        {!dynamic && <Toggle label="Nền chữ" checked={!!title.background || !!title.backgroundHex} onChange={(background) => titleEdit({ background, backgroundHex: background ? title.backgroundHex : undefined })} />}
+        {!dynamic && (title.background || title.backgroundHex) && <div className="inspector-pair">
           <label className="edit-field">Màu nền
             <input type="color" value={title.backgroundHex ?? "#000000"} onChange={(event) => titleEdit({ backgroundHex: event.target.value, background: true })} />
           </label>
@@ -206,11 +234,13 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
         <Toggle label="Đổ bóng" checked={!!title.shadow} onChange={(shadow) => titleEdit({ shadow })} />
         <div className="inspector-pair">
           <NumberField label="Hiện dần/ẩn dần (ms)" value={title.fadeMs ?? 0} min={0} max={5000} onChange={(fadeMs) => titleEdit({ fadeMs: fadeMs || undefined })} />
-          <NumberField label="Giãn dòng" value={title.lineSpacing ?? 0} min={-20} max={60} onChange={(lineSpacing) => titleEdit({ lineSpacing: lineSpacing || undefined })} />
+          {!dynamic && <NumberField label="Giãn dòng" value={title.lineSpacing ?? 0} min={-20} max={60} onChange={(lineSpacing) => titleEdit({ lineSpacing: lineSpacing || undefined })} />}
         </div>
         <button type="button" className="button secondary compact" onClick={() => titleEdit({ colorHex: undefined, strokeHex: undefined, strokeWidth: undefined,
           backgroundHex: undefined, backgroundOpacity: undefined, align: undefined, shadow: undefined, fadeMs: undefined, lineSpacing: undefined, font: undefined })}>Đặt lại kiểu chữ</button>
-        <Toggle label="Đánh dấu là phụ đề" checked={!!title.caption} onChange={(caption) => onClip({ ...clip, title: { ...title, caption } })} />
+        <Toggle label="Đánh dấu là phụ đề" checked={!!title.caption} onChange={(caption) => titleEdit({
+          caption, words: caption ? title.words : undefined, captionMotion: caption ? title.captionMotion : undefined,
+        })} />
       </>}
       {clip && !title && current === "video" && <>
         <h3>Biến đổi</h3>
@@ -497,13 +527,16 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
       <AudioFrame key={clip.key} clip={clip} at={at - clip.positionMs} revision={revision} playing={playing} />)}
     {active.filter((clip) => clip.title && !clipLane(laneControls, clip)?.hidden).map((clip) => {
       const title = clip.title!;
+      const dynamic = animatedCaption(title);
       const canEdit = editable && !playing && !clipLane(laneControls, clip)?.locked;
       const x = (title.x + 100) / 2;
       const y = (title.y + 100) / 2;
-      return <span key={clip.key} className={`frame-title ${title.background ? "with-background" : ""} ${canEdit ? "editable" : ""} ${clip.key === selectedKey && canEdit ? "frame-selected" : ""}`} style={{
+      return <span key={clip.key} className={`frame-title ${dynamic ? "dynamic-caption" : title.background ? "with-background" : ""} ${canEdit ? "editable" : ""} ${clip.key === selectedKey && canEdit ? "frame-selected" : ""}`} style={{
         left: `${x}%`, top: `${y}%`, transform: `translate(-${x}%, -${y}%)`, fontSize: `${title.size}cqh`,
         ...titleCss(title, at - clip.positionMs, clipLength(clip)), whiteSpace: "pre-wrap",
-      }} onPointerDown={(event) => begin(event, clip, "move")}>{title.text}</span>;
+      }} onPointerDown={(event) => begin(event, clip, "move")}>
+        <CaptionText title={title} elapsed={at - clip.positionMs} length={clipLength(clip)} />
+      </span>;
     })}
   </div>;
 }

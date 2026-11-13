@@ -16,6 +16,7 @@ use std::{
 use wait_timeout::ChildExt;
 
 use crate::{
+    caption_render,
     library::authorized_asset,
     model::{Result, StudioError},
     probe::{self, MediaFormat},
@@ -46,6 +47,7 @@ pub struct Plan {
     pub duration_ms: i64,
     pub output: PathBuf,
     titles: Vec<String>,
+    caption_scripts: Vec<String>,
     graph_file: Option<OsString>,
     /// Fonts the titles use, written next to the graph as font-<name>.ttf.
     fonts: Vec<TitleFont>,
@@ -667,8 +669,31 @@ pub fn plan(
         })
         .collect();
     titles.sort_by_key(|title| title.layer);
-    for (index, title) in titles.iter().enumerate() {
+    let mut title_files = Vec::new();
+    let mut caption_scripts = Vec::new();
+    let mut pending = titles.iter().enumerate().peekable();
+    while let Some((index, title)) = pending.next() {
         let label = format!("[title{index}]");
+        if !title.caption_motion.is_static() {
+            let mut script = caption_render::script(width, height);
+            caption_render::dialogue(&mut script, title, width, height, index);
+            while pending
+                .peek()
+                .is_some_and(|(_, title)| !title.caption_motion.is_static())
+            {
+                let (index, title) = pending.next().unwrap();
+                caption_render::dialogue(&mut script, title, width, height, index);
+            }
+            graph.push(format!(
+                "{video}ass=filename=captions-{}.ass{label}",
+                caption_scripts.len()
+            ));
+            caption_scripts.push(script);
+            video = label;
+            continue;
+        }
+        let file_index = title_files.len();
+        title_files.push(title.text.clone());
         let hex = |value: &Option<String>| value.as_deref().map(|hex| format!("0x{}", &hex[1..]));
         let color = hex(&title.color_hex).unwrap_or_else(|| title.color.name().to_owned());
         let default_border = if title.color.name() == "black" && title.color_hex.is_none() {
@@ -707,7 +732,7 @@ pub fn plan(
             ));
         }
         graph.push(format!(
-            "{video}drawtext=fontfile=font-{}.ttf:textfile=title-{index}.txt:expansion=none:\
+            "{video}drawtext=fontfile=font-{}.ttf:textfile=title-{file_index}.txt:expansion=none:\
              fontsize=h*{}/100:fontcolor={color}:borderw={border_width}:bordercolor={border}:{style}\
              x=(w-tw)*{}/200:y=(h-th)*{}/200:enable='gte(t,{})*lt(t,{})'{label}",
             title.font.name(),
@@ -799,7 +824,8 @@ pub fn plan(
         args,
         duration_ms: export_duration,
         output: output.to_path_buf(),
-        titles: titles.into_iter().map(|title| title.text.clone()).collect(),
+        titles: title_files,
+        caption_scripts,
         graph_file,
         fonts,
         luts: luts.into_iter().map(|id| (id, String::new())).collect(),
@@ -817,6 +843,17 @@ pub fn run(
     if cancel.load(Ordering::Relaxed) {
         return Ok(Outcome::Canceled);
     }
+    if !plan.caption_scripts.is_empty() {
+        let mut help = probe::command(ffmpeg);
+        help.args(["-hide_banner", "-h", "filter=ass"]);
+        if !probe::capture_limited(help, Duration::from_secs(8), 64 * 1024)
+            .is_some_and(|output| output.starts_with(b"Filter ass"))
+        {
+            return Err(StudioError::Input(
+                "Cần FFmpeg có filter ass (libass) để xuất phụ đề chạy theo lời.",
+            ));
+        }
+    }
     let folder = plan
         .output
         .parent()
@@ -827,7 +864,11 @@ pub fn run(
         .tempfile_in(folder)?
         .into_temp_path();
     let mut cmd = probe::command(ffmpeg);
-    let work = if plan.titles.is_empty() && plan.graph_file.is_none() && plan.luts.is_empty() {
+    let work = if plan.titles.is_empty()
+        && plan.caption_scripts.is_empty()
+        && plan.graph_file.is_none()
+        && plan.luts.is_empty()
+    {
         None
     } else {
         let work = tempfile::tempdir()?;
@@ -836,6 +877,9 @@ pub fn run(
         }
         for (id, cube) in &plan.luts {
             fs::write(work.path().join(format!("lut-{id}.cube")), cube)?;
+        }
+        for (index, script) in plan.caption_scripts.iter().enumerate() {
+            fs::write(work.path().join(format!("captions-{index}.ass")), script)?;
         }
         if !plan.titles.is_empty() {
             let find = |font: TitleFont| {

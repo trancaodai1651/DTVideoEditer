@@ -399,6 +399,7 @@ pub fn export(store: &Store, project: &Project, output: &Path) -> Result<ExportR
             start_ms: title.position_ms,
             end_ms: title.position_ms + title.duration_ms,
             text: title.text.clone(),
+            words: Vec::new(),
         })
         .collect();
     let srt = (!subtitles.is_empty()).then(|| output.with_extension("srt"));

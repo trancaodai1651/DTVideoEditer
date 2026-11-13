@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod analysis;
+mod caption_render;
 mod captions;
 mod catalog;
 mod generative;
@@ -344,6 +345,7 @@ async fn transcribe_clip(
     clip: captions::SpeechClip,
     language: String,
     choose_model: Option<bool>,
+    word_timing: Option<bool>,
 ) -> CommandResult<Option<Vec<captions::Cue>>> {
     blocking(move || {
         let state = app.state::<AppState>();
@@ -375,9 +377,16 @@ async fn transcribe_clip(
                 let _ = app.emit("studio-caption-progress", -1_i64);
             })?
         };
-        captions::transcribe(&state.store, &clip, &language, &path, |done, total| {
-            let _ = app.emit("studio-caption-progress", done * 100 / total);
-        })
+        captions::transcribe(
+            &state.store,
+            &clip,
+            &language,
+            &path,
+            word_timing.unwrap_or(false),
+            |done, total| {
+                let _ = app.emit("studio-caption-progress", done * 100 / total);
+            },
+        )
         .map(Some)
     })
     .await

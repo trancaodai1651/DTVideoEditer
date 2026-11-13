@@ -2,7 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useEffectEvent, useRef, useSt
 import type { CSSProperties, FormEvent, PointerEvent } from "react";
 import { api, desktop, fileName, mediaUrl } from "./desktop";
 import type { LutEntry, TrackRegion } from "./desktop";
-import type { Aspect, Asset, AssetPage, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, LaneControl, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
+import type { Aspect, Asset, AssetPage, CaptionMotion, CatalogItem, ClipLook, Cue, ExportRange, Folder, ImportedFiles, LaneControl, MediaDrop, MediaKind, MediaTools, Project, RenderJob, TimelineSnapshot, TitleStyle } from "./desktop";
 import { Icon } from "./Icon";
 import { Gallery, Preview, selectAsset } from "./MediaPanels";
 import { PublishPanel } from "./PublishPanel";
@@ -302,7 +302,7 @@ export function App() {
       const byKey = new Map(lines.map((clip, index) => [clip.key, translated[index]]));
       const next = history.present.map((clip) => {
         const text = byKey.get(clip.key)?.trim();
-        return text && clip.title ? { ...clip, relativePath: text, title: { ...clip.title, text: text.slice(0, 600) } } : clip;
+        return text && clip.title ? { ...clip, relativePath: text, title: { ...clip.title, text: text.slice(0, 600), words: undefined } } : clip;
       });
       if (edit(commit(history, next))) success(`Đã dịch ${lines.length} câu phụ đề.`);
     });
@@ -860,9 +860,9 @@ export function App() {
     addMedia(media, playheadMs, { track: "video", layer }, { scale: 28, x: 25, y: -20 });
   }
 
-  function loadCues(cues: Cue[], offset: number) {
+  function loadCues(cues: Cue[], offset: number, motion: CaptionMotion = "static") {
     if (!cues.length) { notify("Không tìm thấy câu phụ đề.", false); return; }
-    const next = addCaptions(clips, cues, offset);
+    const next = addCaptions(clips, cues, offset, motion);
     if (!edit(commit(history, next))) return;
     setPlayheadMs(cues[0].startMs + offset);
     setSelectedKey(next[clips.length].key);
@@ -878,7 +878,15 @@ export function App() {
     void run("Đang xuất phụ đề…", async () => { if (await api.exportSrt(captions)) success("Đã xuất phụ đề SRT."); });
   }
 
-  function transcribe(language: string, chooseModel = false) {
+  function applyCaptionMotion(motion: CaptionMotion) {
+    const next = clips.map((clip) => clip.title?.caption && (clip.title.captionMotion ?? "static") !== motion && !clipLane(laneControls, clip)?.locked
+      ? { ...clip, title: { ...clip.title, captionMotion: motion } } : clip);
+    if (next.some((clip, index) => clip !== clips[index]) && edit(commit(history, next))) {
+      success("Đã áp dụng kiểu phụ đề.");
+    }
+  }
+
+  function transcribe(language: string, chooseModel: boolean, motion: CaptionMotion) {
     if (!selectedClip || !["video", "audio"].includes(selectedClip.kind)) return;
     if (selectedClip.look?.reverse || selectedClip.look?.speedCurve?.length) {
       notify("Hãy dùng clip phát xuôi với tốc độ cố định để giữ mốc phụ đề chính xác.", true);
@@ -888,8 +896,8 @@ export function App() {
       const { assetId, startMs, endMs, positionMs, look } = selectedClip;
       const stop = await api.onCaptionProgress((percent) => setBusy(percent < 0 ? "Đang tải mô hình Whisper mặc định…" : `Đang nhận dạng giọng nói · ${percent}%`));
       try {
-        const cues = await api.transcribe({ assetId, startMs, endMs, speed: look?.speed ?? 100 }, language, chooseModel);
-        if (cues) loadCues(cues, positionMs);
+        const cues = await api.transcribe({ assetId, startMs, endMs, speed: look?.speed ?? 100 }, language, chooseModel, motion !== "static");
+        if (cues) loadCues(cues, positionMs, motion);
       } finally { stop(); }
     });
   }
@@ -1062,7 +1070,7 @@ export function App() {
               hasProject={!!project && !editsDisabled} hasVisual={selectedClip?.track === "video" && !editsDisabled}
               hasSpeech={!!selectedClip && (selectedClip.kind === "audio" || selectedClip.kind === "video") && selectedClip.available}
               hasCaptions={captions.length > 0} onApply={applyLook} onTitle={insertTitle} onAdd={addStock}
-              onImportSrt={importSrt} onExportSrt={exportSrt} onTranscribe={transcribe}
+              onImportSrt={importSrt} onExportSrt={exportSrt} onTranscribe={transcribe} onCaptionMotion={applyCaptionMotion}
               canJoin={!!selectedClip && !!previousVisual(clips, selectedClip)} join={selectedClip?.look?.transition}
               onJoin={(kind, duration) => {
                 if (!selectedClip) return;

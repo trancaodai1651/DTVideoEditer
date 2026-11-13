@@ -1904,6 +1904,102 @@ fn result_height(frame: &[u8], width: usize) -> usize {
 }
 
 #[test]
+#[ignore = "requires FFmpeg with the ass filter"]
+fn real_ffmpeg_burns_highlight_and_reveal_at_word_boundaries() {
+    use crate::timeline::{CaptionMotion, CaptionWord, TitleEdit, TitleFont};
+    let ffmpeg = find_tool("ffmpeg").unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let mut edit = snapshot(vec![], vec![]);
+    let title = TitleEdit {
+        text: "Chào bạn".into(),
+        position_ms: 100,
+        duration_ms: 1000,
+        caption: true,
+        caption_motion: CaptionMotion::Highlight,
+        font: TitleFont::Bold,
+        size: 14,
+        words: vec![
+            CaptionWord {
+                start_ms: 0,
+                end_ms: 400,
+            },
+            CaptionWord {
+                start_ms: 500,
+                end_ms: 900,
+            },
+        ],
+        ..Default::default()
+    };
+    edit.titles.push(title.clone());
+    edit.titles.push(TitleEdit {
+        position_ms: 1100,
+        caption_motion: CaptionMotion::Reveal,
+        ..title
+    });
+    let output = dunce::canonicalize(temp.path())
+        .unwrap()
+        .join("captions.mp4");
+    let plan = crate::render::plan(&edit, &Default::default(), &output).unwrap();
+    assert_eq!(
+        crate::render::run(&ffmpeg, &plan, &AtomicBool::new(false), |_| {}).unwrap(),
+        Outcome::Done
+    );
+    let colors = |at: &str| {
+        let frame = Command::new(&ffmpeg)
+            .args(["-v", "error", "-ss", at, "-i"])
+            .arg(&output)
+            .args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-threads",
+                "1",
+                "pipe:1",
+            ])
+            .output()
+            .unwrap();
+        assert!(frame.status.success() && !frame.stdout.is_empty());
+        let mut yellow = (0, 0);
+        let mut white = (0, 0);
+        for (index, pixel) in frame.stdout.chunks_exact(3).enumerate() {
+            let x = index % 1280;
+            if pixel[0] > 170 && pixel[1] > 140 && pixel[2] < 120 {
+                yellow.0 += 1;
+                yellow.1 += x;
+            }
+            if pixel.iter().all(|value| *value > 180) {
+                white.0 += 1;
+                white.1 += x;
+            }
+        }
+        (yellow, white)
+    };
+    let (first, other) = colors("0.2");
+    assert!(
+        first.0 > 400 && other.0 > 400 && first.1 / first.0 < other.1 / other.0,
+        "{first:?} {other:?}"
+    );
+    let (second, other) = colors("0.8");
+    assert!(
+        second.0 > 400 && other.0 > 400 && second.1 / second.0 > other.1 / other.0,
+        "{second:?} {other:?}"
+    );
+    let (reveal, other) = colors("1.2");
+    assert!(
+        reveal.0 > 400 && other.0 < 100 && reveal.1 / reveal.0 == first.1 / first.0,
+        "{reveal:?} {other:?}"
+    );
+    let (reveal, other) = colors("1.8");
+    assert!(
+        reveal.0 > 400 && other.0 > 400 && reveal.1 / reveal.0 > other.1 / other.0,
+        "{reveal:?} {other:?}"
+    );
+}
+
+#[test]
 #[cfg(windows)]
 #[ignore = "needs DT_EDIT_WHISPER_MODEL (ggml-small-q5_1.bin), FFmpeg with whisper and Windows speech"]
 fn real_whisper_transcribes_with_the_bundled_model_layout() {
@@ -1955,7 +2051,7 @@ fn real_whisper_transcribes_with_the_bundled_model_layout() {
     }))
     .unwrap();
     let progress = std::cell::RefCell::new(Vec::new());
-    let cues = crate::captions::transcribe(&store, &clip, "en", &model, |done, _| {
+    let cues = crate::captions::transcribe(&store, &clip, "en", &model, true, |done, _| {
         progress.borrow_mut().push(done)
     })
     .unwrap();
@@ -1966,6 +2062,10 @@ fn real_whisper_transcribes_with_the_bundled_model_layout() {
     assert!(
         cues.iter()
             .any(|cue| cue.start_ms >= 950_000 && cue.text.to_lowercase().contains("caption"))
+    );
+    assert!(
+        cues.iter()
+            .any(|cue| cue.words.len() >= 2 && cue.words[1].start_ms > cue.words[0].start_ms)
     );
     let text = cues
         .iter()

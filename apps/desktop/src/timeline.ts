@@ -1,4 +1,4 @@
-import type { Aspect, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, SpeedPoint, Timeline, TimelineSnapshot, TitleStyle, TrackPoint, Track, TransformKey, TransitionKind, ColorWheel } from "./desktop";
+import type { Aspect, CaptionMotion, ClipLook, Cue, EditorTrack, LaneControl, MediaKind, SpeedPoint, Timeline, TimelineSnapshot, TitleStyle, TrackPoint, Track, TransformKey, TransitionKind, ColorWheel } from "./desktop";
 
 // Limits mirror src-tauri/src/timeline.rs, which is the authority on save.
 export const TIMELINE_VERSION = 3;
@@ -100,6 +100,23 @@ export const defaultLook: ClipLook = {
 };
 export const defaultTitle: TitleStyle = { text: "Tiêu đề", size: 7, x: 0, y: 66, color: "white" };
 export const captionStyle: TitleStyle = { text: "Nhập phụ đề", size: 5, x: 0, y: 86, color: "white", caption: true, background: true };
+export const captionMotions: Record<CaptionMotion, string> = { static: "Tĩnh", highlight: "Tô sáng từng từ", reveal: "Hiện dần từng từ" };
+export const captionHighlight = "#ffe34d";
+
+export function captionWords(title: TitleStyle, length: number) {
+  if (title.words?.length) return title.words;
+  const count = title.text.trim().split(/\s+/u).length;
+  return Array.from({ length: count }, (_, index) => ({
+    startMs: Math.floor(length * index / count),
+    endMs: Math.floor(length * (index + 1) / count),
+  }));
+}
+
+export function withCaptionText(title: TitleStyle, text: string): TitleStyle {
+  const words = title.words?.length === text.trim().split(/\s+/u).length ? title.words : undefined;
+  return { ...title, text, words };
+}
+
 export const totalMs = (clips: Clip[]) => clips.reduce((end, clip) => Math.max(end, clipFinish(clip)), 0);
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 export const transformProperties = ["x", "y", "scale", "rotate", "opacity"] as const;
@@ -136,6 +153,13 @@ export function setTransformKey(clip: Clip, elapsed: number, look: ClipLook, tog
 }
 
 function trimKeys(before: Clip, after: Clip, offset: number): Clip {
+  if (before.title?.words?.length && after.title) {
+    const length = clipLength(after);
+    after = { ...after, title: { ...after.title, words: before.title.words.map((word) => ({
+      startMs: clamp(word.startMs - offset, 0, length),
+      endMs: clamp(word.endMs - offset, 0, length),
+    })) } };
+  }
   const keys = before.look?.keyframes;
   if (!keys?.length) return after;
   const end = offset + clipLength(after);
@@ -265,7 +289,7 @@ export function addTitle(clips: Clip[], wantedMs: number, layer: number, title =
   }];
 }
 
-export function addCaptions(clips: Clip[], cues: Cue[], offset: number): Clip[] {
+export function addCaptions(clips: Clip[], cues: Cue[], offset: number, motion: CaptionMotion = "static"): Clip[] {
   if (clips.filter((clip) => clip.kind === "text").length + cues.length > MAX_TITLES) {
     throw new Error(`Timeline hỗ trợ tối đa ${MAX_TITLES} lớp chữ và câu phụ đề.`);
   }
@@ -282,7 +306,10 @@ export function addCaptions(clips: Clip[], cues: Cue[], offset: number): Clip[] 
     updated.push({
       key: newKey(), assetId: 0, relativePath: cue.text, kind: "text", track: "text", layer,
       startMs: 0, endMs: cue.endMs - cue.startMs, positionMs, sourceMs: null, available: true,
-      title: { ...captionStyle, text: cue.text },
+      title: {
+        ...captionStyle, text: cue.text, words: cue.words, captionMotion: motion,
+        ...(motion === "static" ? {} : { background: false, font: "bold", strokeWidth: 3, y: 68 }),
+      },
     });
   }
   return updated;
@@ -1002,7 +1029,9 @@ export function pasteAttributes(clips: Clip[], keys: ReadonlySet<string>, copied
   const titleStyle = "size" in copied && "color" in copied;
   return clips.map((clip) => {
     if (!keys.has(clip.key)) return clip;
-    if (clip.title) return titleStyle ? { ...clip, title: { ...clip.title, ...(copied as TitleStyle), text: clip.title.text, caption: clip.title.caption, editGroup: clip.title.editGroup } } : clip;
+    if (clip.title) return titleStyle ? { ...clip, title: { ...clip.title, ...(copied as TitleStyle),
+      text: clip.title.text, caption: clip.title.caption, words: clip.title.words,
+      captionMotion: clip.title.caption ? (copied as TitleStyle).captionMotion : undefined, editGroup: clip.title.editGroup } } : clip;
     if (titleStyle) return clip;
     return { ...clip, look: { ...clip.look, ...(copied as Partial<ClipLook>) } };
   });

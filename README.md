@@ -37,6 +37,8 @@ Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Chọn cl
 
 Để chuyển timeline, vào **Dự án → Xuất cho Adobe Premiere (.xml)…**, rồi chọn **File → Import** trong Premiere. Nhập thêm `.srt` cùng tên nếu dự án có phụ đề. Chọn **File → Save As** để lưu thành `.prproj`. XML chuyển tham chiếu media gốc, điểm cắt, tầng hình/tiếng và gain cơ bản. Màu, chuyển cảnh, chữ đồ họa và retime phức tạp cần kiểm tra lại. [Nhập XML trong Premiere](https://helpx.adobe.com/premiere/desktop/organize-media/import-files/migrate-from-final-cut-pro-x.html)
 
+Trong **Phụ đề → Kiểu phụ đề**, chọn **Tô sáng từng từ**, **Hiện dần từng từ** hoặc **Tĩnh** rồi bấm **Tạo phụ đề**. Hai kiểu động dùng mốc từng từ của Whisper. **Áp dụng cho phụ đề hiện có** đổi kiểu các tầng chưa khóa và dùng mốc ước tính nếu câu đến từ SRT hoặc được thêm thủ công. Chọn một câu để đổi màu từ đang đọc trong **Thuộc tính chữ**. MP4 giữ hiệu ứng chữ, cần FFmpeg có filter `ass` (libass). SRT giữ nội dung và mốc từng cụm. [FFmpeg ASS](https://ffmpeg.org/ffmpeg-filters.html#ass)
+
 ## Dựng nâng cao
 
 - Nhấp chuột phải vào clip, tên tầng hoặc vùng trống để mở menu thao tác. Kéo trên chỗ trống của tầng để chọn nhiều clip bằng khung.

@@ -14,7 +14,7 @@ use crate::{
     model::{Result, StudioError},
     probe::{self, MediaFormat},
     store::Store,
-    timeline::{MAX_TIMELINE_MS, MAX_TITLES, MIN_CLIP_MS},
+    timeline::{CaptionWord, MAX_TIMELINE_MS, MAX_TITLES, MIN_CLIP_MS},
 };
 
 const MAX_SRT_BYTES: usize = 6 * 1024 * 1024;
@@ -26,6 +26,8 @@ pub struct Cue {
     pub start_ms: i64,
     pub end_ms: i64,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<CaptionWord>,
 }
 
 #[derive(Deserialize)]
@@ -78,10 +80,10 @@ pub fn read(path: &Path) -> Result<Vec<Cue>> {
     }
     let raw = std::str::from_utf8(&data)
         .map_err(|_| StudioError::Input("Hãy lưu tệp SRT ở mã UTF-8."))?;
-    parse_cues(raw, false)
+    parse_cues(raw, false, false)
 }
 
-fn parse_cues(raw: &str, generated: bool) -> Result<Vec<Cue>> {
+fn parse_cues(raw: &str, generated: bool, word_timing: bool) -> Result<Vec<Cue>> {
     let normalized = raw
         .trim_start_matches('\u{feff}')
         .replace("\r\n", "\n")
@@ -119,20 +121,82 @@ fn parse_cues(raw: &str, generated: bool) -> Result<Vec<Cue>> {
             start_ms,
             end_ms,
             text,
+            words: Vec::new(),
         };
-        if !valid(&cue) {
+        let valid_word = word_timing
+            && cue.start_ms >= 0
+            && cue.end_ms > cue.start_ms
+            && !cue.text.is_empty()
+            && cue.text.chars().count() <= 600
+            && !cue.text.chars().any(|c| c.is_control() && c != '\n');
+        if !valid_word && !valid(&cue) {
             if generated {
                 continue;
             }
             return Err(invalid());
         }
         cues.push(cue);
-        if cues.len() > MAX_TITLES {
+        if cues.len() > if word_timing { 20_000 } else { MAX_TITLES } {
             return Err(StudioError::Input("Tệp SRT vượt quá 1800 câu phụ đề."));
         }
     }
     cues.sort_by_key(|cue| cue.start_ms);
     Ok(cues)
+}
+
+fn group_words(segments: Vec<Cue>, limit: i64) -> Vec<Cue> {
+    let mut phrases: Vec<Cue> = Vec::new();
+    let mut previous_end = 0;
+    for segment in segments {
+        let tokens: Vec<_> = segment.text.split_whitespace().collect();
+        let start = segment.start_ms.max(previous_end);
+        let end = segment.end_ms.min(limit);
+        if tokens.is_empty() || end <= start {
+            continue;
+        }
+        let count = tokens.len() as i64;
+        for (index, token) in tokens.into_iter().enumerate() {
+            let from = start + (end - start) * index as i64 / count;
+            let to = start + (end - start) * (index as i64 + 1) / count;
+            if from == to {
+                continue;
+            }
+            let append = phrases.last().is_some_and(|phrase| {
+                phrase.words.len() < 6
+                    && phrase.text.chars().count() + token.chars().count() < 40
+                    && from - phrase.end_ms <= 450
+                    && to - phrase.start_ms <= 2400
+                    && !phrase.text.ends_with(['.', '!', '?', '…'])
+            });
+            if !append {
+                phrases.push(Cue {
+                    start_ms: from,
+                    end_ms: from,
+                    text: String::new(),
+                    words: Vec::new(),
+                });
+            }
+            let phrase = phrases.last_mut().unwrap();
+            if !phrase.text.is_empty() {
+                phrase.text.push(' ');
+            }
+            phrase.text.push_str(token);
+            phrase.words.push(CaptionWord {
+                start_ms: from - phrase.start_ms,
+                end_ms: to - phrase.start_ms,
+            });
+            phrase.end_ms = to;
+        }
+        previous_end = end;
+    }
+    for index in 0..phrases.len() {
+        let next = phrases
+            .get(index + 1)
+            .map_or(limit, |phrase| phrase.start_ms);
+        let phrase = &mut phrases[index];
+        phrase.end_ms = phrase.end_ms.max((phrase.start_ms + MIN_CLIP_MS).min(next));
+    }
+    phrases.into_iter().filter(valid).collect()
 }
 
 fn format_timestamp(ms: i64) -> String {
@@ -260,16 +324,6 @@ pub fn default_model(
     Ok(model)
 }
 
-pub fn transcribe(
-    store: &Store,
-    clip: &SpeechClip,
-    language: &str,
-    model: &Path,
-    progress: impl Fn(i64, i64),
-) -> Result<Vec<Cue>> {
-    transcribe_in_chunks(store, clip, language, model, CHUNK_MS, progress)
-}
-
 pub fn whisper_binary() -> Result<PathBuf> {
     const MISSING: StudioError = StudioError::Input(
         "Cần FFmpeg có filter whisper. Trong Terminal, chạy ffmpeg -h filter=whisper để kiểm tra.",
@@ -321,12 +375,12 @@ fn leading_silence(mut command: Command, duration_ms: i64) -> i64 {
         })
 }
 
-pub(crate) fn transcribe_in_chunks(
+pub fn transcribe(
     store: &Store,
     clip: &SpeechClip,
     language: &str,
     model: &Path,
-    chunk_ms: i64,
+    word_timing: bool,
     progress: impl Fn(i64, i64),
 ) -> Result<Vec<Cue>> {
     let source = store
@@ -371,15 +425,16 @@ pub(crate) fn transcribe_in_chunks(
         fs::copy(&model, &staged)?;
     }
     let filter = format!(
-        "atempo={:.2},whisper=model=model.bin:language={language}:queue=12:use_gpu=0:destination=captions.srt:format=srt:max_len=80",
-        f64::from(clip.speed) / 100.0
+        "atempo={:.2},whisper=model=model.bin:language={language}:queue=12:use_gpu=0:destination=captions.srt:format=srt:max_len={}",
+        f64::from(clip.speed) / 100.0,
+        if word_timing { 1 } else { 80 }
     );
     let scaled = |ms| (ms * 100 + i64::from(clip.speed) / 2) / i64::from(clip.speed);
     let output = work.path().join("captions.srt");
     let mut result = Vec::new();
     progress(0, length);
-    for from in (0..length).step_by(chunk_ms as usize) {
-        let to = (from + chunk_ms).min(length);
+    for from in (0..length).step_by(CHUNK_MS as usize) {
+        let to = (from + CHUNK_MS).min(length);
         let read_audio = |offset: i64| {
             let mut command = probe::command(&ffmpeg);
             command
@@ -416,12 +471,15 @@ pub(crate) fn transcribe_in_chunks(
             }
             let text = std::str::from_utf8(&bytes)
                 .map_err(|_| StudioError::Input("Whisper trả phụ đề không hợp lệ."))?;
-            for mut cue in parse_cues(text, true)? {
+            let mut cues = parse_cues(text, true, word_timing)?;
+            for cue in &mut cues {
                 cue.start_ms += scaled(offset);
                 cue.end_ms = (cue.end_ms + scaled(offset)).min(scaled(to));
-                if valid(&cue) {
-                    result.push(cue);
-                }
+            }
+            if word_timing {
+                result.extend(group_words(cues, scaled(to)));
+            } else {
+                result.extend(cues.into_iter().filter(valid));
             }
             fs::remove_file(&output)?;
         }
@@ -448,7 +506,7 @@ mod tests {
     #[test]
     fn imports_and_exports_utf8_cues_without_overwrite() {
         let source = "\u{feff}1\r\n00:00:01,120 --> 00:00:03,456\r\nChào bạn\r\nDòng thứ hai\r\n\r\n2\r\n00:00:04.000 --> 00:00:06.000\r\nHẹn gặp lại";
-        let cues = parse_cues(source, false).unwrap();
+        let cues = parse_cues(source, false, false).unwrap();
         assert_eq!(cues[0].start_ms, 1120);
         assert_eq!(cues[0].text, "Chào bạn\nDòng thứ hai");
         let folder = tempfile::tempdir().unwrap();
@@ -456,7 +514,7 @@ mod tests {
         write(&path, cues.clone()).unwrap();
         assert_eq!(read(&path).unwrap(), cues);
         assert!(write(&path, cues).is_err());
-        assert!(parse_cues("1\n00:60:01,000 --> 00:00:10,000\nSai", false).is_err());
+        assert!(parse_cues("1\n00:60:01,000 --> 00:00:10,000\nSai", false, false).is_err());
     }
 
     #[test]

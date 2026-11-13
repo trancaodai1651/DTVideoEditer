@@ -70,6 +70,8 @@ Clip tắt bị bỏ khỏi graph. Freeze đọc một khung tại `freezeAtMs` 
 
 [EditorLibrary](../../../apps/desktop/src/EditorLibrary.tsx) tổ chức các thư viện và preset. [catalog.rs](../../../apps/desktop/src-tauri/src/catalog.rs) đăng ký 2 bản nhạc, 3 SFX và 6 sticker gốc vào thư viện local. [captions.rs](../../../apps/desktop/src-tauri/src/captions.rs) xử lý SRT UTF-8 và FFmpeg `whisper`. **Tạo phụ đề** dùng `ggml-small-q5_1.bin` trong resource hoặc cache, tải bản pin và xác minh SHA-256 khi thiếu. Có tùy chọn chọn GGML riêng. Clip nguồn được đọc theo đoạn 5 phút và câu được ghép với offset có xét tốc độ clip. Caption là lớp chữ có thể sửa trong snapshot và có thể xuất lại SRT.
 
+0.11.0 lưu `captionMotion`, `words` (mốc ms tính từ đầu cụm) và `highlightHex` tùy chọn trong lớp chữ. Khi tách hoặc trim, timeline cắt mốc theo biên mới. Khi đổi số từ hoặc dịch, mốc nhận dạng được bỏ và trình phát dùng phân bố đều. [caption_render.rs](../../../apps/desktop/src-tauri/src/caption_render.rs) dùng cùng phân bố khi xuất, escape văn bản và ghi ASS tạm cho từng nhóm lớp động kề nhau để giữ thứ tự với lớp chữ tĩnh. `ass` hỗ trợ chữ động trong MP4 và **Xem bản xuất**. SRT giữ thời lượng từng cụm.
+
 ## Chuyển dự án sang Premiere
 
 [premiere.rs](../../../apps/desktop/src-tauri/src/premiere.rs) tạo Final Cut Pro XML phiên bản 4 với timeline 30 fps, điểm cắt theo FPS nguồn, các tầng hình/tiếng và tham chiếu media gốc. Caption được lưu trong tệp SRT cạnh XML. Nhập XML, rồi nhập SRT nếu có, trong Adobe Premiere và lưu thành `.prproj`. Giữ `.dtedit` để mở lại đầy đủ trong DT Edit. Hiệu ứng, màu, keyframe, thay đổi tốc độ và chữ trang trí cần áp lại khi chuyển qua Premiere.

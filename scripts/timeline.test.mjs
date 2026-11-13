@@ -3,13 +3,29 @@ import test from "node:test";
 import {
   MAX_TIMELINE_MS, addCaptions, addClip, addTitle, changeLayer, clipFinish, clipLength, clipsAt, commit, moveClip, newHistory, offsetVisual, place, redo, removeClip, snap, splitClip, subtitleCues, updateAppearance,
   addDroppedMedia, changesLockedLane, deleteSelection, groupSelection, lookAt, mediaDropPlacement, moveSelection, pasteSelection, setTransformKey,
-  toSnapshot, totalMs, transitionBetween, trimClip, trimEnd, trimStart, undo,
+  captionWords, fromTimeline, toSnapshot, totalMs, transitionBetween, trimClip, trimEnd, trimStart, undo, withCaptionText,
 } from "../apps/desktop/src/timeline.ts";
 
 const video = { assetId: 1, relativePath: "a.mp4", kind: "video", durationMs: 6000 };
 const image = { assetId: 2, relativePath: "b.png", kind: "image", durationMs: null };
 const audio = { assetId: 3, relativePath: "c.wav", kind: "audio", durationMs: 3000 };
 const points = (clips) => clips.map((clip) => [clip.track, clip.startMs, clip.endMs, clip.positionMs]);
+
+test("dynamic captions keep word timing after save and split and estimate timing for edited text", () => {
+  const words = [{ startMs: 0, endMs: 300 }, { startMs: 400, endMs: 1000 }];
+  const [caption] = addCaptions([], [{ startMs: 200, endMs: 1200, text: "Chào bạn", words }], 1000, "highlight");
+  const stored = toSnapshot([caption]).titles;
+  const [restored] = fromTimeline({ clips: [], titles: stored });
+  assert.equal(restored.positionMs, 1200);
+  assert.equal(restored.title.captionMotion, "highlight");
+  assert.deepEqual(restored.title.words, words);
+  const [first, second] = splitClip([restored], restored.key, 1700);
+  assert.deepEqual(first.title.words, [{ startMs: 0, endMs: 300 }, { startMs: 400, endMs: 500 }]);
+  assert.deepEqual(second.title.words, [{ startMs: 0, endMs: 0 }, { startMs: 0, endMs: 500 }]);
+  assert.deepEqual(captionWords(withCaptionText(caption.title, "Chào các bạn"), 1000),
+    [{ startMs: 0, endMs: 333 }, { startMs: 333, endMs: 666 }, { startMs: 666, endMs: 1000 }]);
+  assert.deepEqual(subtitleCues([caption]), [{ startMs: 1200, endMs: 2200, text: "Chào bạn" }]);
+});
 
 test("drops a mixed batch onto a blank timeline with separate visual and audio cursors", () => {
   const target = { videoLayer: 0, audioLayer: 0, positionMs: 1500, toleranceMs: 0, playheadMs: 0 };

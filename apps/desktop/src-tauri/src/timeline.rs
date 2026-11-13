@@ -590,6 +590,28 @@ impl Aspect {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionMotion {
+    #[default]
+    Static,
+    Highlight,
+    Reveal,
+}
+
+impl CaptionMotion {
+    pub fn is_static(&self) -> bool {
+        *self == Self::Static
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CaptionWord {
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TitleEdit {
@@ -603,6 +625,12 @@ pub struct TitleEdit {
     pub color: TitleColor,
     #[serde(default, skip_serializing_if = "is_false")]
     pub caption: bool,
+    #[serde(default, skip_serializing_if = "CaptionMotion::is_static")]
+    pub caption_motion: CaptionMotion,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<CaptionWord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_hex: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub background: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -628,6 +656,26 @@ pub struct TitleEdit {
     pub fade_ms: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_spacing: Option<i8>,
+}
+
+impl TitleEdit {
+    fn valid_word_times(&self) -> bool {
+        if self.words.is_empty() {
+            return true;
+        }
+        self.caption
+            && self.words.len() <= 300
+            && self.words.len() == self.text.split_whitespace().count()
+            && self.words.iter().all(|word| {
+                0 <= word.start_ms
+                    && word.start_ms <= word.end_ms
+                    && word.end_ms <= self.duration_ms
+            })
+            && self
+                .words
+                .windows(2)
+                .all(|pair| pair[0].end_ms <= pair[1].start_ms)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -913,9 +961,16 @@ pub fn check_version(snapshot: &TimelineSnapshot) -> Result<()> {
                 || !(2..=24).contains(&title.size)
                 || !(-100..=100).contains(&title.x)
                 || !(-100..=100).contains(&title.y)
-                || [&title.color_hex, &title.stroke_hex, &title.background_hex]
-                    .iter()
-                    .any(|hex| hex.as_deref().is_some_and(|value| !valid_hex(value)))
+                || !title.valid_word_times()
+                || (!title.caption && !title.caption_motion.is_static())
+                || [
+                    &title.color_hex,
+                    &title.stroke_hex,
+                    &title.background_hex,
+                    &title.highlight_hex,
+                ]
+                .iter()
+                .any(|hex| hex.as_deref().is_some_and(|value| !valid_hex(value)))
                 || title.stroke_width.is_some_and(|width| width > 12)
                 || title
                     .background_opacity

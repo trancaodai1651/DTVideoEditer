@@ -1,6 +1,10 @@
 # Changelog
 
-Snapshot: 2026-11-12/EDITOR-101
+Snapshot: 2026-11-13/EDITOR-110
+
+## 2026-11-13 · Editor 0.11.0
+
+- M1-D/M1-H8 thêm kiểu phụ đề tô sáng và hiện dần theo mốc từ của Whisper, tùy chỉnh màu nhấn từng câu và áp kiểu hàng loạt. Preview và MP4 dùng cùng mốc. Phụ đề cũ có thể dùng mốc ước tính.
 
 ## 2026-11-12 · Editor 0.10.1
 
