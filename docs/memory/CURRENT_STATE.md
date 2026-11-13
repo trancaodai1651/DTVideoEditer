@@ -24,6 +24,8 @@ Next task: M1-H8
 
 ## Mức kiểm chứng
 
+- 0.11.0: 43 test Node, 37 test Rust, 12 test FFmpeg thật và hai test Whisper thật đạt. MP4 đã đo màu và chữ ẩn/hiện theo từng mốc. Tauri release QA build được. Kiểm thử tương tác DT Edit còn mở sau khi dừng Computer Use. [Bàn giao](HANDOFF.md)
+
 - 0.10.1: hai bộ cài GitHub Actions đạt và đã xác minh ZIP. Tauri Windows tạo phụ đề tiếng Việt với model đi kèm. Whisper thật xử lý WAV 15:57 qua bốn đoạn, nhận dạng lời nói ở cuối tệp. macOS Universal đã xác minh hai kiến trúc và khởi động trên arm64. [Bàn giao](HANDOFF.md)
 
 - 0.10.0: 42 test Node, 37 test Rust, 11 test FFmpeg thật, lint và TypeScript đạt. Trong cửa sổ Tauri Windows, đã kéo clip từ thư viện, tạo hai câu phụ đề bằng model đi kèm và xuất XML/SRT. OpenTimelineIO đọc lại tầng và điểm cắt. Chưa mở XML bằng Adobe Premiere. [Bàn giao](HANDOFF.md)
