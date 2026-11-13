@@ -1,6 +1,6 @@
 # Bàn giao
 
-Snapshot: 2026-11-13/EDITOR-120
+Snapshot: 2026-11-13/EDITOR-121
 
 ## Điểm vào cho Claude Code hoặc Codex
 
@@ -8,11 +8,12 @@ Chạy `pnpm context:summary` và `git status -sb`. Đọc [bản đồ dự án
 
 Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu trên Windows/macOS. M1-L còn ca mở XML trong Adobe Premiere để lưu lại thành `.prproj`. [Backlog](TASK_BACKLOG.md)
 
-## Bản 0.12.0
+## Bản 0.12.1
 
 - **M1-H8/M1-D.** Đã mở CapCut Desktop 9.7.1.4203 và đối chiếu năm kho trong draft 1113. DT Edit thêm tìm kiếm không dấu và yêu thích lưu theo tab, 12 sticker PNG nguyên gốc, 10 mẫu phụ đề tĩnh/tô sáng/hiện dần, Âm bản/Ô điểm ảnh/Vạch màn hình, Qua trắng/Vuốt trái/Vuốt phải/Vuốt lên, và 9 bộ lọc màu. Tham chiếu UI và phạm vi tài nguyên nằm trong [khảo sát](CAPCUT_DESKTOP_AUDIT.md).
 - Chọn mẫu phụ đề trước khi tạo hoặc dùng **Áp dụng cho phụ đề hiện có**. Mẫu giữ nội dung, mốc từ và vị trí của câu. Sticker bấm để chèn tại playhead hoặc kéo vào timeline bằng luồng thả media có sẵn. Chuyển cảnh vuốt giữ hình cuối của clip trước trong khi clip sau đi vào, giữ nguyên độ dài timeline và mốc tiếng. **Xem bản xuất** kiểm tra Ô điểm ảnh và Hạt phim.
 - Preset nằm ở [editorPresets.ts](../../apps/desktop/src/editorPresets.ts). [make-studio-library.mjs](../../scripts/make-studio-library.mjs) tạo sticker, [catalog.rs](../../apps/desktop/src-tauri/src/catalog.rs) đăng ký qua grant hiện có, [render.rs](../../apps/desktop/src-tauri/src/render.rs) xuất hiệu ứng/chuyển cảnh. Schema SQLite 10 và snapshot timeline v3.
+- 0.12.1 sửa Âm bản trên lớp điều chỉnh. FFmpeg cần khai báo `negate=negate_alpha=0` trước tùy chọn `enable`. Dùng tag 0.12.1 để lấy bộ cài.
 
 ## Bản 0.11.0
 

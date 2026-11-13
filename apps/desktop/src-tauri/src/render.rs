@@ -316,7 +316,7 @@ fn effect_filter(effect: Effect) -> Option<&'static str> {
         Effect::Blur => "gblur=sigma=4",
         Effect::Vignette => "vignette=PI/5",
         Effect::Grain => "noise=alls=10:allf=t+u:all_seed=37",
-        Effect::Invert => "negate",
+        Effect::Invert => "negate=negate_alpha=0",
         Effect::Mosaic => "pixelize=w=18:h=18",
         Effect::Scanlines => "drawgrid=w=iw:h=8:t=2:c=black@0.38",
     })

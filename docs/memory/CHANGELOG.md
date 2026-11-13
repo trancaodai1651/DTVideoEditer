@@ -1,6 +1,10 @@
 # Changelog
 
-Snapshot: 2026-11-13/EDITOR-120
+Snapshot: 2026-11-13/EDITOR-121
+
+## 2026-11-13 · Editor 0.12.1
+
+- M1-H8 sửa cú pháp FFmpeg khi dùng Âm bản trên lớp điều chỉnh để giữ nguyên alpha và áp dụng đúng khoảng thời gian.
 
 ## 2026-11-13 · Editor 0.12.0
 
