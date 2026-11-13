@@ -1,6 +1,10 @@
 # Changelog
 
-Snapshot: 2026-11-13/EDITOR-110
+Snapshot: 2026-11-13/EDITOR-120
+
+## 2026-11-13 · Editor 0.12.0
+
+- M1-H8/M1-D mở rộng năm kho tích hợp. Thêm 12 sticker, 10 mẫu phụ đề, ba hiệu ứng, bốn chuyển cảnh giữa clip và chín bộ lọc. Các kho có tìm mẫu và lưu yêu thích trên thiết bị.
 
 ## 2026-11-13 · Editor 0.11.0
 

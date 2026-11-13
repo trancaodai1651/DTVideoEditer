@@ -1,6 +1,6 @@
 # Trạng thái hiện tại
 
-Snapshot: 2026-11-13/EDITOR-110
+Snapshot: 2026-11-13/EDITOR-120
 
 Next task: M1-H8
 
@@ -20,6 +20,7 @@ Next task: M1-H8
 - Bản 0.10.0 (M1-D, M1-L, M1-H8): luồng Tạo phụ đề tìm model trong bộ cài hoặc cache và tự tải bản đã pin khi thiếu. Nhận dạng theo đoạn 5 phút có tiến độ, tối đa 1800 câu/chữ trên timeline. Xuất Final Cut Pro XML 4 và SRT để chuyển dự án sang Adobe Premiere. Đổi tab thư viện đưa phần nội dung về đầu tab mới. [Bàn giao](HANDOFF.md)
 - Bản 0.10.1 (M1-D): bỏ qua đoạn 5 phút im lặng hoàn toàn, bỏ khoảng im lặng dài ở đầu mỗi đoạn và cộng lại đúng mốc vào phụ đề. [Bàn giao](HANDOFF.md)
 - Bản 0.11.0 (M1-D/M1-H8) thêm phụ đề tô sáng hoặc hiện dần từng từ, áp kiểu cho các câu hiện có và lưu mốc trong timeline. Hiệu ứng có trong preview và MP4. [Bàn giao](HANDOFF.md)
+- Bản 0.12.0 (M1-H8/M1-D) có 18 sticker, 10 mẫu phụ đề, 6 hiệu ứng, 6 chuyển cảnh giữa hai clip và 14 bộ lọc. Năm kho có tìm kiếm và yêu thích, sticker kéo được lên timeline. [Bàn giao](HANDOFF.md)
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token trong keychain, nháp, duyệt native, đăng, danh sách, sửa và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng

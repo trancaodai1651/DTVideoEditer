@@ -8,6 +8,18 @@ Bổ sung cho 0.7.0 ngày 12/11/2026. Đã mở draft trống trên CapCut 9.7.1
 
 ## Tái lập
 
+Khảo sát lại ngày 13/11/2026 bằng cửa sổ CapCut Desktop 9.7.1.4203, draft 1113.
+
+| Kho | Đã thấy trong CapCut | Phần triển khai trong DT Edit 0.12.0 |
+| --- | --- | --- |
+| Captions → Templates | Favorites, Trending, Classic, NEW, Hits. Kiểu chữ đậm nhấn vàng/xanh, chữ tĩnh và kiểu neon. Các thẻ đã thấy có dấu Pro. | 10 mẫu tự thiết kế, chia Theo lời, Hiện dần, Tĩnh. Chọn trước khi tạo hoặc áp cho phụ đề sẵn có. |
+| Stickers | Trending, nhóm mùa, B.Duck, Shapes, AI generated. Có thẻ hạt sáng, hình trang trí và ảnh cắt nền. | 18 PNG alpha tự tạo gồm hình học, dấu chỉ dẫn và trang trí. Có thao tác kéo thả và chèn tại playhead. |
+| Effects | Favorites, Video effects, Body effects, Trending và Classic. Thẻ thấy được có Chalk Graffiti và Spotlight Push. | 6 hiệu ứng hình. Các hiệu ứng theo cơ thể và thẻ có đồ họa riêng của CapCut vẫn cần triển khai độc lập. |
+| Transitions | Favorites, Trending, Classic. Thấy Swipe Left, Taped Note, Up và Split. | 6 chuyển cảnh giữa hai clip, gồm vuốt hai hướng, vuốt lên, hòa trộn, qua đen và qua trắng. |
+| Filters | Favorites, Featured, Life, Landscape, Portrait, Mono. Thấy Pure Joy và Sunny Street. | 14 công thức màu cục bộ gồm tông ngoài trời, chân dung, hoài cổ và đơn sắc. |
+
+Kho trực tuyến hiển thị từng nhóm và có thẻ Pro. Điều khoản tài nguyên CapCut giới hạn phân phối các tệp riêng lẻ, nên DT Edit sử dụng tài nguyên tự tạo và công thức riêng. [Giấy phép tài nguyên CapCut](https://www.capcut.com/clause/material-license-agreement)
+
 Ngày 13/11/2026, mở draft thử 1113, vào **Captions → Templates → Trending**. Thẻ preview cho thấy kiểu chữ trắng nhấn từng từ bằng vàng hoặc xanh. **Auto captions** có chọn ngôn ngữ và **Generate** gắn nhãn Pro khi chưa đăng nhập. Đối chiếu video mẫu thứ nhất hướng dẫn chọn mẫu, video thứ hai hiển thị chữ trắng viền đen và tô vàng từ đang đọc. [Quin Nến](https://www.tiktok.com/@quin.nen/video/7677830458318671124) · [Kenhcuathuy](https://www.tiktok.com/@kenhcuathuy1991/video/7655695246591855879)
 
 1. Từ thư mục DT_Edit chạy `pnpm demo:media` để tạo MP4 H.264/AAC 640×360 dài 6 giây, WAV 3 giây và PNG trong một thư mục tạm. Thử trên draft riêng. Phiên này tạo draft mặc định **1111 (1)** bằng **Create project**.

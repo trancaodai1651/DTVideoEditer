@@ -301,6 +301,7 @@ export function ClipInspector({ clip, aspect, disabled, name, total, playheadMs,
           <label className="edit-field">Hiệu ứng
             <select value={look.effect} onChange={(event) => lookEdit({ effect: event.target.value as ClipLook["effect"] })}>
               <option value="none">Không</option><option value="blur">Làm mờ</option><option value="vignette">Tối viền</option><option value="grain">Hạt phim</option>
+              <option value="invert">Âm bản</option><option value="mosaic">Ô điểm ảnh</option><option value="scanlines">Vạch màn hình</option>
             </select>
           </label>
           <Toggle label="Tăng nét" checked={look.sharpen} onChange={(sharpen) => lookEdit({ sharpen })} />
@@ -359,7 +360,13 @@ function useMediaClock(clip: Clip, at: number, playing: boolean, revision: numbe
 
 type TransformMode = "move" | "scale" | "rotate";
 
-function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable, selected, onTransform, live, blend, shade, adjust, proxy }: {
+function effectCss(effect: ClipLook["effect"] | undefined) {
+  if (effect === "blur") return " blur(3px)";
+  if (effect === "invert") return " invert(1)";
+  return "";
+}
+
+function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable, selected, onTransform, live, blend, shade, flash, slide, adjust, proxy }: {
   proxy: boolean;
   adjust: string;
   clip: Clip; at: number; revision: number; playing: boolean; aspectRatio: number; editable: boolean; selected: boolean;
@@ -368,6 +375,8 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
   muted: boolean;
   blend: number;
   shade: number;
+  flash: number;
+  slide?: { kind: "slide_left" | "slide_right" | "slide_up"; remaining: number };
 }) {
   const player = useMediaClock(clip, at, playing, revision, proxy);
   const src = mediaUrl(proxy ? "proxy" : "source", clip.assetId, revision);
@@ -375,19 +384,20 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
   const fade = Math.min(look.fadeMs, clipLength(clip) / 2);
   const opacity = look.opacity / 100 * blend * (fade ? Math.min(1, at / fade, (clipLength(clip) - at) / fade) : 1);
   const travel = (100 + look.scale) / 2 * Math.max(0, 1 - at / Math.min(450, clipLength(clip)));
-  const slideX = look.motion === "slide" ? -travel : look.motion === "slide_right" ? travel : 0;
-  const slideY = look.motion === "rise" ? travel : 0;
-  const effect = look.effect === "blur" ? " blur(3px)" : "";
   const sourceRatio = clip.width && clip.height ? clip.width / clip.height : aspectRatio;
+  const width = look.scale * Math.min(1, sourceRatio / aspectRatio);
+  const height = look.scale * Math.min(1, aspectRatio / sourceRatio);
+  const slideX = (look.motion === "slide" ? -travel : look.motion === "slide_right" ? travel : 0)
+    + (slide?.kind === "slide_left" ? 1 : slide?.kind === "slide_right" ? -1 : 0) * (slide?.remaining ?? 0) * (100 + width) / 2;
+  const slideY = (look.motion === "rise" ? travel : 0) + (slide?.kind === "slide_up" ? slide.remaining * (100 + height) / 2 : 0);
   const bounds = {
     left: `${50 + look.x + slideX}%`, top: `${50 + look.y + slideY}%`,
-    width: `${look.scale * Math.min(1, sourceRatio / aspectRatio)}%`,
-    height: `${look.scale * Math.min(1, aspectRatio / sourceRatio)}%`,
+    width: `${width}%`, height: `${height}%`,
     transform: `translate(-50%, -50%) rotate(${look.rotate}deg)`,
   };
   const filterId = `cf-${clip.key}`;
   const style = {
-    opacity, filter: `${cssColor(look, filterId)}${effect}${shade === 1 ? "" : ` brightness(${shade})`}${adjust}`.trim() || undefined,
+    opacity, filter: `${cssColor(look, filterId)}${effectCss(look.effect)}${shade === 1 ? "" : ` brightness(${shade})`}${adjust}`.trim() || undefined,
     transform: look.flip ? "scaleX(-1)" : undefined,
     clipPath: look.ellipse ? "ellipse(50% 50%)" : undefined,
   };
@@ -397,6 +407,9 @@ function VisualFrame({ clip, at, revision, playing, muted, aspectRatio, editable
     <ColorFilter id={filterId} look={look} />
     {clip.kind === "image" ? <img className="frame-layer" src={src} style={style} alt="" draggable={false} />
       : <video className="frame-layer" ref={(element) => { player.current = element; }} src={src} style={style} muted={muted} playsInline preload="auto" />}
+    {flash > 0 && <div className="frame-effect" style={{ background: "#fff", opacity: flash * opacity, clipPath: style.clipPath }} />}
+    {look.effect === "scanlines" && <div className="frame-effect scanlines" style={{ opacity, clipPath: style.clipPath }} />}
+    {look.effect === "vignette" && <div className="frame-effect vignette" style={{ opacity, clipPath: style.clipPath }} />}
     {editable && selected && <>
       {["nw", "ne", "sw", "se"].map((corner) => <span className={`frame-handle ${corner}`} key={corner} aria-hidden="true"
         title="Đổi cỡ" onPointerDown={(event) => onTransform(event, { ...clip, look }, "scale")} />)}
@@ -430,7 +443,7 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
   }), [clips]);
   const active = clipsAt(clips, at).filter((clip) => clip.available && !clip.look?.disabled)
     .map((clip) => draft?.key === clip.key ? draft : clip).sort((a, b) => layerOf(a) - layerOf(b));
-  const held = joins.filter(({ right, kind, durationMs }) => kind === "dissolve" && at >= right.positionMs
+  const held = joins.filter(({ right, kind, durationMs }) => kind !== "black" && kind !== "white" && at >= right.positionMs
     && at < right.positionMs + durationMs).map(({ left }) => left);
   const visuals = [...active.filter((clip) => clip.track === "video"), ...held]
     .filter((clip) => !clipLane(laneControls, clip)?.hidden)
@@ -439,7 +452,7 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
     .sort((a, b) => layerOf(a) - layerOf(b));
   const adjustCss = adjustments.map((clip) => {
     const look = clip.look ?? {};
-    return " " + cssColor(look, `af-${clip.key}`) + (look.effect === "blur" ? " blur(3px)" : "");
+    return " " + cssColor(look, `af-${clip.key}`) + effectCss(look.effect);
   }).join("");
   const source = aspect === "source" ? clips.reduce<Clip | undefined>((first, clip) =>
     clip.track === "video" && clip.width && clip.height && (!first || clip.positionMs < first.positionMs) ? clip : first, undefined) : undefined;
@@ -511,14 +524,19 @@ export function CompositionFrame({ clips, laneControls, aspect, at, revision, pl
       const frozen = at >= clipFinish(clip);
       const elapsed = frozen ? clipLength(clip) - 1 : at - clip.positionMs;
       const incoming = joins.find((join) => join.right.key === clip.key);
-      const outgoing = joins.find((join) => join.left.key === clip.key && join.kind === "black");
+      const outgoing = joins.find((join) => join.left.key === clip.key);
       const blend = incoming?.kind === "dissolve" ? Math.min(1, elapsed / incoming.durationMs) : 1;
       const shade = Math.min(1, incoming?.kind === "black" ? 2 * elapsed / incoming.durationMs : 1,
-        outgoing ? 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 1);
+        outgoing?.kind === "black" ? 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 1);
+      const flash = Math.max(0, incoming?.kind === "white" ? 1 - 2 * elapsed / incoming.durationMs : 0,
+        outgoing?.kind === "white" ? 1 - 2 * (clipLength(clip) - elapsed) / outgoing.durationMs : 0);
+      const kind = incoming?.kind;
+      const slide = incoming && (kind === "slide_left" || kind === "slide_right" || kind === "slide_up")
+        ? { kind, remaining: Math.max(0, 1 - elapsed / incoming.durationMs) } : undefined;
       return <VisualFrame key={clip.key} clip={clip} at={elapsed} revision={revision} playing={playing && !frozen} adjust={adjustCss}
         proxy={clip.kind === "video" && proxyAssets.has(clip.assetId)}
         muted={frozen || !!controls?.muted || !!clip.look?.audioDetached} aspectRatio={size} editable={editable && !playing && !frozen && !controls?.locked} selected={clip.key === selectedKey}
-        onTransform={begin} live={draft?.key === clip.key} blend={blend} shade={shade} />;
+        onTransform={begin} live={draft?.key === clip.key} blend={blend} shade={shade} flash={flash} slide={slide} />;
     })}
     {playing && active.filter((clip) => {
       const controls = clipLane(laneControls, clip);

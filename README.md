@@ -39,6 +39,8 @@ Trong **Phụ đề**, tạo câu thủ công hoặc nhập SRT UTF-8. Chọn cl
 
 Trong **Phụ đề → Kiểu phụ đề**, chọn **Tô sáng từng từ**, **Hiện dần từng từ** hoặc **Tĩnh** rồi bấm **Tạo phụ đề**. Hai kiểu động dùng mốc từng từ của Whisper. **Áp dụng cho phụ đề hiện có** đổi kiểu các tầng chưa khóa và dùng mốc ước tính nếu câu đến từ SRT hoặc được thêm thủ công. Chọn một câu để đổi màu từ đang đọc trong **Thuộc tính chữ**. MP4 giữ hiệu ứng chữ, cần FFmpeg có filter `ass` (libass). SRT giữ nội dung và mốc từng cụm. [FFmpeg ASS](https://ffmpeg.org/ffmpeg-filters.html#ass)
 
+Trong **Phụ đề → Mẫu phụ đề**, chọn thẻ mẫu trước khi tạo hoặc áp cho các câu đã có. Có thể tìm mẫu và lọc **Yêu thích** trong Phụ đề, Sticker, Hiệu ứng, Chuyển cảnh và Bộ lọc. Bấm sticker để chèn ở playhead hoặc kéo xuống timeline. Để đặt chuyển cảnh, chọn clip phía sau trong cặp clip chạm mép trên cùng tầng.
+
 ## Dựng nâng cao
 
 - Nhấp chuột phải vào clip, tên tầng hoặc vùng trống để mở menu thao tác. Kéo trên chỗ trống của tầng để chọn nhiều clip bằng khung.

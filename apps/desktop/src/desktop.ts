@@ -89,7 +89,7 @@ export interface ClipLook {
   rotate: number;
   flip: boolean;
   temperature: number;
-  effect: "none" | "blur" | "vignette" | "grain";
+  effect: "none" | "blur" | "vignette" | "grain" | "invert" | "mosaic" | "scanlines";
   keyColor: "none" | "green" | "blue";
   ellipse: boolean;
   denoise: boolean;
@@ -150,7 +150,7 @@ export interface AdjustmentEdit { positionMs: number; durationMs: number; layer:
 export interface SpeedPoint { at: number; speed: number }
 export interface TrackPoint { atMs: number; x: number; y: number; scale?: number; angle?: number }
 export interface TrackRegion { x: number; y: number; width: number; height: number }
-export type TransitionKind = "black" | "dissolve";
+export type TransitionKind = "black" | "white" | "dissolve" | "slide_left" | "slide_right" | "slide_up";
 export interface ClipTransition {
   kind: TransitionKind;
   durationMs: number;

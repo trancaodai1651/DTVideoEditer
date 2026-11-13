@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
-import type { ComponentProps, CSSProperties, ReactNode } from "react";
+import type { ComponentProps, CSSProperties, ReactNode, RefObject } from "react";
 import { api, desktop, mediaUrl } from "./desktop";
 import type { Voice } from "./desktop";
 import type { Asset, CaptionMotion, CatalogItem, ClipLook, ClipTransition, TitleStyle, TransitionKind } from "./desktop";
 import { Icon } from "./Icon";
+import { useMediaDrag } from "./MediaPanels";
+import type { TimelineDrop } from "./TimelineEditor";
 import { grades } from "./ClipInspector";
 import { captionMotions, captionStyle, defaultTitle } from "./timeline";
+import { captionPresets, extraFilters, transitions } from "./editorPresets";
+import type { CaptionPreset } from "./editorPresets";
 import { duration } from "./vi";
 
 const tabs = [
@@ -37,6 +41,9 @@ const presets: Record<"effects" | "transitions" | "filters" | "adjustment" | "ad
     { label: "Làm mềm", detail: "Làm mờ Gaussian", swatch: "#75529c", look: { effect: "blur" } },
     { label: "Tối viền", detail: "Tập trung vào giữa khung", swatch: "#453a60", look: { effect: "vignette" } },
     { label: "Hạt phim", detail: "Hạt thay đổi theo khung hình", swatch: "#76603e", look: { effect: "grain" } },
+    { label: "Âm bản", detail: "Đảo màu của khung hình", swatch: "#7762aa", look: { effect: "invert" } },
+    { label: "Ô điểm ảnh", detail: "Gom điểm ảnh thành khối khi xuất", swatch: "#3c7598", look: { effect: "mosaic" } },
+    { label: "Vạch màn hình", detail: "Tạo vạch ngang kiểu màn hình cũ", swatch: "#52667d", look: { effect: "scanlines" } },
     { label: "Gỡ hiệu ứng", detail: "Trở về hình gốc của clip", swatch: "#46515c", look: { effect: "none" } },
   ],
   transitions: [
@@ -52,6 +59,7 @@ const presets: Record<"effects" | "transitions" | "filters" | "adjustment" | "ad
     { label: "Đen trắng", detail: "Khử màu", swatch: "#606773", look: { ...grades.monochrome, temperature: 0 } },
     { label: "Ánh ấm", detail: "Tông vàng đỏ", swatch: "#b06e45", look: { ...grades.soft, temperature: 42 } },
     { label: "Xanh lạnh", detail: "Tông xanh điện ảnh", swatch: "#386688", look: { brightness: -4, contrast: 112, saturation: 82, temperature: -40 } },
+    ...extraFilters,
   ],
   adjustment: [
     { label: "Nâng sáng", detail: "Tăng sáng nhẹ", swatch: "#8591a1", look: { brightness: 10 } },
@@ -74,6 +82,15 @@ const titles = [
   { label: "Mở đầu", description: "Chữ vàng ở giữa khung", title: { ...defaultTitle, text: "Mở đầu", size: 10, y: 0, color: "yellow" } },
   { label: "Nhãn dưới", description: "Nền tối cho tên hoặc địa điểm", title: { ...defaultTitle, text: "Tên · Địa điểm", size: 5, x: -78, y: 75, background: true } },
 ] satisfies { label: string; description: string; title: TitleStyle }[];
+
+const favoritesKey = "dt-edit-library-favorites";
+const normalized = (value: string) => value.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replaceAll("đ", "d").trim();
+const libraryTabs: LibraryTab[] = ["stickers", "effects", "transitions", "captions", "filters"];
+const groups: Partial<Record<LibraryTab, string[]>> = {
+  captions: ["Theo lời", "Hiện dần", "Tĩnh"],
+  transitions: ["Mờ", "Trượt", "Vào và ra"],
+};
+const filterBase: Partial<ClipLook> = { tint: 0, shadows: 0, highlights: 0, blacks: 0 };
 
 export interface SmartTarget { key: string; kind: string; track: string; layer: number; detached: boolean; linked: boolean }
 
@@ -137,7 +154,7 @@ function VoiceAndTranslate({ busy, hasProject, hasCaptionLines, onSpeak, onTrans
   </>;
 }
 
-export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarget, onSmartTool, tab, onTab, media, templates, montage, avatar, onRemoveBackground, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, onCaptionMotion, canJoin, join, onJoin }: {
+export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarget, onSmartTool, tab, onTab, media, templates, montage, avatar, onRemoveBackground, catalog, catalogFailed, onRetryCatalog, busy, hasProject, hasVisual, hasSpeech, hasCaptions, onApply, onTitle, onAdd, onImportSrt, onExportSrt, onTranscribe, onCaptionMotion, canJoin, join, onJoin, timeline }: {
   tab: LibraryTab;
   onTab: (tab: LibraryTab) => void;
   smartTarget: SmartTarget | null;
@@ -163,21 +180,51 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
   onAdd: (asset: Asset, sticker: boolean) => void;
   onImportSrt: () => void;
   onExportSrt: () => void;
-  onTranscribe: (language: string, chooseModel: boolean, motion: CaptionMotion) => void;
-  onCaptionMotion: (motion: CaptionMotion) => void;
+  onTranscribe: (language: string, chooseModel: boolean, motion: CaptionMotion, preset?: CaptionPreset) => void;
+  onCaptionMotion: (motion: CaptionMotion, preset?: CaptionPreset) => void;
   canJoin: boolean;
   join?: ClipTransition;
   onJoin: (kind: TransitionKind | null, durationMs: number) => void;
+  timeline: RefObject<TimelineDrop | null>;
 }) {
+  const stickerDrag = useMediaDrag(timeline, !busy);
   const [audioGroup, setAudioGroup] = useState<"music" | "sound" | "local">("music");
   const [textGroup, setTextGroup] = useState<"basic" | "presets">("basic");
   const [previewSound, setPreviewSound] = useState<number | null>(null);
   const [language, setLanguage] = useState("vi");
   const [captionMotion, setCaptionMotion] = useState<CaptionMotion>("highlight");
+  const [captionPresetId, setCaptionPresetId] = useState<string | null>(null);
+  const [searches, setSearches] = useState<Partial<Record<LibraryTab, string>>>({});
+  const [category, setCategory] = useState<Partial<Record<LibraryTab, string>>>({});
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(favoritesKey) ?? "[]");
+      return Array.isArray(saved) ? saved.filter((value): value is string => typeof value === "string") : [];
+    } catch { return []; }
+  });
   const [joinDuration, setJoinDuration] = useState(500);
   const selected = tabs.find((item) => item.id === tab)!;
+  const captionPreset = captionPresets.find((item) => item.id === captionPresetId)?.style;
+  const categoryValue = category[tab] ?? "Tất cả";
+  const matches = (id: string, name: string, group?: string, detail = "") =>
+    normalized(`${name} ${detail}`).includes(normalized(searches[tab] ?? "")) &&
+    (categoryValue === "Tất cả" || categoryValue === group || categoryValue === "Yêu thích" && favorites.includes(`${tab}:${id}`));
+  const visibleCaptions = tab === "captions" ? captionPresets.filter((item) => matches(item.id, item.name, item.group)) : [];
+  const visibleJoins = tab === "transitions" ? (Object.keys(transitions) as TransitionKind[]).filter((id) => matches(id, transitions[id].name, transitions[id].group)) : [];
+  const visiblePresets = tab in presets ? presets[tab as keyof typeof presets].filter((preset) => !libraryTabs.includes(tab) ||
+    matches(preset.label, preset.label, tab === "transitions" ? "Vào và ra" : undefined, preset.detail)) : [];
+  const favorite = (id: string, name: string) => {
+    const key = `${tab}:${id}`;
+    return <button type="button" className="preset-favorite icon-button" aria-label={`Yêu thích ${name}`} aria-pressed={favorites.includes(key)}
+      onClick={() => {
+        const next = favorites.includes(key) ? favorites.filter((value) => value !== key) : [...favorites, key];
+        setFavorites(next);
+        try { localStorage.setItem(favoritesKey, JSON.stringify(next)); } catch { /* session only */ }
+      }}>{favorites.includes(key) ? "★" : "☆"}</button>;
+  };
   const hasStock = tab === "stickers" || tab === "audio" && audioGroup !== "local";
-  const items = hasStock ? catalog?.filter((item) => item.group === (tab === "stickers" ? "sticker" : audioGroup)) : undefined;
+  const items = hasStock ? catalog?.filter((item) => item.group === (tab === "stickers" ? "sticker" : audioGroup)
+    && (tab !== "stickers" || matches(item.asset.relativePath, item.title))) : undefined;
   return <section className="studio-pane library-pane" aria-label="Thư viện biên tập">
     <nav className="library-tabs" aria-label="Công cụ biên tập">
       {tabs.map(({ id, label, icon }) => <button type="button" key={id} aria-pressed={tab === id}
@@ -195,6 +242,13 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
         <button type="button" onClick={() => onTab("captions")}>Phụ đề</button>
       </nav>}
       <div className="library-body" key={tab} aria-label={selected.label}>
+      {libraryTabs.includes(tab) && <div className="library-search-row">
+        <input type="search" aria-label={`Tìm trong ${selected.label}`} placeholder="Tìm mẫu…" value={searches[tab] ?? ""}
+          onChange={(event) => setSearches({ ...searches, [tab]: event.target.value })} />
+        <select aria-label="Nhóm mẫu" value={categoryValue} onChange={(event) => setCategory({ ...category, [tab]: event.target.value })}>
+          {["Tất cả", "Yêu thích", ...(groups[tab] ?? [])].map((group) => <option key={group}>{group}</option>)}
+        </select>
+      </div>}
       {(tab === "media" || tab === "audio" && audioGroup === "local") && media}
       {hasStock && <div className="library-section">
         <h2>{tab === "stickers" ? "Sticker DT_Edit" : audioGroup === "music" ? "Nhạc nền DT_Edit" : "Hiệu ứng âm thanh"}</h2>
@@ -202,7 +256,14 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
         {!items && (catalogFailed ? <button type="button" className="button secondary" onClick={onRetryCatalog}>Tải lại thư viện</button> : <p>Đang tải tài nguyên…</p>)}
         <div className={tab === "stickers" ? "preset-grid" : "sound-list"}>
           {items?.map(({ asset, title }) => <article key={asset.id} className="studio-card">
-            {tab === "stickers" ? <div className="sticker-art"><img src={mediaUrl("source", asset.id, 0)} alt="" /></div> : null}
+            {tab === "stickers" && favorite(asset.relativePath, title)}
+            {tab === "stickers" && <button type="button" className="sticker-art" aria-label={`Thêm ${title} vào timeline`}
+              disabled={busy} onClick={(event) => { if (event.detail === 0 || !stickerDrag.moved()) onAdd(asset, true); }}
+              onPointerDown={(event) => stickerDrag.startDrag(event, asset)}
+              onPointerMove={(event) => stickerDrag.moveDrag(event, false)} onPointerUp={(event) => stickerDrag.moveDrag(event, true)}
+              onPointerCancel={stickerDrag.cancel} onLostPointerCapture={stickerDrag.clear} onDragStart={(event) => event.preventDefault()}>
+              <img src={mediaUrl("source", asset.id, 0)} alt="" draggable={false} />
+            </button>}
             <div className="studio-card-row"><div className="studio-card-label">
               <strong>{title}</strong><small>{duration(asset.durationMs) || "PNG trong suốt"}</small>
             </div>
@@ -210,10 +271,11 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
               aria-pressed={previewSound === asset.id} onClick={() => setPreviewSound(previewSound === asset.id ? null : asset.id)}>
               <Icon name={previewSound === asset.id ? "pause" : "play"} size={15} />
             </button>}
-            <button type="button" className="icon-button" aria-label={`Thêm ${title}`} disabled={busy || !hasProject}
-              onClick={() => onAdd(asset, tab === "stickers")}><Icon name="plus" size={16} /></button></div>
+            {tab === "audio" && <button type="button" className="icon-button" aria-label={`Thêm ${title}`} disabled={busy || !hasProject}
+              onClick={() => onAdd(asset, false)}><Icon name="plus" size={16} /></button>}</div>
             {previewSound === asset.id && <audio src={mediaUrl("source", asset.id, 0)} controls autoPlay preload="metadata" />}
           </article>)}
+          {items?.length === 0 && <p>Không tìm thấy mẫu.</p>}
         </div>
       </div>}
       {tab === "text" && <div className="library-section"><h2>{textGroup === "basic" ? "Chữ cơ bản" : "Mẫu chữ"}</h2><p>Chèn tại playhead rồi chỉnh nội dung trong Thuộc tính.</p>
@@ -235,18 +297,31 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
           <label className="edit-field">Ngôn ngữ<select value={language} onChange={(event) => setLanguage(event.target.value)}>
             <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="auto">Tự nhận diện</option>
           </select></label>
-          <label className="edit-field">Kiểu phụ đề<select value={captionMotion} onChange={(event) => setCaptionMotion(event.target.value as CaptionMotion)}>
+          <label className="edit-field">Kiểu phụ đề<select value={captionMotion} onChange={(event) => { setCaptionMotion(event.target.value as CaptionMotion); setCaptionPresetId(null); }}>
             {Object.entries(captionMotions).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
           </select></label>
           <div className="library-filters">
-            <button type="button" className="button primary" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, false, captionMotion)}>Tạo phụ đề</button>
-            <button type="button" className="button secondary compact" disabled={busy || !hasCaptions} onClick={() => onCaptionMotion(captionMotion)}>Áp dụng cho phụ đề hiện có</button>
+            <button type="button" className="button primary" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, false, captionMotion, captionPreset)}>Tạo phụ đề</button>
+            <button type="button" className="button secondary compact" disabled={busy || !hasCaptions} onClick={() => onCaptionMotion(captionMotion, captionPreset)}>Áp dụng cho phụ đề hiện có</button>
           </div>
           {hasCaptions && captionMotion !== "static" && <p>Phụ đề chưa có mốc từng từ sẽ dùng mốc ước tính. Tạo từ clip có tiếng để bám sát lời nói.</p>}
           <details className="caption-options"><summary>Mô hình tùy chọn</summary>
-            <button type="button" className="button secondary compact" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, true, captionMotion)}>Chọn tệp GGML…</button>
+            <button type="button" className="button secondary compact" disabled={busy || !hasSpeech} onClick={() => onTranscribe(language, true, captionMotion, captionPreset)}>Chọn tệp GGML…</button>
           </details>
         </div>
+        <h3>Mẫu phụ đề</h3>
+        <div className="preset-grid">
+          {visibleCaptions.map((item) => <article className="studio-card" key={item.id}>
+            {favorite(item.id, item.name)}
+            <button type="button" className="preset-card" disabled={busy} aria-pressed={captionPresetId === item.id}
+              onClick={() => { setCaptionPresetId(item.id); setCaptionMotion(item.style.captionMotion); }}>
+              <span className="caption-preset-art" style={{ "--caption-ink": ("colorHex" in item.style ? item.style.colorHex : undefined) ?? "#fff",
+                "--caption-accent": ("highlightHex" in item.style ? item.style.highlightHex : undefined) ?? "#fff" } as CSSProperties}>Xin <strong>chào</strong></span>
+              <strong>{item.name}</strong><small>{item.group}</small>
+            </button>
+          </article>)}
+        </div>
+        {!visibleCaptions.length && <p>Không tìm thấy mẫu phụ đề.</p>}
       </div>}
       {tab === "templates" && templates}
       {tab === "smart" && <div className="library-section smart-tools">
@@ -278,32 +353,43 @@ export function EditorLibrary({ onSpeak, onTranslate, hasCaptionLines, smartTarg
         </div>
         {avatar}
       </div>}
-      {tab === "transitions" && <div className="library-section">
+      {tab === "transitions" && categoryValue !== "Vào và ra" && <div className="library-section">
         <h2>Điểm nối hai clip</h2>
         <p>Chọn clip phía sau trên cùng tầng. Hai clip phải chạm mép.</p>
         <label className="edit-field">Thời lượng chuyển cảnh (ms)
           <input type="number" min={100} max={3000} step={100} value={joinDuration}
             onChange={(event) => setJoinDuration(Number(event.target.value))} />
         </label>
+        <div className="preset-grid">
+          {visibleJoins.map((id) => <article className="studio-card" key={id}>
+              {favorite(id, transitions[id].name)}
+              <button type="button" className="preset-card" disabled={busy || !canJoin} aria-pressed={join?.kind === id}
+                onClick={() => onJoin(id, joinDuration)}>
+                <span className="preset-art" style={{ "--swatch": transitions[id].swatch } as CSSProperties}><Icon name="transition" size={22} /></span>
+                <strong>{transitions[id].name}</strong>
+              </button>
+            </article>)}
+        </div>
+        {!visibleJoins.length && <p>Không tìm thấy mẫu chuyển cảnh.</p>}
         <div className="library-filters">
-          <button type="button" className="button secondary compact" disabled={busy || !canJoin}
-            onClick={() => onJoin("dissolve", joinDuration)}>Hòa trộn</button>
-          <button type="button" className="button secondary compact" disabled={busy || !canJoin}
-            onClick={() => onJoin("black", joinDuration)}>Qua đen</button>
           <button type="button" className="button secondary compact" disabled={busy || !join}
             onClick={() => onJoin(null, 0)}>Gỡ điểm nối</button>
         </div>
-        {join && <p>{join.kind === "black" ? "Qua đen" : "Hòa trộn"} · {join.durationMs} ms</p>}
+        {join && <p>{transitions[join.kind].name} · {join.durationMs} ms</p>}
       </div>}
-      {(tab === "effects" || tab === "transitions" || tab === "filters" || tab === "adjustment" || tab === "advanced") &&
+      {(tab === "effects" || tab === "transitions" && !["Mờ", "Trượt"].includes(categoryValue) || tab === "filters" || tab === "adjustment" || tab === "advanced") &&
         <div className="library-section"><h2>{tab === "transitions" ? "Vào và ra trên một clip" : selected.label}</h2><p>{hasVisual
           ? "Bấm một mẫu để áp dụng cho clip đang chọn."
           : "Chọn một clip video hoặc ảnh trên timeline để áp dụng."}</p>
-          <div className="preset-grid">{presets[tab].map((preset) => <button type="button" key={preset.label}
-            className="studio-card preset-card" disabled={busy || !hasVisual} onClick={() => onApply(preset.look)}>
+          <div className="preset-grid">{visiblePresets.map((preset) => <article className="studio-card" key={preset.label}>
+            {libraryTabs.includes(tab) && favorite(preset.label, preset.label)}
+            <button type="button" className="preset-card" disabled={busy || !hasVisual}
+              onClick={() => onApply(tab === "filters" ? { ...filterBase, ...preset.look } : preset.look)}>
             <div className="preset-art" style={{ "--swatch": preset.swatch } as CSSProperties}><Icon name={selected.icon} size={24} /></div>
             <strong>{preset.label}</strong><small>{preset.detail}</small>
-          </button>)}</div>
+            </button>
+          </article>)}</div>
+          {!visiblePresets.length && <p>Không tìm thấy mẫu.</p>}
         </div>}
       </div>
     </div>

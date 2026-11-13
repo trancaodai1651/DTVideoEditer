@@ -41,6 +41,18 @@ const RESOURCES: &[Resource] = &[
     resource!("focus-ring.png", "Vòng đánh dấu", "sticker", None),
     resource!("violet-bubble.png", "Bong bóng thoại", "sticker", None),
     resource!("amber-spark.png", "Tia sáng", "sticker", None),
+    resource!("mint-check.png", "Dấu tích", "sticker", None),
+    resource!("coral-cross.png", "Dấu chéo", "sticker", None),
+    resource!("lemon-bolt.png", "Tia sét", "sticker", None),
+    resource!("blue-drop.png", "Giọt nước", "sticker", None),
+    resource!("orange-pin.png", "Ghim vị trí", "sticker", None),
+    resource!("violet-play.png", "Nút phát", "sticker", None),
+    resource!("red-record.png", "Nút ghi hình", "sticker", None),
+    resource!("white-frame.png", "Góc khung", "sticker", None),
+    resource!("pink-flower.png", "Hoa hồng cách điệu", "sticker", None),
+    resource!("aqua-wave.png", "Sóng nước", "sticker", None),
+    resource!("lilac-crescent.png", "Trăng khuyết", "sticker", None),
+    resource!("mint-leaf.png", "Lá non", "sticker", None),
 ];
 
 #[derive(Serialize)]
@@ -115,6 +127,7 @@ pub fn load(store: &Store, data_dir: &Path) -> Result<Vec<CatalogItem>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::http::{Request, StatusCode};
 
     #[test]
     fn registers_stock_assets_once_and_preserves_ids() {
@@ -137,5 +150,25 @@ mod tests {
                 .iter()
                 .any(|item| item.group == "sticker" && item.asset.width == Some(192))
         );
+        let sticker = &first
+            .iter()
+            .find(|item| item.asset.relative_path == "mint-check.png")
+            .unwrap()
+            .asset;
+        let read = || {
+            crate::preview::serve(
+                &store,
+                Request::builder()
+                    .uri(format!("/source-{}", sticker.id))
+                    .header("Range", "bytes=0-7")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+        };
+        let response = read();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"\x89PNG\r\n\x1a\n");
+        store.revoke(sticker.folder_id).unwrap();
+        assert_eq!(read().status(), StatusCode::NOT_FOUND);
     }
 }

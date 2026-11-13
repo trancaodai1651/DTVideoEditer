@@ -54,12 +54,8 @@ interface GalleryProps {
   onAppend: (media: MediaRef) => void;
 }
 
-export function Gallery({ data, folders, folderId, page, revision, selected, onFolder, onPage, onSelect,
-  query, onQuery, kind, audioOnly, onKind, onImport, onFolderImport, busy, canAdd, timeline, onAppend }: GalleryProps) {
+export function useMediaDrag(timeline: RefObject<TimelineDrop | null>, canAdd: boolean) {
   const gesture = useRef<{ pointer: number; x: number; y: number; media: MediaRef; moved: boolean } | null>(null);
-  const [menu, setMenu] = useState<MenuState | null>(null);
-  const pages = data ? Math.ceil(data.total / data.pageSize) : 0;
-
   function startDrag(event: PointerEvent<HTMLButtonElement>, asset: Asset) {
     gesture.current = null;
     if (!canAdd || event.button !== 0 || !event.isPrimary) return;
@@ -73,6 +69,20 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
     drag.moved ||= Math.hypot(event.clientX - drag.x, event.clientY - drag.y) >= 5;
     if (drag.moved) timeline.current?.media(drag.media, event.clientX, event.clientY, commit);
   }
+  return {
+    moved: () => !!gesture.current?.moved,
+    startDrag,
+    moveDrag,
+    clear: () => timeline.current?.clear(),
+    cancel: () => { gesture.current = null; timeline.current?.clear(); },
+  };
+}
+
+export function Gallery({ data, folders, folderId, page, revision, selected, onFolder, onPage, onSelect,
+  query, onQuery, kind, audioOnly, onKind, onImport, onFolderImport, busy, canAdd, timeline, onAppend }: GalleryProps) {
+  const drag = useMediaDrag(timeline, canAdd);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const pages = data ? Math.ceil(data.total / data.pageSize) : 0;
 
   return (
     <section className="panel gallery" aria-labelledby="gallery-heading">
@@ -103,8 +113,8 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
             <button type="button" aria-pressed={selected === asset.id}
               className={`asset ${selected === asset.id ? "selected" : ""}`}
               title={asset.relativePath}
-              onClick={(event) => { if (event.detail === 0 || !gesture.current?.moved) onSelect(selectAsset(asset)); }}
-              onDoubleClick={() => { if (canAdd && !gesture.current?.moved) onAppend(selectAsset(asset)); }}
+              onClick={(event) => { if (event.detail === 0 || !drag.moved()) onSelect(selectAsset(asset)); }}
+              onDoubleClick={() => { if (canAdd && !drag.moved()) onAppend(selectAsset(asset)); }}
               onContextMenu={(event) => {
                 event.preventDefault();
                 setMenu({ x: event.clientX, y: event.clientY, label: fileName(asset.relativePath), items: [
@@ -114,10 +124,9 @@ export function Gallery({ data, folders, folderId, page, revision, selected, onF
                 ] });
               }}
               onDragStart={(event) => event.preventDefault()}
-              onPointerDown={(event) => startDrag(event, asset)} onPointerMove={(event) => moveDrag(event, false)}
-              onPointerUp={(event) => moveDrag(event, true)}
-              onLostPointerCapture={() => timeline.current?.clear()}
-              onPointerCancel={() => { gesture.current = null; timeline.current?.clear(); }}>
+              onPointerDown={(event) => drag.startDrag(event, asset)} onPointerMove={(event) => drag.moveDrag(event, false)}
+              onPointerUp={(event) => drag.moveDrag(event, true)}
+              onLostPointerCapture={drag.clear} onPointerCancel={drag.cancel}>
               <div className={`thumb ${asset.kind}`}>
                 {asset.hasThumbnail ? <img src={mediaUrl("thumbnail", asset.id, revision)} alt="" loading="lazy" draggable={false} /> : <Icon name={asset.kind} size={26} />}
                 {asset.durationMs !== null && <span>{duration(asset.durationMs)}</span>}

@@ -68,6 +68,8 @@ Clip tắt bị bỏ khỏi graph. Freeze đọc một khung tại `freezeAtMs` 
 
 ## Tài nguyên và phụ đề
 
+0.12.0 thêm 12 sticker PNG 192×192 do [script](../../../scripts/make-studio-library.mjs) tạo và dùng cùng grant kho tích hợp. Sticker kéo thả qua cùng luồng với Gallery. [editorPresets.ts](../../../apps/desktop/src/editorPresets.ts) khai báo mẫu phụ đề, chuyển cảnh và bộ lọc. Thư viện lưu yêu thích theo tab trong `localStorage`. Mẫu phụ đề thay kiểu, giữ nội dung, mốc từ, tọa độ và tầng. Chuyển cảnh vuốt giữ hình cuối của clip trước trong nửa đầu và cuối chuyển cảnh, với clip sau di chuyển trên cùng tầng và thời lượng timeline giữ nguyên.
+
 [EditorLibrary](../../../apps/desktop/src/EditorLibrary.tsx) tổ chức các thư viện và preset. [catalog.rs](../../../apps/desktop/src-tauri/src/catalog.rs) đăng ký 2 bản nhạc, 3 SFX và 6 sticker gốc vào thư viện local. [captions.rs](../../../apps/desktop/src-tauri/src/captions.rs) xử lý SRT UTF-8 và FFmpeg `whisper`. **Tạo phụ đề** dùng `ggml-small-q5_1.bin` trong resource hoặc cache, tải bản pin và xác minh SHA-256 khi thiếu. Có tùy chọn chọn GGML riêng. Clip nguồn được đọc theo đoạn 5 phút và câu được ghép với offset có xét tốc độ clip. Caption là lớp chữ có thể sửa trong snapshot và có thể xuất lại SRT.
 
 0.11.0 lưu `captionMotion`, `words` (mốc ms tính từ đầu cụm) và `highlightHex` tùy chọn trong lớp chữ. Khi tách hoặc trim, timeline cắt mốc theo biên mới. Khi đổi số từ hoặc dịch, mốc nhận dạng được bỏ và trình phát dùng phân bố đều. [caption_render.rs](../../../apps/desktop/src-tauri/src/caption_render.rs) dùng cùng phân bố khi xuất, escape văn bản và ghi ASS tạm cho từng nhóm lớp động kề nhau để giữ thứ tự với lớp chữ tĩnh. `ass` hỗ trợ chữ động trong MP4 và **Xem bản xuất**. SRT giữ thời lượng từng cụm.

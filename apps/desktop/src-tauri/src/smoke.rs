@@ -1296,6 +1296,10 @@ fn real_ffmpeg_exports_keyframes_and_transitions_with_in_out() {
     for (name, kind) in [
         ("dissolve", TransitionKind::Dissolve),
         ("black", TransitionKind::Black),
+        ("white", TransitionKind::White),
+        ("slide_left", TransitionKind::SlideLeft),
+        ("slide_right", TransitionKind::SlideRight),
+        ("slide_up", TransitionKind::SlideUp),
     ] {
         let mut edits = snapshot(
             vec![
@@ -1417,11 +1421,34 @@ fn real_ffmpeg_exports_keyframes_and_transitions_with_in_out() {
                 frame.stdout[offset + 2],
             ]
         };
-        let [r, g, b] = sample(if name == "dissolve" { "0.4" } else { "0.2" }, 160);
-        if name == "dissolve" {
-            assert!(r > 55 && g < 35 && b > 55, "dissolve: {r}, {g}, {b}");
-        } else {
-            assert!(r < 45 && g < 35 && b < 45, "black join: {r}, {g}, {b}");
+        let [r, g, b] = sample(if kind.flash().is_some() { "0.2" } else { "0.4" }, 160);
+        match kind {
+            TransitionKind::Dissolve => {
+                assert!(r > 55 && g < 35 && b > 55, "{name}: {r}, {g}, {b}")
+            }
+            TransitionKind::Black => assert!(r < 45 && g < 35 && b < 45, "{name}: {r}, {g}, {b}"),
+            TransitionKind::White => {
+                assert!(r > 220 && g > 220 && b > 220, "{name}: {r}, {g}, {b}")
+            }
+            TransitionKind::SlideLeft | TransitionKind::SlideRight => {
+                let left = sample("0.4", 60);
+                let right = sample("0.4", 260);
+                let (held, incoming) = if kind == TransitionKind::SlideLeft {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                assert!(
+                    held[0] > 220 && held[2] < 40 && incoming[0] < 40 && incoming[2] > 220,
+                    "{name}: {left:?} {right:?}"
+                );
+            }
+            TransitionKind::SlideUp => {
+                let [r, _, b] = sample("0.28", 160);
+                assert!(r > 220 && b < 40, "{name}: {r}, {b}");
+                let [r, _, b] = sample("0.52", 160);
+                assert!(b > 220 && r < 40, "{name}: {r}, {b}");
+            }
         }
         let [r, g, b] = sample("0.93", 155);
         assert!(

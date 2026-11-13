@@ -86,3 +86,24 @@ sticker("focus-ring.png", [139, 194, 255], (x, y) => Math.abs(Math.hypot(x, y) -
 sticker("violet-bubble.png", [171, 147, 250], (x, y) => (x * x / 0.86 ** 2 + (y + 0.13) ** 2 / 0.63 ** 2 < 1)
   || inside([[-0.50, 0.2], [-0.08, 0.35], [-0.51, 0.83]], x, y));
 sticker("amber-spark.png", [252, 216, 130], (x, y) => Math.abs(x) ** 0.62 + Math.abs(y) ** 0.62 < 0.92);
+sticker("mint-check.png", [87, 236, 163], polygon([[-.84, .04], [-.64, -.16], [-.29, .19], [.62, -.72], [.83, -.52], [-.29, .6]]));
+sticker("coral-cross.png", [255, 105, 124], (x, y) => Math.hypot(x, y) < .87 && (Math.abs(x - y) < .24 || Math.abs(x + y) < .24));
+sticker("lemon-bolt.png", [255, 226, 83], polygon([[.18, -.92], [-.68, .17], [-.08, .17], [-.25, .92], [.74, -.25], [.15, -.25]]));
+sticker("blue-drop.png", [73, 181, 251], (x, y) => Math.hypot(x, y - .28) < .56 || inside([[0, -.92], [-.49, .04], [.49, .04]], x, y));
+sticker("orange-pin.png", [255, 130, 75], (x, y) => Math.hypot(x, y + .24) >= .22 && (Math.hypot(x, y + .24) < .58 || inside([[-.51, .02], [.51, .02], [0, .92]], x, y)));
+sticker("violet-play.png", [174, 141, 255], polygon([[-.49, -.76], [.84, 0], [-.49, .76]]));
+sticker("red-record.png", [247, 82, 102], (x, y) => Math.hypot(x, y) < .54 || Math.abs(Math.hypot(x, y) - .82) < .06);
+sticker("white-frame.png", [245, 252, 255], (x, y) => {
+  const [a, b] = [Math.abs(x), Math.abs(y)];
+  return Math.max(a, b) < .86 && Math.max(a, b) > .69 && Math.min(a, b) > .42;
+});
+sticker("pink-flower.png", [255, 132, 205], (x, y) => Math.hypot(x, y) < .56 ||
+  Array.from({ length: 5 }, (_, index) => index * Math.PI * 2 / 5).some((angle) =>
+    Math.hypot(x - .53 * Math.cos(angle), y - .53 * Math.sin(angle)) < .32));
+sticker("aqua-wave.png", [83, 222, 231], (x, y) => Math.abs(x) < .86 && [-.42, 0, .42].some((line) => Math.abs(y - line - .15 * Math.sin(x * 5)) < .085));
+sticker("lilac-crescent.png", [181, 157, 247], (x, y) => Math.hypot(x + .1, y) < .8 && Math.hypot(x - .3, y + .25) > .7);
+sticker("mint-leaf.png", [117, 219, 127], (x, y) => {
+  const u = (x - y) / Math.SQRT2;
+  const v = (x + y) / Math.SQRT2;
+  return (u / .88) ** 2 + (v / .45) ** 2 < 1 && !(Math.abs(v) < .04 && u < .65);
+});

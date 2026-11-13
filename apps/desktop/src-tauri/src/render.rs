@@ -301,16 +301,25 @@ fn adjustment_filters(look: &Look, start_ms: i64, end_ms: i64) -> String {
         ));
     }
     filters.push_str(&color_filters(look, &enable));
-    filters.push_str(&match look.effect {
-        Effect::None => String::new(),
-        Effect::Blur => format!(",gblur=sigma=4{enable}"),
-        Effect::Vignette => format!(",vignette=PI/5{enable}"),
-        Effect::Grain => format!(",noise=alls=10:allf=t+u:all_seed=37{enable}"),
-    });
+    if let Some(effect) = effect_filter(look.effect) {
+        filters.push_str(&format!(",{effect}{enable}"));
+    }
     if look.sharpen {
         filters.push_str(&format!(",unsharp=5:5:0.85:5:5:0{enable}"));
     }
     filters
+}
+
+fn effect_filter(effect: Effect) -> Option<&'static str> {
+    Some(match effect {
+        Effect::None => return None,
+        Effect::Blur => "gblur=sigma=4",
+        Effect::Vignette => "vignette=PI/5",
+        Effect::Grain => "noise=alls=10:allf=t+u:all_seed=37",
+        Effect::Invert => "negate",
+        Effect::Mosaic => "pixelize=w=18:h=18",
+        Effect::Scanlines => "drawgrid=w=iw:h=8:t=2:c=black@0.38",
+    })
 }
 
 fn grade_filters(look: &Look) -> String {
@@ -326,12 +335,10 @@ fn grade_filters(look: &Look) -> String {
     if look.sharpen {
         filters.push_str(",unsharp=5:5:0.85:5:5:0");
     }
-    filters.push_str(match look.effect {
-        Effect::None => "",
-        Effect::Blur => ",gblur=sigma=4",
-        Effect::Vignette => ",vignette=PI/5",
-        Effect::Grain => ",noise=alls=10:allf=t+u:all_seed=37",
-    });
+    if let Some(effect) = effect_filter(look.effect) {
+        filters.push(',');
+        filters.push_str(effect);
+    }
     filters
 }
 
@@ -464,10 +471,9 @@ pub fn plan(
         let at = seconds(clip.position_ms);
         let incoming = visual_index.checked_sub(1).and_then(|index| joins[index]);
         let outgoing = joins.get(visual_index).copied().flatten();
-        let hold = match outgoing {
-            Some((TransitionKind::Dissolve, ms)) => ms,
-            _ => 0,
-        };
+        let hold = outgoing
+            .filter(|(kind, _)| kind.flash().is_none())
+            .map_or(0, |(_, ms)| ms);
         let end = seconds(clip.finish_ms() + hold);
         let look = &clip.look;
         let animated = !look.keyframes.is_empty();
@@ -488,19 +494,18 @@ pub fn plan(
         let mut join_colors = String::new();
         let mut join_alpha = String::new();
         if let Some((kind, ms)) = incoming {
-            match kind {
-                TransitionKind::Black => {
-                    join_colors.push_str(&format!(",fade=t=in:d={}:color=black", seconds(ms / 2)))
-                }
-                TransitionKind::Dissolve => {
-                    join_alpha.push_str(&format!(",fade=t=in:d={}:alpha=1", seconds(ms)))
-                }
+            if let Some(color) = kind.flash() {
+                join_colors.push_str(&format!(",fade=t=in:d={}:color={color}", seconds(ms / 2)));
+            } else if kind == TransitionKind::Dissolve {
+                join_alpha.push_str(&format!(",fade=t=in:d={}:alpha=1", seconds(ms)));
             }
         }
-        if let Some((TransitionKind::Black, ms)) = outgoing {
+        if let Some((color, ms)) =
+            outgoing.and_then(|(kind, ms)| kind.flash().map(|color| (color, ms)))
+        {
             let half = ms / 2;
             join_colors.push_str(&format!(
-                ",fade=t=out:st={}:d={}:color=black",
+                ",fade=t=out:st={}:d={}:color={color}",
                 seconds(clip.length_ms() - half),
                 seconds(half)
             ));
@@ -560,12 +565,21 @@ pub fn plan(
             f64::from(look.saturation) / 100.0,
         ));
         let easing = format!("max(0,1-(t-{at})/{})", seconds(clip.length_ms().min(450)));
-        let (slide_x, slide_y) = match look.motion {
+        let (mut slide_x, mut slide_y) = match look.motion {
             Motion::None => (String::new(), String::new()),
             Motion::Slide => (format!("-(W+w)/2*{easing}"), String::new()),
             Motion::SlideRight => (format!("+(W+w)/2*{easing}"), String::new()),
             Motion::Rise => (String::new(), format!("+(H+h)/2*{easing}")),
         };
+        if let Some((kind, ms)) = incoming {
+            let ease = format!("max(0,1-(t-{at})/{})", seconds(ms));
+            match kind {
+                TransitionKind::SlideLeft => slide_x.push_str(&format!("+(W+w)/2*{ease}")),
+                TransitionKind::SlideRight => slide_x.push_str(&format!("-(W+w)/2*{ease}")),
+                TransitionKind::SlideUp => slide_y.push_str(&format!("+(H+h)/2*{ease}")),
+                _ => {}
+            }
+        }
         let composed = format!("[layer{index}]");
         let (x, y) = (
             key_expression(look, &format!("(t-{at})"), i32::from(look.x), |key| {

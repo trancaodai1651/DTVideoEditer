@@ -47,6 +47,9 @@ pub enum Effect {
     Blur,
     Vignette,
     Grain,
+    Invert,
+    Mosaic,
+    Scanlines,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -439,7 +442,21 @@ pub struct TransformKey {
 #[serde(rename_all = "snake_case")]
 pub enum TransitionKind {
     Black,
+    White,
     Dissolve,
+    SlideLeft,
+    SlideRight,
+    SlideUp,
+}
+
+impl TransitionKind {
+    pub fn flash(self) -> Option<&'static str> {
+        match self {
+            Self::Black => Some("black"),
+            Self::White => Some("white"),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
