@@ -11,9 +11,22 @@ Task tiếp theo là **M1-H8**. Đối chiếu preset và thao tác còn thiếu
 ## Bản 0.12.1
 
 - **M1-H8/M1-D.** Đã mở CapCut Desktop 9.7.1.4203 và đối chiếu năm kho trong draft 1113. DT Edit thêm tìm kiếm không dấu và yêu thích lưu theo tab, 12 sticker PNG nguyên gốc, 10 mẫu phụ đề tĩnh/tô sáng/hiện dần, Âm bản/Ô điểm ảnh/Vạch màn hình, Qua trắng/Vuốt trái/Vuốt phải/Vuốt lên, và 9 bộ lọc màu. Tham chiếu UI và phạm vi tài nguyên nằm trong [khảo sát](CAPCUT_DESKTOP_AUDIT.md).
+- **M1-H8, yêu cầu lấy nguyên kho.** Người dùng nhắc lại muốn tất cả mẫu gốc Free và Pro trong năm kho. Đã thử **All** và **Commercial** ở Captions → Templates. Commercial vẫn hiện mẫu Pro. Chưa tìm thấy chức năng xuất hàng loạt để nhập vào DT Edit. Việc nhập nguyên kho cần quyền phân phối và nguồn dữ liệu từ CapCut. [Kết quả khảo sát và nguồn CapCut](CAPCUT_DESKTOP_AUDIT.md)
 - Chọn mẫu phụ đề trước khi tạo hoặc dùng **Áp dụng cho phụ đề hiện có**. Mẫu giữ nội dung, mốc từ và vị trí của câu. Sticker bấm để chèn tại playhead hoặc kéo vào timeline bằng luồng thả media có sẵn. Chuyển cảnh vuốt giữ hình cuối của clip trước trong khi clip sau đi vào, giữ nguyên độ dài timeline và mốc tiếng. **Xem bản xuất** kiểm tra Ô điểm ảnh và Hạt phim.
 - Preset nằm ở [editorPresets.ts](../../apps/desktop/src/editorPresets.ts). [make-studio-library.mjs](../../scripts/make-studio-library.mjs) tạo sticker, [catalog.rs](../../apps/desktop/src-tauri/src/catalog.rs) đăng ký qua grant hiện có, [render.rs](../../apps/desktop/src-tauri/src/render.rs) xuất hiệu ứng/chuyển cảnh. Schema SQLite 10 và snapshot timeline v3.
 - 0.12.1 sửa Âm bản trên lớp điều chỉnh. FFmpeg cần khai báo `negate=negate_alpha=0` trước tùy chọn `enable`. Dùng tag 0.12.1 để lấy bộ cài.
+- **Kiểm chứng.** TypeScript, ESLint, 43 test Node, 37 test Rust và 12 test FFmpeg đạt. Test FFmpeg đọc pixel để xác minh cả sáu chuyển cảnh, giữ thời lượng In–Out và stream tiếng. Kiểm tra cả ba bộ lọc hiệu ứng mới chạy có giới hạn thời gian. FFprobe xác nhận 18 PNG RGBA 192×192. Test kho kiểm tra asset ID không đổi khi nạp lại, byte range 206 trước khi thu hồi và 404 sau khi thu hồi.
+- **QA Windows.** Bản 0.12.0 QA dùng chung giao diện với 0.12.1. Kéo Lá non từ kho vào dự án trống, đánh dấu và lọc Yêu thích, áp Âm bản, tìm `hoang hon` và áp Hoàng hôn. Áp Nhịp bạc hà cho câu hiện có, tua từ đầu đến 01:05 để thấy màu chuyển từ đầu sang từ tiếp theo. **Xem bản xuất** dựng được clip. 0.12.1 thay cú pháp FFmpeg riêng cho lớp điều chỉnh.
+- **QA Windows 0.12.1.** Nhập MP4 dọc với lời tiếng Việt FLEURS, kéo vào timeline, chọn Karaoke vàng và bấm Tạo phụ đề. Whisper đi kèm tạo ba cụm, xem được màu vàng theo mốc trong preview và trong video của **Xem bản xuất**.
+- **Phát hành.** Tag `v0.12.1` trỏ tới `d21dc42491fa453d422bcbf4c139ef9605327de6`. Hai lượt Desktop checks và hai job bộ cài đạt. Runner macOS xác nhận model Whisper 190.085.487 byte, kiến trúc `x86_64 arm64`, kiểm tra DMG và chạy app trên arm64. Bộ cài chưa có chữ ký phát hành. [Build](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43354856424) · [Job macOS](https://github.com/trancaodai1651/DTVideoEditer/actions/runs/43354856424/job/131654346808)
+- **Còn mở.** QA tương tác trên máy Mac. M1-H8 còn sticker động, chuyển cảnh có lớp phủ và hiệu ứng theo cơ thể. Xem [backlog](TASK_BACKLOG.md).
+
+Hai bộ cài đã giải nén tại `apps/desktop/src-tauri/target/verified-installers/v0.12.1/`. SHA-256 của hai ZIP đã đối chiếu với GitHub Actions.
+
+| Bộ cài | SHA-256 của bộ cài |
+| --- | --- |
+| `AI Video Studio_0.12.1_x64-setup.exe` | `13e9fac0c88e218910efb056db90a45d2cd98447984aca7f775858198c018cea` |
+| `AI Video Studio_0.12.1_universal.dmg` | `88440e9ca2eeef754aa62489cdc4201d0d65b6860c54a361e56d87d36268ce8a` |
 
 ## Bản 0.11.0
 

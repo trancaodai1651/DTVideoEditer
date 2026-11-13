@@ -21,9 +21,12 @@ Next task: M1-H8
 - Bản 0.10.1 (M1-D): bỏ qua đoạn 5 phút im lặng hoàn toàn, bỏ khoảng im lặng dài ở đầu mỗi đoạn và cộng lại đúng mốc vào phụ đề. [Bàn giao](HANDOFF.md)
 - Bản 0.11.0 (M1-D/M1-H8) thêm phụ đề tô sáng hoặc hiện dần từng từ, áp kiểu cho các câu hiện có và lưu mốc trong timeline. Hiệu ứng có trong preview và MP4. [Bàn giao](HANDOFF.md)
 - Bản 0.12.1 (M1-H8/M1-D) có 18 sticker, 10 mẫu phụ đề, 6 hiệu ứng, 6 chuyển cảnh giữa hai clip và 14 bộ lọc. Năm kho có tìm kiếm và yêu thích, sticker kéo được lên timeline. [Bàn giao](HANDOFF.md)
+- M1-H8, kho gốc CapCut: đã kiểm tra lại bộ lọc Captions → Templates và tài liệu xuất. Nhập nguyên kho Free và Pro còn phụ thuộc vào quyền phân phối và nguồn dữ liệu do CapCut cấp. [Khảo sát](CAPCUT_DESKTOP_AUDIT.md)
 - M4-B và M4-C, một phần: kết nối Threads, Facebook Page, Instagram và TikTok bằng access token trong keychain, nháp, duyệt native, đăng, danh sách, sửa và xóa bài. [Publishing](modules/publishing.md)
 
 ## Mức kiểm chứng
+
+- 0.12.1: 43 test Node, 37 test Rust, 12 test FFmpeg đạt. Windows QA kéo sticker, tìm mẫu, lọc yêu thích, áp bộ lọc và mẫu phụ đề, tua và dựng bản xem xuất. Chuyển cảnh kiểm tra theo pixel và thời lượng. [Bàn giao](HANDOFF.md)
 
 - 0.11.0: 43 test Node, 37 test Rust, 12 test FFmpeg thật và hai test Whisper thật đạt. MP4 đã đo màu và chữ ẩn/hiện theo từng mốc. Tauri release QA build được. Kiểm thử tương tác DT Edit còn mở sau khi dừng Computer Use. [Bàn giao](HANDOFF.md)
 

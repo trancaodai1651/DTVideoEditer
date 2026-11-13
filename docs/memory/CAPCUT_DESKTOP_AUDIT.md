@@ -18,7 +18,9 @@ Khảo sát lại ngày 13/11/2026 bằng cửa sổ CapCut Desktop 9.7.1.4203, 
 | Transitions | Favorites, Trending, Classic. Thấy Swipe Left, Taped Note, Up và Split. | 6 chuyển cảnh giữa hai clip, gồm vuốt hai hướng, vuốt lên, hòa trộn, qua đen và qua trắng. |
 | Filters | Favorites, Featured, Life, Landscape, Portrait, Mono. Thấy Pure Joy và Sunny Street. | 14 công thức màu cục bộ gồm tông ngoài trời, chân dung, hoài cổ và đơn sắc. |
 
-Kho trực tuyến hiển thị từng nhóm và có thẻ Pro. Điều khoản tài nguyên CapCut giới hạn phân phối các tệp riêng lẻ, nên DT Edit sử dụng tài nguyên tự tạo và công thức riêng. [Giấy phép tài nguyên CapCut](https://www.capcut.com/clause/material-license-agreement)
+Kiểm tra lại theo yêu cầu lấy nguyên kho CapCut. Trong **Captions → Templates → Classic**, bộ lọc có **All** và **Commercial**. Chọn **Commercial** vẫn thấy mẫu gắn dấu Pro. Giao diện có nút tải và yêu thích từng thẻ. Chưa tìm thấy chức năng xuất kho mẫu hàng loạt. Hướng dẫn CapCut mô tả xuất phụ đề SRT/TXT hoặc xuất video đã áp mẫu. [Xuất phụ đề](https://www.capcut.com/help/captions-fail-to-export) · [Dùng và xuất mẫu](https://www.capcut.com/help/use-and-export-templates-in-capcut)
+
+Điều khoản tài nguyên CapCut tiếng Việt, mục 2 và 4, giới hạn chuyển giao và phân phối tài nguyên riêng lẻ, đồng thời yêu cầu thỏa thuận bằng văn bản cho cách dùng ngoài phạm vi giấy phép. Kho đi kèm DT Edit gồm tài nguyên và công thức tự tạo. Yêu cầu nhập toàn bộ kho CapCut vẫn mở, phụ thuộc vào quyền phân phối và nguồn dữ liệu do CapCut cấp. [Giấy phép tài nguyên CapCut](https://web-sg.capcut.com/clause/material-license-agreement?lang=vi-VN&store_region=)
 
 Ngày 13/11/2026, mở draft thử 1113, vào **Captions → Templates → Trending**. Thẻ preview cho thấy kiểu chữ trắng nhấn từng từ bằng vàng hoặc xanh. **Auto captions** có chọn ngôn ngữ và **Generate** gắn nhãn Pro khi chưa đăng nhập. Đối chiếu video mẫu thứ nhất hướng dẫn chọn mẫu, video thứ hai hiển thị chữ trắng viền đen và tô vàng từ đang đọc. [Quin Nến](https://www.tiktok.com/@quin.nen/video/7677830458318671124) · [Kenhcuathuy](https://www.tiktok.com/@kenhcuathuy1991/video/7655695246591855879)
 
